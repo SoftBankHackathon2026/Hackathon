@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SoftBankHackathon2026/Hackathon/policies/schema/input.schema.json",
+  "title": "ghost.migration 정책 입력 (schema_version 1)",
+  "description": "실행 제어기(cutover)·관리 API 가 OPA 에 보내는 입력. 비밀값(비밀번호·토큰·DSN)은 절대 넣지 않는다. verified/fresh 같은 결론 필드는 없다 — 정책이 observed_at·status·detail 로 직접 판정한다.",
+  "type": "object",
+  "required": ["schema_version", "job_id", "stage", "now", "plan", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1"},
+    "job_id": {"type": "string", "minLength": 1, "description": "전환 작업 ID (예: forward_001)"},
+    "stage": {
+      "type": "string",
+      "enum": ["plan", "pre_start", "pre_cutover", "final_verify"],
+      "description": "plan=계획 등록, pre_start=복제 시작 직전, pre_cutover=전환 승인 직전(C05 검사), final_verify=원본 차단·최종 동기화 후 writer 전환 직전"
+    },
+    "now": {"type": "string", "format": "date-time", "description": "평가 시각(RFC3339). 신뢰하는 호출자(실행 제어기)가 넣는다. 사용자 입력이 아니다"},
+    "plan": {
+      "type": "object",
+      "required": ["digest", "limits"],
+      "additionalProperties": true,
+      "properties": {
+        "digest": {"type": "string", "minLength": 1, "description": "승인된 계획의 digest. 평가 뒤 계획이 바뀌면 증거·판정을 재사용하지 못한다"},
+        "source": {"type": "string"},
+        "target": {"type": "string"},
+        "approved_locations": {"type": "array", "items": {"type": "string"}, "description": "SEC-02 승인 위치 목록 (리전/사이트 식별자). plan·pre_start·pre_cutover 에서 필수"},
+        "limits": {
+          "type": "object",
+          "required": ["evidence_ttl_seconds"],
+          "properties": {
+            "evidence_ttl_seconds": {"type": "number", "exclusiveMinimum": 0, "description": "증거 유효기간. 팀 합의값. 정책에 하드코딩하지 않는다"},
+            "write_wait_max_seconds": {"type": "number", "exclusiveMinimum": 0, "description": "OPS-02 쓰기 대기 상한. final_verify 에서 필수. 30초는 예시이며 확정값이 아니다"}
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["snapshot_id", "plan_digest", "checks"],
+      "properties": {
+        "snapshot_id": {"type": "string", "minLength": 1, "description": "증거 묶음 ID. 판정 기록이 이 값을 참조한다"},
+        "plan_digest": {"type": "string", "description": "이 증거를 수집할 때 본 계획 digest. plan.digest 와 다르면 hold"},
+        "checks": {
+          "type": "object",
+          "description": "검사 이름 → 결과. 단계별 필수 검사: plan[target_location], pre_start[target_db_exposure,target_location], pre_cutover[+target_app_db], final_verify[target_db_exposure,target_app_db,final_sync,write_wait]",
+          "additionalProperties": {"$ref": "#/$defs/check"},
+          "properties": {
+            "target_db_exposure": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"detail": {"properties": {"public": {"type": "boolean"}}}}}]},
+            "target_location": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"detail": {"properties": {"location": {"type": "string"}}}}}]},
+            "target_app_db": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"detail": {"properties": {"db_connected": {"type": "boolean"}, "order_query_ok": {"type": "boolean"}}}}}]},
+            "final_sync": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"detail": {"properties": {"source_writes_fenced": {"type": "boolean"}, "target_applied_through_checkpoint": {"type": "boolean"}, "compare_passed": {"type": "boolean"}}}}}]},
+            "write_wait": {"allOf": [{"$ref": "#/$defs/check"}, {"properties": {"detail": {"properties": {"elapsed_seconds": {"type": "number", "minimum": 0}}}}}]}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["status", "observed_at", "source", "evidence_id", "detail"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "unknown", "error"],
+          "description": "pass/fail=관측 성공(정상/위반), unknown=정보 부족, error=수집 실패. unknown·error 는 절대 통과가 아니다"
+        },
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source": {"type": "string", "minLength": 1, "description": "수집기 식별자 (예: evidence.aws, migration.verify)"},
+        "evidence_id": {"type": "string", "minLength": 1},
+        "detail": {"type": "object", "description": "규칙이 평가하는 사실. 비밀값 금지. status=pass 여도 detail 이 어긋나면 막힌다"}
+      }
+    }
+  }
+}

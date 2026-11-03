@@ -1,0 +1,86 @@
+{
+  "final_verify_allow": {
+    "outcome": "allow",
+    "reason_codes": []
+  },
+  "final_verify_not_synced_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "OPS-01-CHECKPOINT-NOT-APPLIED",
+      "OPS-01-SOURCE-NOT-FENCED"
+    ]
+  },
+  "final_verify_wait_limit_deny": {
+    "outcome": "deny",
+    "reason_codes": [
+      "OPS-02-WAIT-LIMIT-EXCEEDED"
+    ]
+  },
+  "plan_allow": {
+    "outcome": "allow",
+    "reason_codes": []
+  },
+  "plan_unapproved_location_deny": {
+    "outcome": "deny",
+    "reason_codes": [
+      "SEC-02-UNAPPROVED-LOCATION"
+    ]
+  },
+  "pre_cutover_allow": {
+    "outcome": "allow",
+    "reason_codes": []
+  },
+  "pre_cutover_app_db_unreachable_deny": {
+    "outcome": "deny",
+    "reason_codes": [
+      "APP-01-ORDER-CHECK-FAILED",
+      "APP-01-TARGET-DB-UNREACHABLE"
+    ]
+  },
+  "pre_cutover_missing_evidence_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "EVIDENCE-MISSING"
+    ]
+  },
+  "pre_cutover_plan_changed_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "EVIDENCE-PLAN-MISMATCH"
+    ]
+  },
+  "pre_start_allow": {
+    "outcome": "allow",
+    "reason_codes": []
+  },
+  "pre_start_public_db_deny": {
+    "outcome": "deny",
+    "reason_codes": [
+      "SEC-01-PUBLIC-DB"
+    ]
+  },
+  "pre_start_stale_evidence_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "EVIDENCE-STALE"
+    ]
+  },
+  "pre_start_string_boolean_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "EVIDENCE-INVALID"
+    ]
+  },
+  "pre_start_unverified_hold": {
+    "outcome": "hold",
+    "reason_codes": [
+      "SEC-01-UNVERIFIED"
+    ]
+  },
+  "schema_unsupported_invalid": {
+    "outcome": "invalid",
+    "reason_codes": [
+      "SCHEMA-UNSUPPORTED"
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": "1",
+  "job_id": "forward_001",
+  "stage": "final_verify",
+  "now": "2026-11-03T12:00:00Z",
+  "plan": {
+    "digest": "sha256:0f3a9c…plan-v3",
+    "source": "onprem",
+    "target": "aws",
+    "approved_locations": [
+      "ap-northeast-2"
+    ],
+    "limits": {
+      "evidence_ttl_seconds": 300,
+      "write_wait_max_seconds": 30
+    }
+  },
+  "evidence": {
+    "snapshot_id": "snap-forward_001-0007",
+    "plan_digest": "sha256:0f3a9c…plan-v3",
+    "checks": {
+      "target_db_exposure": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "evidence.aws",
+        "evidence_id": "ev-target_db_exposure-0001",
+        "detail": {
+          "public": false,
+          "target_id": "rds:migration-demo"
+        }
+      },
+      "target_app_db": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "evidence.app",
+        "evidence_id": "ev-target_app_db-0001",
+        "detail": {
+          "db_connected": true,
+          "order_query_ok": true,
+          "app_id": "sample-app-aws"
+        }
+      },
+      "final_sync": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "migration.verify",
+        "evidence_id": "ev-final_sync-0001",
+        "detail": {
+          "source_writes_fenced": false,
+          "target_applied_through_checkpoint": false,
+          "compare_passed": true,
+          "checkpoint": {
+            "source_lsn": "0/1A2B3C4",
+            "sink_offset": 1234
+          },
+          "compare_counts": {
+            "B_minus_T": 0,
+            "T_minus_B": 0,
+            "field_mismatch": 0,
+            "S_minus_T": 0
+          }
+        }
+      },
+      "write_wait": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "migration.cutover",
+        "evidence_id": "ev-write_wait-0001",
+        "detail": {
+          "elapsed_seconds": 12.4,
+          "fenced_at": "2026-11-03T11:58:10Z"
+        }
+      }
+    }
+  }
+}
