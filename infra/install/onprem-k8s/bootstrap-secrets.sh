@@ -8,6 +8,7 @@ TLS_DIR="$ROOT/.local/postgres-tls"
 EDGE_TOKEN_FILE="$ROOT/.local/cloudflared-token"
 
 umask 077
+# 네임스페이스는 없을 때만 만든다. apply 로 덮으면 kustomize 가 붙인 라벨이 지워진다. # ensure_namespace_note
 mkdir -p "$TLS_DIR"
 
 if [[ ! -f "$SECRETS_FILE" ]]; then
@@ -62,8 +63,8 @@ if [[ ! -f "$TLS_DIR/tls.key" || ! -f "$TLS_DIR/tls.crt" ]]; then
     -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.crt" >/dev/null 2>&1
 fi
 
-kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace hackathon --dry-run=client -o yaml | \
-  kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
+kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace hackathon >/dev/null 2>&1 || \
+  kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace hackathon >/dev/null
 
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n hackathon create secret generic review-db-credentials \
   --from-literal=username=oneaction_admin \
@@ -93,8 +94,8 @@ if [[ ! -s "$EDGE_TOKEN_FILE" ]] && \
 fi
 
 if [[ -s "$EDGE_TOKEN_FILE" ]]; then
-  kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace edge-system --dry-run=client -o yaml | \
-    kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
+  kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace edge-system >/dev/null 2>&1 || \
+    kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace edge-system >/dev/null
   kubectl --kubeconfig "$KUBECONFIG_PATH" -n edge-system create secret generic cloudflared-token \
     --from-file=token="$EDGE_TOKEN_FILE" --dry-run=client -o yaml | \
     kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
@@ -106,8 +107,8 @@ kubectl --kubeconfig "$KUBECONFIG_PATH" -n argocd create secret generic argocd-n
   --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
 
 # --- Argo CD UI 인증서: Route 53 DNS-01 용 IAM 키 (yubin.dev 존 레코드 변경만 허용된 키)
-kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace cert-manager --dry-run=client -o yaml | \
-  kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
+kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace cert-manager >/dev/null 2>&1 || \
+  kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace cert-manager >/dev/null
 if [[ -n "${ROUTE53_ACCESS_KEY_ID:-}" && -n "${ROUTE53_SECRET_ACCESS_KEY:-}" ]]; then
   kubectl --kubeconfig "$KUBECONFIG_PATH" -n cert-manager create secret generic route53-credentials \
     --from-literal=AWS_ACCESS_KEY_ID="$ROUTE53_ACCESS_KEY_ID" \
@@ -118,8 +119,8 @@ else
 fi
 
 # --- AWS 대응: 모니터링 (gitops argocd/monitoring/README.md 의 grafana-admin, review-db 데이터소스)
-kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace monitoring --dry-run=client -o yaml | \
-  kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
+kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace monitoring >/dev/null 2>&1 || \
+  kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace monitoring >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_PATH" -n monitoring get secret grafana-admin >/dev/null 2>&1; then
   kubectl --kubeconfig "$KUBECONFIG_PATH" -n monitoring create secret generic grafana-admin \
     --from-literal=admin-user=admin \
