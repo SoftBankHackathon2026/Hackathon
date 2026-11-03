@@ -1,0 +1,30 @@
+{
+  "name": "{{job_id}}-source",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+    "plugin.name": "pgoutput",
+    "snapshot.mode": "initial",
+    "database.hostname": "{{source_host}}",
+    "database.port": "{{source_port}}",
+    "database.user": "{{source_cdc_user}}",
+    "database.password": "${env:MIGRATION_CDC_PASSWORD}",
+    "database.dbname": "{{source_dbname}}",
+    "database.sslmode": "{{source_sslmode}}",
+    "topic.prefix": "{{job_id}}",
+    "slot.name": "{{job_id}}",
+    "slot.drop.on.stop": "false",
+    "publication.name": "{{job_id}}_pub",
+    "publication.autocreate.mode": "disabled",
+    "table.include.list": "{{table}}",
+    "tombstones.on.delete": "false",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "connect",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "true",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "true",
+    "heartbeat.interval.ms": "10000",
+    "errors.tolerance": "none"
+  }
+}

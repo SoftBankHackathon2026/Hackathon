@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migration"
+version = "0.1.0"
+description = "온프렘 PostgreSQL → AWS PostgreSQL 이전 데모 도구 (INSERT 워커, CDC 제어, 전환, 검증)"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.2,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools]
+packages = ["migration"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -ra"
+markers = [
+    "integration: 실제 PostgreSQL이 필요한 테스트 (MIGRATION_TEST_DSN 설정 시 실행)",
+]
