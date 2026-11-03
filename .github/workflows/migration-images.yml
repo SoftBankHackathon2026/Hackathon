@@ -1,0 +1,99 @@
+# migration/ 아래 이미지 2개(migration-tools, migration-connect)를 빌드해 GHCR에 올린다.
+# 정책 이미지(policies/, migration-policy)는 정책 PR에서 이 워크플로에 추가한다.
+#
+# - push to main (migration/** 변경)     : 빌드 + push (태그: <full sha>, main)
+# - pull_request (migration/** 변경)     : 빌드만 수행, push 없음
+# - workflow_dispatch               : 수동 실행 (main 외 브랜치에서는 sha 태그만 push)
+#
+# 이미지 publish 후 gitops 매니페스트 갱신은 이 워크플로가 하지 않는다.
+# 이유: 마이그레이션은 일회성·수동 통제 작업이라 이미지 태그 교체 시점을 사람이 결정해야 한다.
+name: migration-images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "migration/**"
+      - ".github/workflows/migration-images.yml"
+  pull_request:
+    paths:
+      - "migration/**"
+      - ".github/workflows/migration-images.yml"
+  workflow_dispatch:
+
+# 같은 ref에서 연속 실행되면 이전 실행을 취소한다 (PR 커밋 연타 대비).
+concurrency:
+  group: migration-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: softbankhackathon2026
+
+jobs:
+  build:
+    name: build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: migration-tools
+            context: migration
+            file: migration/Dockerfile
+          - image: migration-connect
+            context: migration/connect
+            file: migration/connect/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # PR에서는 push하지 않으므로 로그인도 생략한다 (fork PR은 packages:write 권한이 없다).
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 태그 규칙: 커밋 SHA 전체(항상) + main 브랜치일 때만 `main`.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=main,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ matrix.image }}"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo "pushed: ${{ github.event_name != 'pull_request' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

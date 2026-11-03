@@ -1,0 +1,78 @@
+# 이전 도구 공통 설정 예시. 비밀번호는 절대 이 파일에 적지 않는다.
+# 각 계정의 비밀번호는 아래 `password_env`에 적힌 환경변수에서 읽는다.
+
+targets:
+  onprem:
+    host: postgres            # k3s 네임스페이스 hackathon 안의 기존 플랫폼 Postgres 16
+    port: 5432
+    dbname: migration_demo
+    sslmode: require
+    admin_dbname: postgres    # CREATE DATABASE 용 유지보수 DB
+    users:
+      admin:
+        user: postgres
+        password_env: MIGRATION_ADMIN_PASSWORD
+      app:
+        user: migration_app
+        password_env: MIGRATION_APP_PASSWORD
+      cdc:
+        user: migration_cdc
+        password_env: MIGRATION_CDC_PASSWORD
+      sink:
+        user: migration_sink
+        password_env: MIGRATION_SINK_PASSWORD
+      verify:
+        user: migration_verify
+        password_env: MIGRATION_VERIFY_PASSWORD
+
+  aws:
+    host: CHANGE-ME.rds.amazonaws.com   # RDS PostgreSQL 16 엔드포인트 (미정)
+    port: 5432
+    dbname: migration_demo
+    sslmode: require
+    admin_dbname: postgres
+    users:
+      admin:
+        user: postgres
+        password_env: MIGRATION_AWS_ADMIN_PASSWORD
+      app:
+        user: migration_app
+        password_env: MIGRATION_APP_PASSWORD
+      cdc:
+        user: migration_cdc
+        password_env: MIGRATION_CDC_PASSWORD
+      sink:
+        user: migration_sink
+        password_env: MIGRATION_SINK_PASSWORD
+      verify:
+        user: migration_verify
+        password_env: MIGRATION_VERIFY_PASSWORD
+
+job:
+  job_id: forward_001
+  source: onprem
+  target: aws
+  table: public.migration_demo
+  # 전환 후 워커가 새 요청에 붙이는 phase
+  live_phase_before: onprem_live
+  live_phase_after: aws_live
+
+kafka:
+  bootstrap_servers: kafka:9092       # 기존 플랫폼 Kafka 3.9.1, PLAINTEXT
+  connect_url: http://migration-connect:8083
+  # 커넥터 비밀번호는 Connect 의 EnvVarConfigProvider(${env:MIGRATION_*_PASSWORD})로 주입한다.
+  # gitops apps/migration-cdc 가 config.providers=env 와 Secret 환경변수를 설정한다.
+  # secrets_file 은 FileConfigProvider 를 쓰는 환경을 위한 선택값이며 기본 템플릿은 쓰지 않는다.
+  secrets_file: /opt/kafka/secrets/migration.properties
+
+worker:
+  url: http://db-insert-worker:8080   # gitops apps/db-insert-worker 의 Service 이름
+  state_dir: /var/lib/worker
+
+cutover:
+  state_dir: /var/lib/worker
+  min_live_rows_after_snapshot: 100
+  min_rows_after_switch: 100
+  offset_stable_seconds: 10
+  poll_interval_seconds: 5
+  stage_timeout_seconds: 1800

@@ -1,0 +1,26 @@
+{
+  "name": "{{job_id}}-sink",
+  "config": {
+    "connector.class": "io.debezium.connector.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+    "topics": "{{job_id}}.public.migration_demo",
+    "connection.url": "jdbc:postgresql://{{target_host}}:{{target_port}}/{{target_dbname}}?sslmode={{target_sslmode}}",
+    "connection.username": "{{target_sink_user}}",
+    "connection.password": "${env:MIGRATION_SINK_PASSWORD}",
+    "insert.mode": "upsert",
+    "primary.key.mode": "record_key",
+    "primary.key.fields": "request_id",
+    "delete.enabled": "false",
+    "schema.evolution": "none",
+    "quote.identifiers": "true",
+    "table.name.format": "public.migration_demo",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "true",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "true",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true",
+    "errors.tolerance": "none"
+  }
+}
