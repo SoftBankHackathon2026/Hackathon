@@ -1,0 +1,29 @@
+# cert-manager (jetstack/cert-manager). Argo CD UI 인증서(argo.yubin.dev)를 Let's Encrypt DNS-01(Route 53) 으로 발급한다.
+# 클러스터가 작아 모두 worker 노드에 두고 리소스를 낮게 잡는다. 설치: apply.sh
+crds:
+  enabled: true
+  keep: true
+replicaCount: 1
+nodeSelector:
+  kubernetes.io/hostname: k3s-worker
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+# LAN DNS(pfSense) 캐시·스플릿 호라이즌을 피해 공개 리졸버로만 TXT 전파를 확인한다
+extraArgs:
+  - --dns01-recursive-nameservers=1.1.1.1:53,8.8.8.8:53
+  - --dns01-recursive-nameservers-only
+webhook:
+  nodeSelector:
+    kubernetes.io/hostname: k3s-worker
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+cainjector:
+  nodeSelector:
+    kubernetes.io/hostname: k3s-worker
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+startupapicheck:
+  enabled: false

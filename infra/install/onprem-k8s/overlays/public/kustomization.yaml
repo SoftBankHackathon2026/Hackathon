@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hackathon
+resources:
+  - ../../base
+  - review-ingress.yaml
+  - sample-app-ingress.yaml
+configMapGenerator:
+  - name: public-endpoints
+    behavior: create
+    literals:
+      - REVIEW_HOST=review.example.com
+      - REVIEW_URL=https://review.example.com
+      - SAMPLE_HOST=sample.example.com
+      - SAMPLE_URLS={"sample-app":{"local":"https://sample.example.com"}}
+generatorOptions:
+  disableNameSuffixHash: true
+replacements:
+  - source:
+      kind: ConfigMap
+      name: public-endpoints
+      fieldPath: data.REVIEW_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: review-api
+        fieldPaths: [spec.rules.0.host]
+  - source:
+      kind: ConfigMap
+      name: public-endpoints
+      fieldPath: data.SAMPLE_HOST
+    targets:
+      - select:
+          kind: Ingress
+          name: sample-app
+        fieldPaths: [spec.rules.0.host]
+  - source:
+      kind: ConfigMap
+      name: public-endpoints
+      fieldPath: data.REVIEW_URL
+    targets:
+      - select:
+          kind: ConfigMap
+          name: review-service
+        fieldPaths: [data.REVIEW_API_PUBLIC_URL]
+  - source:
+      kind: ConfigMap
+      name: public-endpoints
+      fieldPath: data.SAMPLE_URLS
+    targets:
+      - select:
+          kind: Deployment
+          name: review-api
+        fieldPaths:
+          - spec.template.spec.containers.[name=api].env.[name=APP_URLS].value

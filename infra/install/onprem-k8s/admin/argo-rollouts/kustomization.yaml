@@ -1,0 +1,8 @@
+# Argo Rollouts 컨트롤러. 레거시 설치 때 공식 install.yaml 을 그대로 apply 한 것이며, 2026-11-03 kubectl diff 로 차이 0 을 확인했다.
+# AWS(gitops argocd/install) 와 같은 v1.10.0. CRD 가 커서 apply.sh 는 server-side apply 로 적용한다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argo-rollouts
+resources:
+  - namespace.yaml
+  - https://github.com/argoproj/argo-rollouts/releases/download/v1.10.0/install.yaml

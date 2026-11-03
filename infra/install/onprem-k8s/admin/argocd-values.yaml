@@ -1,0 +1,37 @@
+# 기존 Argo CD Helm 릴리스(argo/argo-cd 10.9.6, 레거시 설치)에 덧씌우는 값. 전체 values 는 릴리스에 있다:
+#   helm -n argocd upgrade argocd argo/argo-cd --version 10.9.6 --reuse-values -f admin/argocd-values.yaml
+# AWS Argo CD(공식 매니페스트 v3.5.4)에는 notifications controller 와 metrics Service 가 기본으로 있다.
+# 로그인 계정(observer)의 비밀번호 해시는 bootstrap-secrets.sh 가 .local/argocd-login.values.yaml 로 따로 넘긴다.
+global:
+  domain: argo.yubin.dev   # Traefik Ingress 호스트. DNS 는 Route 53 에서 A 레코드 → 172.30.1.10 (LAN/Tailscale 전용)
+configs:
+  cm:
+    url: https://argo.yubin.dev  # Traefik 이 Let's Encrypt 인증서로 종단, argocd-server 까지는 HTTP (server.insecure=true)
+notifications:
+  enabled: true
+  secret:
+    create: false   # argocd-notifications-secret 은 bootstrap-secrets.sh 가 ARGOCD_WEBHOOK_TOKEN 으로 만든다
+  cm:
+    create: false   # argocd-notifications-cm 은 admin/argocd-notifications-cm.yaml (gitops 복사본) 이 소유한다
+  metrics:
+    enabled: true
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+controller:
+  metrics:
+    enabled: true
+server:
+  metrics:
+    enabled: true
+  ingress:
+    enabled: true            # 이름 argocd-server. 레거시 수동 Ingress(argocd.yubin.website) 는 apply.sh 가 먼저 지운다
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-route53          # → Secret argocd-server-tls (admin/cert-manager)
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure  # HTTPS 만. .dev 는 브라우저가 HSTS 로 HTTPS 를 강제한다
+      traefik.ingress.kubernetes.io/router.tls: "true"
+    tls: true
+repoServer:
+  metrics:
+    enabled: true

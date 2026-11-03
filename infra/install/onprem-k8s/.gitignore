@@ -1,0 +1,5 @@
+# 비밀값. bootstrap-secrets.sh 가 만들고, Git 에 넣지 않는다 (비밀번호 관리자에 백업).
+.secrets.env
+.local
+.local/
+.DS_Store

@@ -1,0 +1,63 @@
+# AWS storage 스택이 만드는 빈 prefix 객체 6개를 같은 버킷에 만든다 (infra/storage/main.tf local.review_prefixes).
+# 멱등: 이미 있어도 같은 키에 빈 객체를 다시 쓴다. 자격증명은 object-storage와 같은 Secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: object-storage-bootstrap
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: object-storage-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: aws-cli
+          image: amazon/aws-cli:2.33.11
+          command: [sh, -ec]
+          args:
+            - |
+              export AWS_EC2_METADATA_DISABLED=true
+              until aws --endpoint-url "$S3_ENDPOINT" s3api head-bucket --bucket "$S3_BUCKET" >/dev/null 2>&1; do
+                echo "waiting for bucket $S3_BUCKET"; sleep 5
+              done
+              for prefix in rules/aws/ rules/gcp/ rules/local/ rules/any/ incidents/ guides/; do
+                aws --endpoint-url "$S3_ENDPOINT" s3api put-object --bucket "$S3_BUCKET" --key "$prefix" --content-length 0 >/dev/null
+                echo "prefix $prefix ready"
+              done
+          env:
+            - name: S3_ENDPOINT
+              value: http://minio:9000
+            - name: S3_BUCKET
+              value: oneaction-review-docs
+            - name: AWS_REGION
+              value: ap-northeast-2
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: {name: hackathon-platform-secrets, key: MINIO_ROOT_USER}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: hackathon-platform-secrets, key: MINIO_ROOT_PASSWORD}
+            - name: HOME
+              value: /tmp
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}

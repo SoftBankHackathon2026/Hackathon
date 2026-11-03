@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hackathon-user
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hackathon-full-access
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hackathon-full-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hackathon-full-access
+subjects:
+  - kind: ServiceAccount
+    name: hackathon-user
+    namespace: hackathon
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hackathon-user-token
+  annotations:
+    kubernetes.io/service-account.name: hackathon-user
+type: kubernetes.io/service-account-token
+

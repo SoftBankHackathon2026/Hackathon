@@ -1,0 +1,44 @@
+# 카나리 분석의 error-rate(Prometheus)는 요청이 없으면 0으로 "통과"한다. 그래서 AWS처럼
+# 클러스터 안에서 약 5 요청/초를 /api/info 로 계속 보낸다 (gitops apps/loadgen/aws/deployment.yaml).
+# 끄려면: kubectl -n hackathon scale deploy/sample-app-loadgen --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-app-loadgen
+  labels:
+    app.kubernetes.io/name: sample-app-loadgen
+    app.kubernetes.io/part-of: sample-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sample-app-loadgen
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sample-app-loadgen
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: ghcr.io/crystal-sbhackathon2026/sample-app:85bb60869af2b9acb14787a6c4c8a61099fd8d6d
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "loadgen 시작 — /api/info 로 약 5 요청/초"
+              while true; do
+                wget -q -O /dev/null -T 3 \
+                  http://sample-app.hackathon.svc.cluster.local/api/info || true
+                sleep 0.2
+              done
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 50m, memory: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}

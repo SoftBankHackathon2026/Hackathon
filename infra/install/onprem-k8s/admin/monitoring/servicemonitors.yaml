@@ -1,0 +1,90 @@
+# AWS 와 같은 수집 대상. 셋은 gitops monitoring-aws.yaml 의 extraManifests, 둘은 apps/review-service/monitoring 에서 왔다.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          # Helm 차트(argo-cd)의 metrics Service 라벨. controller·notifications 는 둘 다 argocd-metrics 이다.
+          - argocd-metrics
+          - argocd-server-metrics
+          - argocd-repo-server-metrics
+          - argocd-applicationset-controller-metrics
+  endpoints:
+    - port: http-metrics   # 차트의 포트 이름 (공식 매니페스트는 metrics)
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sample-app
+spec:
+  namespaceSelector:
+    matchNames: [hackathon]
+  selector:
+    matchLabels:
+      app: sample-app
+  endpoints:
+    - targetPort: 8080
+      path: /metrics
+      interval: 5s
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
+          targetLabel: rollouts_pod_template_hash
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argo-rollouts
+spec:
+  namespaceSelector:
+    matchNames: [argo-rollouts]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argo-rollouts-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: review-api
+  labels:
+    app: review-api
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [hackathon]
+  selector:
+    matchLabels:
+      app: review-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: review-worker
+  labels:
+    app: review-worker
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [hackathon]
+  selector:
+    matchLabels:
+      app: review-worker
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s
