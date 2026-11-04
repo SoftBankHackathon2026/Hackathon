@@ -1,0 +1,49 @@
+name: identity-migration
+on:
+  pull_request:
+    paths: ["migration/**", "policies/**", ".github/workflows/identity.yml"]
+  push:
+    branches: [main]
+    paths: ["migration/**", "policies/**", ".github/workflows/identity.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: open-policy-agent/setup-opa@v2
+        with:
+          version: "1.22.0"
+      - name: Install and test (no cloud credentials)
+        working-directory: migration
+        run: |
+          pip install -c identity-requirements.lock '.[dev,identity-all]' build
+          python -m pytest
+          opa fmt --fail -l ../policies
+          opa check --strict --ignore examples --ignore schema ../policies
+          opa test --ignore examples --ignore schema ../policies
+      - name: Build wheel and source distribution; test outside checkout
+        run: |
+          python -m build migration --outdir "$RUNNER_TEMP/identity-dist"
+          python -m venv "$RUNNER_TEMP/identity-wheel"
+          "$RUNNER_TEMP/identity-wheel/bin/pip" install -c migration/identity-requirements.lock "$RUNNER_TEMP"/identity-dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/identity-wheel/bin/python" -m migration.identity --help
+          "$RUNNER_TEMP/identity-wheel/bin/python" -c 'from migration.identity.rules import rule_data; assert rule_data()["version"] == "2026-11-04.1"'
+          "$RUNNER_TEMP/identity-wheel/bin/python" -m migration.identity plan --spec "$GITHUB_WORKSPACE/migration/identity-examples/aws-gcp-readonly.yaml" --inventory "$GITHUB_WORKSPACE/migration/identity-examples/aws-gcp-inventory.json" --out "$RUNNER_TEMP/identity-plan.json"
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: migration
+          file: migration/Dockerfile.identity
+          push: false
+          tags: migration-identity-tools:check
