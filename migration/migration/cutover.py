@@ -19,7 +19,7 @@ from psycopg import sql
 from . import db as dbmod
 from . import verify as verifymod
 from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask_config, prepare_source, \
-    sink_kafka_offsets, template_variables
+    drop_slot, sink_kafka_offsets, template_variables
 from .config import Config, ConfigError, load_config
 from .state import CutoverJob, CutoverStore, RequestStore
 from .worker_client import HttpWorkerClient, WorkerClientError
@@ -82,6 +82,7 @@ class DbPort(Protocol):
     def row_exists(self, target: str, request_id: str) -> bool: ...
     def latest_ids(self, target: str, n: int) -> list[str]: ...
     def prepare_source(self, target: str) -> dict[str, Any]: ...
+    def drop_source_slot(self, target: str) -> dict[str, Any]: ...
 
 
 class VerifyPort(Protocol):
@@ -165,7 +166,7 @@ class PgAdminPort:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
-                    "WHERE usename = %s AND pid <> pg_backend_pid()",
+                    "WHERE usename = %s AND datname = current_database() AND pid <> pg_backend_pid()",
                     (self._app_user(target),),
                 )
                 row = cur.fetchone()
@@ -221,6 +222,20 @@ class PgAdminPort:
         with self._admin(target) as conn:
             return prepare_source(conn, publication=job.publication_name, slot=job.slot_name, table=job.table,
                                   owner=self.config.target(target).user_spec("cdc").user)
+
+    def drop_source_slot(self, target: str) -> dict[str, Any]:
+        """커넥터 삭제 뒤 원본에 남은 비활성 slot 과 publication 을 지운다. 남겨 두면 WAL 이 계속 쌓인다."""
+        job = self.config.job
+        with self._admin(target) as conn:
+            slot_dropped = drop_slot(conn, job.slot_name)
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_publication WHERE pubname = %s", (job.publication_name,))
+                pub_exists = cur.fetchone() is not None
+                if pub_exists:
+                    cur.execute(sql.SQL("DROP PUBLICATION {}").format(sql.Identifier(job.publication_name)))
+            conn.commit()
+        return {"slot": job.slot_name, "slot_dropped": slot_dropped,
+                "publication": job.publication_name, "publication_dropped": pub_exists}
 
 
 class VerifyAdapter:
@@ -343,6 +358,12 @@ class Cutover:
         ws = self.p.worker.status()
         if ws.get("target") != self.source:
             problems.append(f"워커 target={ws.get('target')} 이 원본 {self.source} 가 아니다")
+        known = ws.get("known_targets")
+        if known is not None:  # 구버전 워커는 이 키가 없다
+            for name in (self.source, self.target):
+                if name not in known:
+                    problems.append(f"워커 설정에 target {name} 이 없다 (known_targets={list(known)}). "
+                                    "워커 ConfigMap 에 추가하지 않으면 SWITCHING 의 /target 전환이 실패한다")
         connectors = self.p.connect.list_connectors()
         if problems:
             raise CutoverError("PRECHECK 실패: " + "; ".join(problems))
@@ -501,7 +522,16 @@ class Cutover:
         result = self.p.verify.run("post", "final")
         if not result["passed"]:
             raise CutoverError(f"전환 후 검증 실패: {result}")
-        self._save(COMPLETED, verify_final=result, post_switch=info)
+        cleanup: dict[str, Any] = {"skipped": True}
+        if self.cc.drop_source_slot_on_complete:
+            def _cleanup() -> dict[str, Any]:
+                try:
+                    return self.p.db.drop_source_slot(self.source)
+                except Exception as exc:  # noqa: BLE001 - 정리 실패는 전환 결과를 바꾸지 않는다. 경고만 남기고 수동 정리로 넘긴다
+                    log.warning("원본 slot/publication 정리 실패 — 수동으로 `python -m migration.cdc drop-slot` 실행: %s", exc)
+                    return {"error": str(exc)}
+            cleanup = self._step("drop_source_slot", _cleanup)
+        self._save(COMPLETED, verify_final=result, post_switch=info, source_cleanup=cleanup)
 
     # ---- 실행 -----
 

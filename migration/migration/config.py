@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import yaml
 
 ROLES: tuple[str, ...] = ("admin", "app", "cdc", "sink", "verify")
+TARGET_KINDS = ("rds", "self_managed")
 
 DEFAULT_PASSWORD_ENV: dict[str, str] = {
     "admin": "MIGRATION_ADMIN_PASSWORD",
@@ -59,6 +60,8 @@ class TargetConfig:
     sslmode: str = "require"
     admin_dbname: str = "postgres"
     users: Mapping[str, UserSpec] = field(default_factory=dict)
+    # "rds" | "self_managed" | None. None 이면 init_db 가 job.source 여부로 추정한다 (source 가 아니면 RDS 취급).
+    kind: str | None = None
 
     def user_spec(self, role: str) -> UserSpec:
         if role not in ROLES:
@@ -144,6 +147,7 @@ class WorkerConfig:
 @dataclass(frozen=True)
 class CutoverConfig:
     state_dir: str = "/var/lib/worker"
+    drop_source_slot_on_complete: bool = True   # COMPLETED 직전에 원본 slot·publication 제거 (WAL 축적 방지)
     min_live_rows_after_snapshot: int = 100
     min_rows_after_switch: int = 100
     offset_stable_seconds: float = 10.0
@@ -196,6 +200,17 @@ class Config:
         )
 
 
+def _as_bool(value: Any, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "yes", "1", "on"):
+        return True
+    if text in ("false", "no", "0", "off"):
+        return False
+    raise ConfigError(f"{name}: true/false 여야 한다 (받은 값: {value!r})")
+
+
 def _as_int(value: Any, name: str) -> int:
     try:
         return int(value)
@@ -206,6 +221,9 @@ def _as_int(value: Any, name: str) -> int:
 def _parse_target(name: str, raw: Mapping[str, Any]) -> TargetConfig:
     if "host" not in raw:
         raise ConfigError(f"targets.{name}.host 가 없다")
+    kind = raw.get("kind")
+    if kind is not None and kind not in TARGET_KINDS:
+        raise ConfigError(f"targets.{name}.kind: 허용되는 값은 {TARGET_KINDS} (받은 값: {kind!r})")
     users: dict[str, UserSpec] = {}
     for role, entry in (raw.get("users") or {}).items():
         if role not in ROLES:
@@ -226,6 +244,7 @@ def _parse_target(name: str, raw: Mapping[str, Any]) -> TargetConfig:
         sslmode=str(raw.get("sslmode", "require")),
         admin_dbname=str(raw.get("admin_dbname", "postgres")),
         users=users,
+        kind=None if kind is None else str(kind),
     )
 
 
@@ -238,7 +257,9 @@ def _dataclass_from(cls: type, raw: Mapping[str, Any] | None, section: str) -> A
     kwargs: dict[str, Any] = {}
     for key, value in raw.items():
         ftype = allowed[key].type
-        if ftype in ("int", int):
+        if ftype in ("bool", bool):
+            kwargs[key] = _as_bool(value, f"{section}.{key}")
+        elif ftype in ("int", int):
             kwargs[key] = _as_int(value, f"{section}.{key}")
         elif ftype in ("float", float):
             kwargs[key] = float(value)

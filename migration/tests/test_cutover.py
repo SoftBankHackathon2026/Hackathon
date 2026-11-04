@@ -19,9 +19,11 @@ class FakeWorker:
         self.committed = {source: 1010}
         self.calls: list[str] = []
         self.last_switch: dict[str, Any] | None = None
+        self.known_targets = ["onprem", "aws"]
 
     def status(self) -> dict[str, Any]:
         return {"state": self.state, "target": self.target, "phase": self.phase, "in_flight": None,
+                "known_targets": list(self.known_targets),
                 "queue_length": 2, "counters": {"mismatch": 0}, "committed_by_target": dict(self.committed),
                 "last_switch": self.last_switch, "last_error": None}
 
@@ -95,6 +97,11 @@ class FakeDb:
     def row_exists(self, target, request_id): return request_id in self.target_rows or request_id.startswith("src-")
     def latest_ids(self, target, n): return [f"src-{i}" for i in range(n)]
     def prepare_source(self, target): self.calls.append("prepare"); return {"publication_created": True}
+    def drop_source_slot(self, target):
+        self.calls.append(f"drop_slot:{target}")
+        if getattr(self, "drop_fails", False):
+            raise RuntimeError("슬롯이 아직 활성 상태다")
+        return {"slot": "forward_001", "slot_dropped": True, "publication": "forward_001_pub", "publication_dropped": True}
 
 
 class FakeVerify:
@@ -170,7 +177,8 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     assert cut2.run() == COMPLETED
     w, db, connect, verify = fakes["worker"], fakes["db"], fakes["connect"], fakes["verify"]
     assert w.calls == ["pause", "drain", "switch:aws", "resume"]
-    assert db.calls == ["prepare", "revoke:onprem", "grant:aws"]
+    assert db.calls == ["prepare", "revoke:onprem", "grant:aws", "drop_slot:onprem"]
+    assert cp_cleanup(cut2)["slot_dropped"] is True
     assert db.terminated == 1
     assert connect.deletes == [config.job.source_connector, config.job.sink_connector]
     assert [m for m, _ in verify.runs] == ["pre", "pre", "post"]
@@ -181,6 +189,49 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     assert cp["verify_final"]["passed"] and "sink_offsets" in cp["drained"]
     steps = [s for s, _ in cut2.store.steps(config.job.job_id)]
     assert "grant_target_app_insert" in steps and "delete_source_connector" in steps
+
+
+def cp_cleanup(cut):
+    return cut.job.checkpoint["source_cleanup"]
+
+
+def test_precheck_fails_when_worker_does_not_know_target(config, state_dir, fakes):
+    """워커 ConfigMap 에 대상 target 이 없으면 SWITCHING 에서 터지기 전에 PRECHECK 가 막는다 (귀환 onprem_return 사례)."""
+    fakes["worker"].known_targets = ["onprem"]
+    cut = _build(config, state_dir, fakes)
+    with pytest.raises(CutoverError, match="워커 설정에 target aws"):
+        cut.run()
+    assert cut.job.stage == ABORTED and cut.job.checkpoint["failed_stage"] == PRECHECK
+
+
+def test_old_worker_without_known_targets_still_passes_precheck(config, state_dir, fakes):
+    w = fakes["worker"]
+    orig = w.status
+    w.status = lambda: {k: v for k, v in orig().items() if k != "known_targets"}
+    _simulate_replication(fakes)
+    with pytest.raises(ApprovalRequired):
+        _build(config, state_dir, fakes).run()
+
+
+def test_slot_cleanup_failure_does_not_fail_cutover(config, state_dir, fakes):
+    _simulate_replication(fakes)
+    _grow_target_commits(fakes)
+    fakes["db"].drop_fails = True
+    cut = _build(config, state_dir, fakes, approve="a")
+    assert cut.run() == COMPLETED
+    assert "error" in cp_cleanup(cut)
+
+
+def test_slot_cleanup_can_be_disabled(state_dir, fakes):
+    from migration.config import parse_config
+    from tests.conftest import RAW_CONFIG
+    raw = {**RAW_CONFIG, "cutover": {**RAW_CONFIG.get("cutover", {}), "drop_source_slot_on_complete": False}}
+    config = parse_config(raw)
+    _simulate_replication(fakes)
+    _grow_target_commits(fakes)
+    cut = _build(config, state_dir, fakes, approve="a")
+    assert cut.run() == COMPLETED
+    assert cp_cleanup(cut) == {"skipped": True} and "drop_slot:onprem" not in fakes["db"].calls
 
 
 def test_rerun_does_not_repeat_external_steps(config, state_dir, fakes):

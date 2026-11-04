@@ -12,6 +12,7 @@
 targets:
   aws:
     host: CHANGE-ME.rds.amazonaws.com   # oneaction-infra database 스택의 RDS 엔드포인트
+    kind: rds                            # RDS: REPLICATION 속성 대신 rds_replication 역할 (init_db·cutover 판단 근거)
     port: 5432
     dbname: migration_demo
     sslmode: require                     # RDS 파라미터 rds.force_ssl=1
