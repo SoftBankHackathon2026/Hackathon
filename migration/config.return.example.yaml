@@ -41,7 +41,7 @@ targets:
     admin_dbname: postgres
     users:
       admin:
-        user: postgres
+        user: oneaction_admin            # 온프렘 Postgres 슈퍼유저 (Secret review-db-credentials 의 username)
         password_env: MIGRATION_ADMIN_PASSWORD
       app:
         user: migration_app
