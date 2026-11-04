@@ -376,10 +376,11 @@ class Cutover:
             doc = self.docs[kind]
             self._step(f"register_{kind}", lambda d=doc: {"name": d["name"], "config": mask_config(
                 self.p.connect.put_config(d["name"], d["config"]) or d["config"])})
-        seed_src = self.p.db.count_rows(self.source, "seed")
-
         def snapshot_done() -> tuple[bool, dict[str, Any]]:
             healthy, states = self._connectors_healthy()
+            # seed 건수는 매번 다시 읽는다. 단계 시작 때 한 번만 읽으면 seed 를 나중에 넣었을 때
+            # (2026-11-05 리허설처럼) 양쪽이 1,000건이어도 영원히 기다리다 타임아웃된다.
+            seed_src = self.p.db.count_rows(self.source, "seed")
             seed_tgt = self.p.db.count_rows(self.target, "seed")
             return healthy and seed_tgt >= seed_src and seed_src > 0, {"connectors": states, "seed_source": seed_src, "seed_target": seed_tgt}
 
