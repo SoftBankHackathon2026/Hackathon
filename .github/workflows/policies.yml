@@ -1,0 +1,141 @@
+# policies/ (OPA Rego) 를 검사하고 정책 서버 이미지(migration-policy)를 GHCR 에 올린다.
+# migration-images.yml 과 분리한 이유: 정책은 도구 코드와 다른 주기로 바뀌고, 이미지에 굽기 전에
+# opa fmt/check/test 와 예시 대조를 통과해야 하기 때문이다.
+#
+# - push to main (policies/** 변경) : 테스트 → 빌드 + push (태그: <full sha>, main)
+# - pull_request (policies/** 변경) : 테스트 → 빌드만, push 없음
+# - workflow_dispatch               : 수동
+#
+# gitops 의 apps/migration-policy/kustomization.yaml 태그 교체는 사람이 한다 (정책 버전 = 이미지 태그).
+name: policies
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "policies/**"
+      - ".github/workflows/policies.yml"
+  pull_request:
+    paths:
+      - "policies/**"
+      - ".github/workflows/policies.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: policies-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/softbankhackathon2026/migration-policy
+  OPA_VERSION: 1.22.0   # policies/Dockerfile 의 베이스 이미지와 같게 둔다
+
+jobs:
+  test:
+    name: opa fmt / check / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: ${{ env.OPA_VERSION }}
+
+      - name: fmt / check / test
+        working-directory: policies
+        run: |
+          # examples/*.json 은 data 로 자동 적재돼 서로 충돌하므로 테스트 로드에서 뺀다
+          opa fmt --fail -l .
+          opa check --strict --ignore examples --ignore schema .
+          opa test --ignore examples --ignore schema . -v
+
+      # examples/*.json 을 실제 정책으로 평가해 expected.json 과 대조한다.
+      - name: Examples match expected.json
+        working-directory: policies
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, pathlib
+          ex = pathlib.Path("examples"); exp = json.loads((ex / "expected.json").read_text())
+          bad = []
+          for name, want in exp.items():
+              out = subprocess.run(["opa", "eval", "-d", "migration.rego", "-i", str(ex / f"{name}.json"),
+                                    "--format", "json", "data.ghost.migration.decision"],
+                                   capture_output=True, text=True, check=True)
+              d = json.loads(out.stdout)["result"][0]["expressions"][0]["value"]
+              got = {"outcome": d["outcome"], "reason_codes": d["reason_codes"]}
+              if got != want or d["allowed"] != (want["outcome"] == "allow"):
+                  bad.append((name, got, want))
+          for b in bad:
+              print("MISMATCH", *b)
+          raise SystemExit(1 if bad else 0)
+          PY
+
+      # 파이썬 클라이언트(policy_client) 테스트. opa 가 있으므로 Rego 연동 케이스까지 돈다.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: pytest policy_client
+        working-directory: migration
+        run: |
+          pip install -q ".[dev]"
+          python -m pytest tests/test_policy_client.py -q
+
+  build:
+    name: build migration-policy
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=main,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=migration-policy
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: policies
+          file: policies/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=migration-policy
+          cache-to: type=gha,mode=max,scope=migration-policy
+
+      - name: Summary
+        run: |
+          {
+            echo "### migration-policy"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo "pushed: ${{ github.event_name != 'pull_request' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

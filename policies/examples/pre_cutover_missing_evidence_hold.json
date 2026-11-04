@@ -1,0 +1,44 @@
+{
+  "schema_version": "1",
+  "job_id": "forward_001",
+  "stage": "pre_cutover",
+  "now": "2026-11-03T12:00:00Z",
+  "plan": {
+    "digest": "sha256:0f3a9c…plan-v3",
+    "source": "onprem",
+    "target": "aws",
+    "approved_locations": [
+      "ap-northeast-2"
+    ],
+    "limits": {
+      "evidence_ttl_seconds": 300,
+      "write_wait_max_seconds": 30
+    }
+  },
+  "evidence": {
+    "snapshot_id": "snap-forward_001-0007",
+    "plan_digest": "sha256:0f3a9c…plan-v3",
+    "checks": {
+      "target_db_exposure": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "evidence.aws",
+        "evidence_id": "ev-target_db_exposure-0001",
+        "detail": {
+          "public": false,
+          "target_id": "rds:migration-demo"
+        }
+      },
+      "target_location": {
+        "status": "pass",
+        "observed_at": "2026-11-03T11:58:30Z",
+        "source": "evidence.aws",
+        "evidence_id": "ev-target_location-0001",
+        "detail": {
+          "location": "ap-northeast-2",
+          "target_id": "rds:migration-demo"
+        }
+      }
+    }
+  }
+}
