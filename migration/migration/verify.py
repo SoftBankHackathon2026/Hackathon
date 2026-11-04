@@ -63,6 +63,7 @@ class Comparison:
     missing_in_target: list[str] = field(default_factory=list)      # B - T
     unexpected_in_target: list[str] = field(default_factory=list)   # T - B (허용 집합 제외)
     allowed_extra_in_target: list[str] = field(default_factory=list)  # 전환 후 T-B 중 S(target) 에 있는 것
+    other_writer_in_target: list[str] = field(default_factory=list)  # post: 대상에만 있고 워커 ledger 에도 없는 것 (앱 등 다른 writer). 실패 아님
     field_mismatch: list[dict[str, Any]] = field(default_factory=list)
     committed_missing_in_target: list[str] = field(default_factory=list)  # S - T
     committed_missing_in_source: list[str] = field(default_factory=list)  # S(source) - B, 참고용
@@ -88,6 +89,7 @@ class Comparison:
             "target_count": self.target_count,
             "committed_count": self.committed_count,
             "allowed_extra_in_target_count": len(self.allowed_extra_in_target),
+            "other_writer_in_target_count": len(self.other_writer_in_target),
             "committed_missing_in_source_count": len(self.committed_missing_in_source),
             "samples": {
                 "B_minus_T": sorted(self.missing_in_target)[:SAMPLE_LIMIT],
@@ -95,6 +97,7 @@ class Comparison:
                 "field_mismatch": self.field_mismatch[:SAMPLE_LIMIT],
                 "S_minus_T": sorted(self.committed_missing_in_target)[:SAMPLE_LIMIT],
                 "allowed_extra_in_target": sorted(self.allowed_extra_in_target)[:SAMPLE_LIMIT],
+                "other_writer_in_target": sorted(self.other_writer_in_target)[:SAMPLE_LIMIT],
                 "committed_missing_in_source": sorted(self.committed_missing_in_source)[:SAMPLE_LIMIT],
             },
         }
@@ -106,15 +109,23 @@ def compare(
     committed: set[str],
     *,
     allowed_extra: set[str] | None = None,
+    tolerate_other_writers: bool = False,
 ) -> Comparison:
-    """B/T/S 집합 판정. allowed_extra 는 전환 후 대상에서만 커밋된 요청 ID (T-B 로 세지 않는다)."""
+    """B/T/S 집합 판정. allowed_extra 는 전환 후 대상에서만 커밋된 요청 ID (T-B 로 세지 않는다).
+
+    tolerate_other_writers (post 모드): 원본은 이미 fencing 돼 있으므로 대상에만 있는 행은 전환 뒤 다른 writer
+    (데모 앱·트래픽 봇 등)가 쓴 것이다. 실패로 세지 않고 other_writer_in_target 으로만 보고한다.
+    """
     allowed_extra = allowed_extra or set()
     cmp = Comparison(source_count=len(source), target_count=len(target), committed_count=len(committed))
     src_ids, tgt_ids = set(source), set(target)
     cmp.missing_in_target = sorted(src_ids - tgt_ids)
     extra = tgt_ids - src_ids
     cmp.allowed_extra_in_target = sorted(extra & allowed_extra)
-    cmp.unexpected_in_target = sorted(extra - allowed_extra)
+    if tolerate_other_writers:
+        cmp.other_writer_in_target = sorted(extra - allowed_extra)
+    else:
+        cmp.unexpected_in_target = sorted(extra - allowed_extra)
     for rid in src_ids & tgt_ids:
         s, t = source[rid], target[rid]
         if s != t:
@@ -140,14 +151,9 @@ def run(
     table = config.job.table
     src_spec = config.connection(source, "verify", application_name="migration-verify")
     tgt_spec = config.connection(target, "verify", application_name="migration-verify")
-    log.info("원본 %s / 대상 %s 전체 행 읽기", src_spec, tgt_spec)
-    with dbmod.connect(src_spec, statement_timeout_ms=600_000) as sconn:
-        src_ident = dbmod.server_identity(sconn).as_dict()
-        src_rows = load_rows(sconn, table)
-    with dbmod.connect(tgt_spec, statement_timeout_ms=600_000) as tconn:
-        tgt_ident = dbmod.server_identity(tconn).as_dict()
-        tgt_rows = load_rows(tconn, table)
-
+    # ledger(S 집합)를 DB 보다 먼저 읽는다. 워커가 계속 쓰는 중에 DB 를 먼저 읽으면 그 사이에 커밋된 요청이
+    # ledger 에만 있어 S-T 로 잘못 잡힌다(2026-11-05 리허설). 먼저 읽으면 그 사이 커밋은 대상에만 있는
+    # 행이 되고, post 모드에서는 other_writer_in_target 으로 보고될 뿐 실패가 아니다.
     committed: set[str] = set()
     committed_on_target: set[str] = set()
     if state_dir is not None:
@@ -160,8 +166,16 @@ def run(
     else:
         log.warning("--state-dir 없음: S 집합(커밋 확인 요청) 비교를 건너뛴다")
 
+    log.info("원본 %s / 대상 %s 전체 행 읽기", src_spec, tgt_spec)
+    with dbmod.connect(src_spec, statement_timeout_ms=600_000) as sconn:
+        src_ident = dbmod.server_identity(sconn).as_dict()
+        src_rows = load_rows(sconn, table)
+    with dbmod.connect(tgt_spec, statement_timeout_ms=600_000) as tconn:
+        tgt_ident = dbmod.server_identity(tconn).as_dict()
+        tgt_rows = load_rows(tconn, table)
+
     allowed_extra = committed_on_target if mode == "post" else set()
-    cmp = compare(src_rows, tgt_rows, committed, allowed_extra=allowed_extra)
+    cmp = compare(src_rows, tgt_rows, committed, allowed_extra=allowed_extra, tolerate_other_writers=(mode == "post"))
     report = {
         "generated_at": datetime.now(UTC).isoformat(),
         "job_id": config.job.job_id,
@@ -177,9 +191,9 @@ def run(
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(text, encoding="utf-8")
         log.info("보고서 저장: %s", report_path)
-    log.info("판정 %s: counts=%s source=%d target=%d committed=%d allowed_extra=%d",
+    log.info("판정 %s: counts=%s source=%d target=%d committed=%d allowed_extra=%d other_writer=%d",
              "PASS" if cmp.passed else "FAIL", cmp.counts, cmp.source_count, cmp.target_count,
-             cmp.committed_count, len(cmp.allowed_extra_in_target))
+             cmp.committed_count, len(cmp.allowed_extra_in_target), len(cmp.other_writer_in_target))
     return cmp
 
 
