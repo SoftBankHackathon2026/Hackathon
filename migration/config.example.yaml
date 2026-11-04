@@ -10,7 +10,7 @@ targets:
     admin_dbname: postgres    # CREATE DATABASE 용 유지보수 DB
     users:
       admin:
-        user: postgres
+        user: oneaction_admin   # 온프렘 플랫폼 Postgres 슈퍼유저 (Secret review-db-credentials)
         password_env: MIGRATION_ADMIN_PASSWORD
       app:
         user: migration_app
@@ -33,7 +33,7 @@ targets:
     admin_dbname: postgres
     users:
       admin:
-        user: postgres
+        user: oneaction_admin   # oneaction-infra database 스택의 RDS 마스터 계정
         password_env: MIGRATION_AWS_ADMIN_PASSWORD
       app:
         user: migration_app
