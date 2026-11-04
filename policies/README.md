@@ -1,9 +1,13 @@
 # policies — 이전 허용·보류·거절 정책 (OPA/Rego)
 
+처음이면 [개념.md](개념.md) → [사용법.md](사용법.md) 순서로 읽는다. 이 README는 규칙 표와 요약이다.
+
 온프렘→AWS DB 이전의 각 단계를 **어떤 조건에서 실행해도 되는지** 판정한다. 설계와 규칙 선정 근거는
 `업무-아젠다/04-정책과-OPA.md`, 호출 쪽 코드는 [`migration/migration/policy_client.py`](../migration/migration/policy_client.py).
 
 ```
+개념.md                   OPA가 뭐고 어디에 서 있는지, 하지 않는 것
+사용법.md                 검증 4단계, 입력 만들기, 규칙 바꾸기, 배포, 자주 나는 문제
 migration.rego            정책 본문 (package ghost.migration, 결과는 data.ghost.migration.decision)
 migration_test.rego       opa test 단위 테스트
 schema/input.schema.json  입력 계약 (schema_version 1)
