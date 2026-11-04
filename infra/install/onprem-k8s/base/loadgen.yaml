@@ -25,7 +25,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: loadgen
-          image: ghcr.io/crystal-sbhackathon2026/sample-app:85bb60869af2b9acb14787a6c4c8a61099fd8d6d
+          image: ghcr.io/softbankhackathon2026/sample-app:e7d67be7970a602d87a5acbc79e0f4167aa4eaa8
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
