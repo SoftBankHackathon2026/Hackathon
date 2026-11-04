@@ -1,0 +1,25 @@
+# 익명 모의 예시: 실제 로그인/권한 수집 자료가 아닙니다.
+schema_version: 1
+direction: keycloak-to-kubernetes
+workload: namespace-read
+source:
+  provider: keycloak
+  scope: demo
+  identity: group-readers-id
+  resource: /readers
+  options:
+    url: https://identity.example.invalid
+    version: 26.4.2
+target:
+  provider: kubernetes
+  scope: reports
+  identity: oidc:readers
+  resource: reports
+  options:
+    url: https://cluster.example.invalid:6443
+    context: isolated-test
+    group_claim_confirmed: true
+allowed_changes:
+- kubernetes.role
+- kubernetes.role_binding
+verification: []

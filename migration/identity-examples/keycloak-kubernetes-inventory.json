@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "spec_digest": "2642ec78db9894af845a7fd001b3e483b54c46663287f46febe021e3d163b91c",
+  "source": {
+    "endpoint": {
+      "provider": "keycloak",
+      "scope": "demo",
+      "identity": "group-readers-id",
+      "resource": "/readers",
+      "options": {
+        "url": "https://identity.example.invalid",
+        "version": "26.4.2"
+      }
+    },
+    "identities": [
+      {
+        "stable_id": "group-readers-id",
+        "name": "/readers",
+        "kind": "group"
+      }
+    ],
+    "policies": [
+      {
+        "kind": "kubernetes.rules",
+        "rules": [
+          {
+            "apiGroups": [
+              ""
+            ],
+            "resources": [
+              "pods"
+            ],
+            "verbs": [
+              "get",
+              "list",
+              "watch"
+            ]
+          }
+        ]
+      }
+    ],
+    "trust": [],
+    "coverage": {
+      "resource_constraints": "complete",
+      "identity": "complete",
+      "boundary": "complete",
+      "identity_policies": "complete",
+      "session": "complete",
+      "organization": "complete",
+      "resource_policy": "complete"
+    },
+    "observations": {},
+    "relationships": [],
+    "evidence": [],
+    "limitations": [
+      "SIMULATED entitlement fixture; not a real Keycloak or cluster inventory."
+    ],
+    "collected_at": "2026-11-04T12:23:44.668677+00:00"
+  },
+  "target": {
+    "endpoint": {
+      "provider": "kubernetes",
+      "scope": "reports",
+      "identity": "oidc:readers",
+      "resource": "reports",
+      "options": {
+        "url": "https://cluster.example.invalid:6443",
+        "context": "isolated-test",
+        "group_claim_confirmed": true
+      }
+    },
+    "identities": [],
+    "policies": [],
+    "trust": [],
+    "coverage": {
+      "resource_constraints": "complete",
+      "identity": "complete",
+      "boundary": "complete",
+      "identity_policies": "complete",
+      "session": "complete",
+      "organization": "complete",
+      "resource_policy": "complete"
+    },
+    "observations": {
+      "kubernetes.role|reports/migration-namespace-read": {
+        "exists": false,
+        "body": {},
+        "version": null
+      },
+      "kubernetes.role_binding|reports/migration-namespace-read": {
+        "exists": false,
+        "body": {},
+        "version": null
+      }
+    },
+    "relationships": [],
+    "evidence": [],
+    "limitations": [
+      "SIMULATED entitlement fixture; not a real Keycloak or cluster inventory."
+    ],
+    "collected_at": "2026-11-04T12:23:44.668807+00:00"
+  }
+}

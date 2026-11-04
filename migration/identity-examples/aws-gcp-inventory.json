@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "spec_digest": "466ec76b97581b966950bee9d20732796aa2695a560b4739a91bd556af8381b8",
+  "source": {
+    "endpoint": {
+      "provider": "aws",
+      "scope": "111111111111",
+      "identity": "arn:aws:iam::111111111111:role/ReportReader",
+      "resource": "source-reports-example",
+      "options": {}
+    },
+    "identities": [
+      {
+        "provider": "aws",
+        "scope": "111111111111",
+        "id": "AROAEXAMPLEIMMUTABLE",
+        "name": "arn:aws:iam::111111111111:role/ReportReader"
+      }
+    ],
+    "policies": [
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:ListBucket",
+            "Resource": "arn:aws:s3:::source-reports-example"
+          },
+          {
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::source-reports-example/*"
+          }
+        ]
+      }
+    ],
+    "trust": [
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Principal": {
+              "Service": "ec2.amazonaws.com"
+            }
+          }
+        ]
+      }
+    ],
+    "coverage": {
+      "session": "complete",
+      "identity_policies": "complete",
+      "boundary": "complete",
+      "resource_constraints": "complete",
+      "identity": "complete",
+      "organization": "complete",
+      "resource_policy": "complete"
+    },
+    "observations": {},
+    "relationships": [],
+    "evidence": [],
+    "limitations": [
+      "SIMULATED anonymized contract fixture. Not collected from a real environment."
+    ]
+  },
+  "target": {
+    "endpoint": {
+      "provider": "gcp",
+      "scope": "migration-demo-example",
+      "identity": "report-reader@migration-demo-example.iam.gserviceaccount.com",
+      "resource": "target-reports-example",
+      "options": {}
+    },
+    "identities": [],
+    "policies": [],
+    "trust": [],
+    "coverage": {
+      "session": "complete",
+      "identity_policies": "complete",
+      "boundary": "complete",
+      "resource_constraints": "complete",
+      "identity": "complete",
+      "organization": "complete",
+      "resource_policy": "complete"
+    },
+    "observations": {
+      "gcp.service_account|report-reader@migration-demo-example.iam.gserviceaccount.com": {
+        "exists": false,
+        "body": {},
+        "version": null
+      },
+      "gcp.custom_role|projects/migration-demo-example/roles/MigrationObjectRead": {
+        "exists": false,
+        "body": {},
+        "version": null
+      },
+      "gcp.bucket_binding|target-reports-example": {
+        "exists": true,
+        "body": {
+          "etag": "example-etag",
+          "version": 3,
+          "bindings": []
+        },
+        "version": "example-etag"
+      }
+    },
+    "relationships": [],
+    "evidence": [],
+    "limitations": [
+      "SIMULATED anonymized contract fixture. Not collected from a real environment."
+    ]
+  }
+}

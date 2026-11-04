@@ -1,0 +1,1 @@
+{"version":"2026-11-04.1","aws_to_gcp":{"s3:ListBucket":"storage.objects.list","s3:GetObject":"storage.objects.get"},"gcp_to_aws":{"storage.objects.list":"s3:ListBucket","storage.objects.get":"s3:GetObject"},"unsupported":["conditions","deny","NotAction","NotResource","permission_boundary","unknown_organization_policy","federation_configuration","generic_onprem_to_cloud"]}

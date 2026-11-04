@@ -1,0 +1,27 @@
+# 익명 모의 예시
+schema_version: 1
+direction: gcp-to-aws
+workload: object-read
+source:
+  provider: gcp
+  scope: migration-demo-example
+  identity: report-reader@migration-demo-example.iam.gserviceaccount.com
+  resource: target-reports-example
+  options: {}
+target:
+  provider: aws
+  scope: '111111111111'
+  identity: arn:aws:iam::111111111111:role/ReportReader
+  resource: source-reports-example
+  options:
+    trust_policy:
+      Version: '2012-10-17'
+      Statement:
+      - Effect: Allow
+        Action: sts:AssumeRole
+        Principal:
+          Service: ec2.amazonaws.com
+allowed_changes:
+- aws.role
+- aws.inline_policy
+verification: []

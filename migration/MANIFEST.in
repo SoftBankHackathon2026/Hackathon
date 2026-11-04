@@ -1,0 +1,5 @@
+include Dockerfile.identity identity-requirements.lock
+recursive-include migration/identity/rules/data *.json
+recursive-include tests/identity *.py *.json *.yaml
+recursive-include identity-examples *.json *.yaml *.md
+recursive-include docs/identity *.md

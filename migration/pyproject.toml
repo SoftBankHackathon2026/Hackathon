@@ -16,13 +16,26 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+identity-aws = ["boto3==1.43.123"]
+identity-gcp = ["google-auth==2.62.1", "google-api-python-client==2.201.0"]
+identity-keycloak = ["httpx==0.28.1"]
+identity-k8s = ["kubernetes==35.0.0"]
+identity-openstack = ["openstacksdk==4.22.0"]
+identity-all = [
+    "boto3==1.43.123", "google-auth==2.62.1", "google-api-python-client==2.201.0",
+    "httpx==0.28.1", "kubernetes==35.0.0", "openstacksdk==4.22.0",
+]
 
-[tool.setuptools]
-packages = ["migration"]
+[tool.setuptools.packages.find]
+include = ["migration", "migration.*"]
+
+[tool.setuptools.package-data]
+"migration.identity.rules" = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -ra"
 markers = [
     "integration: 실제 PostgreSQL이 필요한 테스트 (MIGRATION_TEST_DSN 설정 시 실행)",
+    "identity_live: 별도 시험 계정과 자원을 요구하는 실제 권한 시험",
 ]

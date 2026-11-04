@@ -1,0 +1,47 @@
+# 익명 모의 예시입니다. 실제 계정에 적용하지 마세요.
+schema_version: 1
+direction: aws-to-gcp
+workload: object-read
+source:
+  provider: aws
+  scope: '111111111111'
+  identity: arn:aws:iam::111111111111:role/ReportReader
+  resource: source-reports-example
+  options: {}
+target:
+  provider: gcp
+  scope: migration-demo-example
+  identity: report-reader@migration-demo-example.iam.gserviceaccount.com
+  resource: target-reports-example
+  options: {}
+allowed_changes:
+- gcp.service_account
+- gcp.custom_role
+- gcp.bucket_binding
+verification:
+- id: list-target
+  action: list
+  resource: target-reports-example
+  expect: allowed
+- id: get-target
+  action: get
+  resource: target-reports-example
+  object: sample.txt
+  expect: allowed
+- id: get-outside
+  action: get
+  resource: outside-reports-example
+  object: sample.txt
+  expect: denied
+- id: put-isolated
+  action: put
+  resource: isolated-probes-example
+  object: probe.txt
+  isolated: true
+  expect: denied
+- id: delete-isolated
+  action: delete
+  resource: isolated-probes-example
+  object: probe.txt
+  isolated: true
+  expect: denied

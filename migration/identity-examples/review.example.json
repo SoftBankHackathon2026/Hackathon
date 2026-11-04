@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "plan_digest": "REPLACE_WITH_EXACT_REVIEWED_PLAN_DIGEST",
+  "reviewer": "example-reviewer",
+  "reference": "example-change-record-001"
+}
