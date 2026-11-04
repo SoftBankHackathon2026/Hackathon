@@ -120,7 +120,22 @@ class PgAdminPort:
                 info["wal_level"] = row[0] if row else None
                 if is_source:
                     cdc = self.config.target(target).user_spec("cdc").user
-                    cur.execute("SELECT rolreplication FROM pg_roles WHERE rolname = %s", (cdc,))
+                    # RDS 는 REPLICATION 속성 대신 rds_replication 역할 멤버십으로 권한을 주므로
+                    # rolreplication 만 보면 귀환(AWS 원본) PRECHECK 가 실패한다. 둘 중 하나면 통과.
+                    # rds_replication 역할이 없는 일반 PostgreSQL 에서도 오류 없이 false 가 되도록
+                    # pg_has_role 을 역할 존재 여부로 감싼다.
+                    cur.execute(
+                        """
+                        SELECT r.rolreplication
+                               OR EXISTS (
+                                   SELECT 1 FROM pg_roles g
+                                   WHERE g.rolname = 'rds_replication'
+                                     AND pg_has_role(r.oid, g.oid, 'MEMBER')
+                               )
+                        FROM pg_roles r WHERE r.rolname = %s
+                        """,
+                        (cdc,),
+                    )
                     row = cur.fetchone()
                     info["cdc_replication"] = bool(row and row[0])
             conn.commit()
