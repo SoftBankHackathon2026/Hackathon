@@ -1,0 +1,252 @@
+# 🔴 부산 로컬 k3s 전용. EKS 용은 notifications-cm.yaml 이고, **둘은 url 한 줄만 다르다.**
+#
+# 왜 파일을 따로 두나
+#   로컬 Argo CD 는 노트북 안에서 돌아 `platform.platform.svc.cluster.local`(EKS 클러스터
+#   내부 주소)에 닿지 못한다. 그래서 박찬건님이 만든 공개 HTTPS 경로로 보낸다.
+#     로컬 Argo CD → API Gateway → VPC Link → 내부 ALB → Review API
+#   인증은 EKS 와 같은 Bearer 토큰이다. 값은 Secrets Manager 에만 있고,
+#   로컬 Secret 에는 infra 레포의 Sync-LocalWebhookToken.ps1 이 넣는다 (git 에 남기지 않는다).
+#
+# 🔴 템플릿 본문은 EKS 것과 **글자까지 같아야 한다.** 어긋나면 수신 쪽이 환경마다 다른
+#   필드를 받는다. 고칠 때는 두 파일을 같이 고치고 아래로 확인할 것.
+#
+#     diff <(grep -v '^#' argocd/notifications/notifications-cm.yaml) #          <(grep -v '^#' argocd/notifications/notifications-cm.local.yaml)
+#     → url 한 줄만 달라야 한다
+#
+# 🔴 argocd/ 아래는 Argo CD 가 읽지 않는다. 로컬 클러스터에 손으로 넣는다.
+#     kubectl --context k3d-crystal-busan apply -f argocd/notifications/notifications-cm.local.yaml
+#
+# 배포 성공·실패를 검토 서비스로 보낸다. 업무 DB 에 baseline 이 쌓여야
+# "이전 배포와 비교하는" 규칙(DB 엔진 변경·볼륨 축소 등)이 걸린다.
+#
+# Argo CD 설치가 만든 빈 argocd-notifications-cm 을 이 내용으로 덮는다.
+# notifications 컨트롤러가 ConfigMap 변경을 감지해 다시 읽으므로 재시작은 필요 없다.
+# (argocd-cm 과 다르다 — 그쪽은 설치가 넣은 키가 9개라 apply 하면 지워진다)
+#
+# ──────────────────────────────────────────────────────────────────────────
+# 지금 두 형식이 함께 들어 있다 (2026-10-09, 김연재 요청)
+#
+#   deploy-result-*  (3개)        deployment.result/v1. 지금 실제로 가는 것
+#
+# ✅ 2026-10-10 에 전환했다. 옛 형식(template.deploy-result)은 지웠다.
+#    순서를 지킨 근거: review-service#53 이 배포된 뒤에 켰다
+#    (EKS 배포본 10ba274f 에 #53 포함, behind 0 확인).
+#
+#    뒤집으면 안 되는 이유 — sync_failed 는 health 가 Healthy 일 수 있어서,
+#    health 만 보던 옛 수신 코드가 그것을 "성공" 으로 읽는다. 실패가 정상 baseline 으로 쌓인다.
+# ──────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # 클러스터 안에서 부르므로 Service 주소를 쓴다. 토큰은 argocd-notifications-secret 에서 온다.
+  service.webhook.review-api: |
+    url: http://platform.hackathon.svc.cluster.local:8080/webhooks/argocd
+    headers:
+      - name: Authorization
+        value: Bearer $ARGOCD_WEBHOOK_TOKEN
+      - name: Content-Type
+        value: application/json
+
+  # ── 옛 형식 (지금 가는 것) ───────────────────────────────────────────────
+  #
+  # app·env 는 Application annotation 에서 읽는다.
+  # Application 이름(sample-app-aws)을 잘라 쓰지 않는 이유: 앱 이름은 deploy.yaml 의
+  # metadata.name 이라 Application 이름과 어긋날 수 있다.
+  # images 는 검토 서비스가 병합 SHA 와 매칭하는 키라 반드시 들어가야 한다.
+  # ── deployment.result/v1 (2026-10-10 전환 완료) ──────────────────────────
+  #
+  # 옛 5필드 템플릿(template.deploy-result)은 지웠다. review-service#53 이 배포돼
+  # 수신 쪽이 이 형식을 받는다 (EKS 배포본 10ba274f 에 #53 포함, behind 0 확인).
+  # 수신 쪽은 옛 형식도 계속 받으므로 켜는 순서가 어긋나도 알림이 버려지지는 않는다.
+  #
+  # 🔴 세 템플릿의 본문은 event_type 한 줄만 다르고 나머지는 글자까지 같아야 한다.
+  #    Notifications 에는 템플릿 include 가 없어서 베낄 수밖에 없다.
+  #    어긋나면 수신 쪽이 알림 종류마다 다른 필드를 받는다.
+  #    고칠 때 셋 다 고치고 아래를 돌려서 어긋나지 않았는지 확인할 것.
+  #
+  #      python argocd/notifications/check-templates.py
+  #
+  # event_type 을 앱 상태에서 **유도하지 않는다.** 트리거마다 고정값으로 박는다.
+  # health · sync_status · operation.phase 는 서로 다른 관측값이고, 보내는 쪽이
+  # 하나의 성공/실패로 합치면 수신 쪽이 구분할 수 없게 된다 (김연재 명세).
+  #
+  # 왜 dig 를 쓰나 — `.app.status.health.message` 처럼 바로 타고 들어가면
+  # 중간 단계(health)가 없을 때 템플릿이 nil pointer 로 죽고, 그러면 알림이
+  # 조용히 안 간다. dig 는 없으면 기본값을 준다. v3.5.4 에서 동작 확인했다.
+  #
+  # cluster_id 는 destination.name 이 비면 server 로 떨어뜨린다. 지금 sample-app-aws 는
+  # name 이 없어서(server: kubernetes.default.svc) 실제로 이 길로 간다. 로컬·GCP 는
+  # 이름(crystal-busan · tokyo-gke)으로 등록돼 있어 name 이 온다.
+  template.deploy-result-deployed: |
+    webhook:
+      review-api:
+        method: POST
+        body: |
+          {{- $dest := dig "spec" "destination" (dict) .app -}}
+          {{- $op := dig "status" "operationState" (dict) .app -}}
+          {{- /* 🔴 멀티소스 Application 은 단일 revision 이 비고 revisions 배열만 찬다 (#45 뒤). */ -}}
+          {{- /*    단일소스(review-service-aws)는 반대라 양쪽을 다 다뤄야 한다. */ -}}
+          {{- $rev := dig "status" "sync" "revision" nil .app -}}
+          {{- $revs := dig "status" "sync" "revisions" (list) .app -}}
+          {{- if $revs }}{{ $rev = index $revs 0 }}{{ end -}}
+          {{- $oprev := dig "syncResult" "revision" nil $op -}}
+          {{- $oprevs := dig "syncResult" "revisions" (list) $op -}}
+          {{- if $oprevs }}{{ $oprev = index $oprevs 0 }}{{ end -}}
+          {
+            "schema_version": "deployment.result/v1",
+            "event_type": "deployed",
+            "app": {{toJson (dig "metadata" "annotations" "oneaction.crystal/app" "" .app)}},
+            "env": {{toJson (dig "metadata" "annotations" "oneaction.crystal/env" "" .app)}},
+            "argocd_app": {{toJson (dig "metadata" "name" "" .app)}},
+            "cluster_id": {{toJson (default (dig "server" "" $dest) (dig "name" "" $dest))}},
+            "namespace": {{toJson (dig "namespace" "" $dest)}},
+            "health": {{toJson (dig "status" "health" "status" "Unknown" .app)}},
+            "health_message": {{toJson (dig "status" "health" "message" nil .app)}},
+            "sync_status": {{toJson (dig "status" "sync" "status" nil .app)}},
+            "images": {{toJson (dig "status" "summary" "images" (list) .app)}},
+            "revision": {{toJson $rev}},
+            "observed_at": {{toJson (now | date "2006-01-02T15:04:05Z07:00")}},
+            "operation": {{if $op}}{
+              "phase": {{toJson (dig "phase" nil $op)}},
+              "message": {{toJson (dig "message" nil $op)}},
+              "revision": {{toJson $oprev}},
+              "started_at": {{toJson (dig "startedAt" nil $op)}},
+              "finished_at": {{toJson (dig "finishedAt" nil $op)}},
+              "resources": {{toJson (dig "syncResult" "resources" (list) $op)}}
+            }{{else}}null{{end}},
+            "conditions": {{toJson (dig "status" "conditions" (list) .app)}},
+            "resources": {{toJson (dig "status" "resources" (list) .app)}}
+          }
+
+  template.deploy-result-degraded: |
+    webhook:
+      review-api:
+        method: POST
+        body: |
+          {{- $dest := dig "spec" "destination" (dict) .app -}}
+          {{- $op := dig "status" "operationState" (dict) .app -}}
+          {{- /* 🔴 멀티소스 Application 은 단일 revision 이 비고 revisions 배열만 찬다 (#45 뒤). */ -}}
+          {{- /*    단일소스(review-service-aws)는 반대라 양쪽을 다 다뤄야 한다. */ -}}
+          {{- $rev := dig "status" "sync" "revision" nil .app -}}
+          {{- $revs := dig "status" "sync" "revisions" (list) .app -}}
+          {{- if $revs }}{{ $rev = index $revs 0 }}{{ end -}}
+          {{- $oprev := dig "syncResult" "revision" nil $op -}}
+          {{- $oprevs := dig "syncResult" "revisions" (list) $op -}}
+          {{- if $oprevs }}{{ $oprev = index $oprevs 0 }}{{ end -}}
+          {
+            "schema_version": "deployment.result/v1",
+            "event_type": "health_degraded",
+            "app": {{toJson (dig "metadata" "annotations" "oneaction.crystal/app" "" .app)}},
+            "env": {{toJson (dig "metadata" "annotations" "oneaction.crystal/env" "" .app)}},
+            "argocd_app": {{toJson (dig "metadata" "name" "" .app)}},
+            "cluster_id": {{toJson (default (dig "server" "" $dest) (dig "name" "" $dest))}},
+            "namespace": {{toJson (dig "namespace" "" $dest)}},
+            "health": {{toJson (dig "status" "health" "status" "Unknown" .app)}},
+            "health_message": {{toJson (dig "status" "health" "message" nil .app)}},
+            "sync_status": {{toJson (dig "status" "sync" "status" nil .app)}},
+            "images": {{toJson (dig "status" "summary" "images" (list) .app)}},
+            "revision": {{toJson $rev}},
+            "observed_at": {{toJson (now | date "2006-01-02T15:04:05Z07:00")}},
+            "operation": {{if $op}}{
+              "phase": {{toJson (dig "phase" nil $op)}},
+              "message": {{toJson (dig "message" nil $op)}},
+              "revision": {{toJson $oprev}},
+              "started_at": {{toJson (dig "startedAt" nil $op)}},
+              "finished_at": {{toJson (dig "finishedAt" nil $op)}},
+              "resources": {{toJson (dig "syncResult" "resources" (list) $op)}}
+            }{{else}}null{{end}},
+            "conditions": {{toJson (dig "status" "conditions" (list) .app)}},
+            "resources": {{toJson (dig "status" "resources" (list) .app)}}
+          }
+
+  template.deploy-result-sync-failed: |
+    webhook:
+      review-api:
+        method: POST
+        body: |
+          {{- $dest := dig "spec" "destination" (dict) .app -}}
+          {{- $op := dig "status" "operationState" (dict) .app -}}
+          {{- /* 🔴 멀티소스 Application 은 단일 revision 이 비고 revisions 배열만 찬다 (#45 뒤). */ -}}
+          {{- /*    단일소스(review-service-aws)는 반대라 양쪽을 다 다뤄야 한다. */ -}}
+          {{- $rev := dig "status" "sync" "revision" nil .app -}}
+          {{- $revs := dig "status" "sync" "revisions" (list) .app -}}
+          {{- if $revs }}{{ $rev = index $revs 0 }}{{ end -}}
+          {{- $oprev := dig "syncResult" "revision" nil $op -}}
+          {{- $oprevs := dig "syncResult" "revisions" (list) $op -}}
+          {{- if $oprevs }}{{ $oprev = index $oprevs 0 }}{{ end -}}
+          {
+            "schema_version": "deployment.result/v1",
+            "event_type": "sync_failed",
+            "app": {{toJson (dig "metadata" "annotations" "oneaction.crystal/app" "" .app)}},
+            "env": {{toJson (dig "metadata" "annotations" "oneaction.crystal/env" "" .app)}},
+            "argocd_app": {{toJson (dig "metadata" "name" "" .app)}},
+            "cluster_id": {{toJson (default (dig "server" "" $dest) (dig "name" "" $dest))}},
+            "namespace": {{toJson (dig "namespace" "" $dest)}},
+            "health": {{toJson (dig "status" "health" "status" "Unknown" .app)}},
+            "health_message": {{toJson (dig "status" "health" "message" nil .app)}},
+            "sync_status": {{toJson (dig "status" "sync" "status" nil .app)}},
+            "images": {{toJson (dig "status" "summary" "images" (list) .app)}},
+            "revision": {{toJson $rev}},
+            "observed_at": {{toJson (now | date "2006-01-02T15:04:05Z07:00")}},
+            "operation": {{if $op}}{
+              "phase": {{toJson (dig "phase" nil $op)}},
+              "message": {{toJson (dig "message" nil $op)}},
+              "revision": {{toJson $oprev}},
+              "started_at": {{toJson (dig "startedAt" nil $op)}},
+              "finished_at": {{toJson (dig "finishedAt" nil $op)}},
+              "resources": {{toJson (dig "syncResult" "resources" (list) $op)}}
+            }{{else}}null{{end}},
+            "conditions": {{toJson (dig "status" "conditions" (list) .app)}},
+            "resources": {{toJson (dig "status" "resources" (list) .app)}}
+          }
+
+  # ── 트리거 ───────────────────────────────────────────────────────────────
+  #
+  # 동기화가 끝나고 Healthy 가 된 순간 한 번. oncePer 가 작업(operation) 기준이라
+  # 동기화 작업 하나당 최대 한 번 간다.
+  #
+  # 🔴 2026-10-10: oncePer 를 revision → startedAt 으로 바꿨다.
+  #
+  # #45 로 Application 을 멀티소스로 바꾼 뒤 Argo CD 가 단일 `status.sync.revision` 을
+  # **채우지 않는다** (배열 `revisions` 만 찬다). 그래서 oncePer 키가 빈 값이 되고
+  # 모든 이벤트가 키 하나로 뭉쳐서 **첫 알림 뒤로 전부 억제됐다.**
+  # notified 어노테이션에 접두사 없는 `on-deployed:[0]...` 키가 남은 것으로 확인했다.
+  #
+  # startedAt 은 작업마다 다르고 operationState 가 있으면 반드시 있다. 아래
+  # on-sync-failed 가 이미 같은 이유로 startedAt 을 쓰고 있었다.
+  #
+  # 바뀌는 점: 같은 리비전을 다시 sync(self-heal 등) 하면 알림이 한 번 더 간다.
+  # 같은 (app, env, images) 중복은 Review API 가 멱등 처리한다 (2026-10-09 김혜연 합의).
+  #
+  # commit_overlay 와 CI 가 각각 gitops 에 커밋해 두 번 sync 될 수 있고, 그때 첫 알림은
+  # overlay 만 반영된 상태라 images 가 옛 태그다. oncePer 를 images 기준으로 바꾸면
+  # 그건 걸러지지만 설정만 바뀐 배포(이미지 동일)는 알림이 아예 안 가 baseline 이
+  # 갱신되지 않는다.
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+      oncePer: app.status.operationState.startedAt
+      send: [deploy-result-deployed]
+
+  # 배포 실패. Healthy·Degraded 외의 상태(Progressing 등)는 보내지 않는다.
+  # oncePer 를 sync.revision 에서 바꾼 이유는 위 on-deployed 주석과 같다 (멀티소스).
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      oncePer: app.status.operationState.startedAt
+      send: [deploy-result-degraded]
+
+  # 동기화 자체가 실패한 경우. health 는 Healthy 일 수 있다 — 옛 버전이 그대로 떠 있기
+  # 때문이다. 그래서 health 만 보는 수신 코드에는 켜지 않는다.
+  #
+  # 🔴 아직 어느 Application 도 이 트리거를 구독하지 않는다. 구독 어노테이션이 없으면
+  #    트리거는 평가되지 않으므로, 이 키가 있어도 지금은 아무것도 안 나간다.
+  #
+  # oncePer 에 syncResult.revision 을 쓰지 않는 이유: phase 가 Error 면 syncResult 가
+  # 아예 없어서 중복 제거 키가 빈 값이 된다. startedAt 은 작업마다 다르고 operationState
+  # 가 있으면 반드시 있다. 김연재 중복 키에도 started_at 이 들어간다.
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Failed', 'Error']
+      oncePer: app.status.operationState.startedAt
+      send: [deploy-result-sync-failed]

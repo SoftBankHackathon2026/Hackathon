@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: edge-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudflared
+  namespace: edge-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: origin-ca
+  namespace: edge-system
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIDPDCCAiSgAwIBAgIUOe8wmpSTpJVe6ypcyYtHsmipTOkwDQYJKoZIhvcNAQEL
+    BQAwJDEiMCAGA1UEAwwZT25lcG9ydCBPbi1wcmVtIE9yaWdpbiBDQTAeFw0yNjEw
+    MDIwOTU5MDZaFw0zNjA5MjkwOTU5MDZaMCQxIjAgBgNVBAMMGU9uZXBvcnQgT24t
+    cHJlbSBPcmlnaW4gQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC4
+    D8uf+gGwMXPvgbNekWpsBzYSve6MMDBqxp2I+lx1SlGrumelmcVOgo0FHuMK0Hsv
+    lahdoto24Wa0jgetJEXBrb/sO8/d45NMv36nMAXEc7tk1Zlqd1BHPglOueB5EWeK
+    NabeZlfBU6pmsKFe1/V5/SZt9iArk63wvCkQQce9JmhenINM6bvBP7I8clVeTWG2
+    OUVBzYgUjYW8cfMoCcUDcVqtaZUC78xtvI8h2MiJinAWzy6RO1Rd1XJq5btzZm70
+    uvKSx9lybsF2TisSbLjCb6jZ8iim9g3wv6G5UkJeZ1LZO/v4E/YygrzeNiJY3dXS
+    nAI0uEzhPF37I5uLbkhTAgMBAAGjZjBkMB0GA1UdDgQWBBSjsbsdIdT9m9B2szFk
+    jqIjQKCVQTAfBgNVHSMEGDAWgBSjsbsdIdT9m9B2szFkjqIjQKCVQTASBgNVHRMB
+    Af8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQsFAAOCAQEA
+    E4E9xvm3jm/A/LJISC4ZyozyMgFi//tOFLuuQA1y+ioxSmonfktl1g5QsoJ08MlN
+    fvsNXD6vVCWH2fRnxtUjoJsK5rRu2RezJ7NWL01k7WKa4nUmxSmT3wMvvnv2dTkW
+    i0FVdvZm/TFFxxa5gCRmtGsn3Ry1ELyvsUaWvzYADilQ1pr9NssMrNaQBqteL+c1
+    qElbvQlbbuk13N4GH4YE6B/H1CPYpDtOK11bgiYacZyewjgd28+MuCNB8SCTrz6L
+    fOzp8ffMcYLoM7/M37lRRrHvwCqq34k8IkCTcYkq2ffgbDSUFw5G5jC9Qo5hFTsI
+    UwcjKHrLoNQCcg9WoqJnew==
+    -----END CERTIFICATE-----
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cloudflared
+  namespace: edge-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: edge-system
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: oneaction-hackathon
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app.kubernetes.io/part-of: oneaction-hackathon
+    spec:
+      serviceAccountName: cloudflared
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000
+            - --grace-period
+            - 30s
+            - run
+            - --token-file
+            - /etc/cloudflared/token
+          ports:
+            - name: metrics
+              containerPort: 2000
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: origin-ca
+              mountPath: /etc/cloudflared/origin-ca
+              readOnly: true
+            - name: kubernetes-ca
+              mountPath: /etc/cloudflared/kubernetes-ca
+              readOnly: true
+            - name: tunnel-token
+              mountPath: /etc/cloudflared
+              readOnly: true
+      volumes:
+        - name: origin-ca
+          configMap:
+            name: origin-ca
+        - name: kubernetes-ca
+          configMap:
+            name: kube-root-ca.crt
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tunnel-token
+          secret:
+            secretName: cloudflared-token
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token

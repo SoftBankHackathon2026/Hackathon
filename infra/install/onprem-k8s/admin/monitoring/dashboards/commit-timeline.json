@@ -1,0 +1,280 @@
+{
+  "uid": "review-commit-timeline",
+  "title": "커밋 타임라인 — 검토 서비스",
+  "description": "업무 DB(Postgres, 읽기 전용 grafana_ro)로 커밋 하나가 배포까지 간 길을 본다",
+  "tags": [
+    "platform",
+    "review-service"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "배포 (업무 DB deploy_events)",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "review-db"
+        },
+        "enable": true,
+        "iconColor": "purple",
+        "target": {
+          "rawSql": "SELECT received_at AS time, app || ' ' || kind || ' ' || left(image_tag, 7) AS text, app, target_env FROM deploy_events WHERE $__timeFilter(received_at)",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "refId": "Anno"
+        }
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "sha",
+        "label": "커밋 SHA",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0
+      },
+      {
+        "name": "pr",
+        "label": "PR 번호",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "options": {
+        "mode": "markdown",
+        "content": "위 **sha**(PR head 또는 병합 SHA 앞부분)나 **pr**(PR 번호)를 넣으면 그 검토의 단계가 한 줄씩 나온다. 둘 다 비우면 최근 검토 10개. 시각 열은 0009 마이그레이션 뒤 검토부터 채워진다."
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "id": 1
+    },
+    {
+      "type": "table",
+      "title": "단계별 타임라인",
+      "description": "생성 → 판정 → 사람 결정 → 병합 → gitops 커밋 → 배포 알림. intake 가 있었으면 맨 앞",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "review-db"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "WITH r AS (\n  SELECT * FROM reviews r\n  WHERE\n  (${sha:sqlstring} = '' OR r.pr_head_sha LIKE ${sha:sqlstring} || '%' OR r.merge_sha LIKE ${sha:sqlstring} || '%')\n  AND (${pr:sqlstring} = '' OR r.pr_number::text = ${pr:sqlstring})\n  ORDER BY created_at DESC LIMIT 10\n), stages AS (\n  SELECT review_id, '검토 생성' AS stage, created_at AS at FROM r\n  UNION ALL SELECT review_id, '판정 ' || coalesce(verdict, ''), judged_at FROM r\n  UNION ALL SELECT review_id, '사람 ' || coalesce(human_decision->>'decision', '') ||\n                   coalesce(' (' || (human_decision->>'approver') || ')', ''), human_decided_at FROM r\n  UNION ALL SELECT review_id, '병합 ' || left(merge_sha, 7), merged_at FROM r\n  UNION ALL SELECT review_id, 'gitops 커밋 ' || left(gitops_commit_sha, 7), gitops_committed_at FROM r\n  UNION ALL SELECT r.review_id, '끝 ' || r.status || coalesce(': ' || left(r.error, 60), ''), r.updated_at FROM r\n            WHERE r.status IN ('failed', 'blocked', 'rejected', 'superseded')\n  UNION ALL SELECT d.review_id, '배포 ' || d.kind || ' ' || left(coalesce(d.image_tag, ''), 7), d.received_at\n            FROM deploy_events d JOIN r USING (review_id)\n  UNION ALL SELECT i.review_id, 'intake ' || i.kind || ' → ' || i.status || coalesce(' ' || i.reason, ''), i.created_at\n            FROM spec_intakes i JOIN r USING (review_id)\n)\nSELECT r.spec_ref->>'repository' AS \"레포\", r.pr_number AS \"PR\", left(r.pr_head_sha, 7) AS \"head\",\n       s.review_id AS \"검토\", s.stage AS \"단계\", s.at AS \"시각\",\n       extract(epoch FROM s.at - lag(s.at) OVER (PARTITION BY s.review_id ORDER BY s.at)) AS \"앞 단계부터\",\n       extract(epoch FROM s.at - min(s.at) OVER (PARTITION BY s.review_id)) AS \"시작부터\"\nFROM stages s JOIN r USING (review_id)\nWHERE s.at IS NOT NULL\nORDER BY r.created_at DESC, s.at",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "review-db"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "앞 단계부터"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "시작부터"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 12
+      },
+      "id": 2
+    },
+    {
+      "type": "table",
+      "title": "단계별 걸린 시간 (중앙값, 선택 기간)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "review-db"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM judged_at - created_at)) AS \"판정까지\",\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM human_decided_at - judged_at)) AS \"사람 결정까지\",\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM merged_at - coalesce(human_decided_at, judged_at)))\n    AS \"병합까지 (CI 포함)\",\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM gitops_committed_at - merged_at)) AS \"gitops 커밋까지\"\nFROM reviews r\nWHERE $__timeFilter(r.created_at)",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "review-db"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "판정까지"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "사람 결정까지"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "병합까지 (CI 포함)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "gitops 커밋까지"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 4
+      },
+      "id": 3
+    },
+    {
+      "type": "table",
+      "title": "최근 50건",
+      "description": "진행 중이면 지금까지, 끝났으면 끝난 시각까지. 막힌 단계가 비어 있으면 배포까지 끝난 것",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "review-db"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT r.created_at AS \"생성\", r.spec_ref->>'repository' AS \"레포\", r.pr_number AS \"PR\",\n       left(r.pr_head_sha, 7) AS \"head\", r.status AS \"상태\", r.verdict AS \"판정\",\n       extract(epoch FROM CASE\n         WHEN r.status IN ('received', 'reviewing', 'needs_human', 'waiting_ci', 'merging') THEN now()\n         WHEN r.status = 'committed' THEN coalesce(d.healthy_at, d.degraded_at, r.gitops_committed_at, r.updated_at)\n         ELSE r.updated_at\n       END - r.created_at) AS \"총 소요\",\n       CASE\n         WHEN r.status IN ('received', 'reviewing') THEN '검토 중'\n         WHEN r.status = 'needs_human' THEN '사람 확인 대기'\n         WHEN r.status = 'waiting_ci' THEN 'CI 대기'\n         WHEN r.status = 'merging' THEN '병합·gitops 커밋'\n         WHEN r.status = 'committed' AND d.healthy_at IS NOT NULL THEN ''\n         WHEN r.status = 'committed' AND d.degraded_at IS NOT NULL THEN '배포 Degraded'\n         WHEN r.status = 'committed' THEN '배포 확인 대기'\n         WHEN r.status = 'superseded' THEN '새 커밋·닫힘에 밀림'\n         ELSE r.status || coalesce(': ' || left(r.error, 80), '')\n       END AS \"막힌 단계\"\nFROM reviews r\nLEFT JOIN LATERAL (\n  SELECT min(received_at) FILTER (WHERE kind = 'healthy') AS healthy_at,\n         min(received_at) FILTER (WHERE kind = 'degraded') AS degraded_at\n  FROM deploy_events WHERE review_id = r.review_id\n) d ON true\nWHERE $__timeFilter(r.created_at)\nORDER BY r.created_at DESC\nLIMIT 50",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "review-db"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "총 소요"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 14
+      },
+      "id": 4
+    }
+  ]
+}

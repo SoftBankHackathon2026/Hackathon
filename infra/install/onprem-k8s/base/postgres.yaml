@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-hba
+data:
+  # RDS의 rds.force_ssl=1과 같은 효과: TCP 접속은 TLS(hostssl)만 허용한다.
+  # local(유닉스 소켓)은 이미지의 초기화 스크립트와 백업·점검 exec가 쓴다.
+  pg_hba.conf: |
+    local   all   all                trust
+    hostssl all   all   0.0.0.0/0    scram-sha-256
+    hostssl all   all   ::/0         scram-sha-256
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres-headless
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16.15-alpine
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgresql/tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgresql/tls/tls.key
+            - -c
+            - hba_file=/etc/postgresql/pg_hba.conf
+            - -c
+            - shared_buffers=128MB
+            - -c
+            - max_connections=100
+            # 온프렘→AWS 마이그레이션 데모(Debezium CDC, Hackathon 레포 migration/)가 logical replication 을 쓴다.
+            # migration_demo DB·역할·publication 은 migration-db-init Job 이 만든다. 바꾸면 Postgres 재시작 1회.
+            - -c
+            - wal_level=logical
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_DB
+              value: oneaction_review
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: review-db-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: review-db-credentials
+                  key: password
+            - name: POSTGRES_INITDB_ARGS
+              value: --auth-host=scram-sha-256
+          ports:
+            - name: postgres
+              containerPort: 5432
+          startupProbe:
+            exec:
+              command: [sh, -ec, "pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB"]
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe:
+            exec:
+              command: [sh, -ec, "pg_isready -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: socket
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+            - name: tls
+              mountPath: /etc/postgresql/tls
+              readOnly: true
+            - name: hba
+              mountPath: /etc/postgresql/pg_hba.conf
+              subPath: pg_hba.conf
+              readOnly: true
+      volumes:
+        - name: hba
+          configMap:
+            name: postgres-hba
+        - name: socket
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: tls
+          secret:
+            secretName: postgres-tls
+            defaultMode: 0640
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi
+

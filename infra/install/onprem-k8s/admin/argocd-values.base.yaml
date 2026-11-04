@@ -1,0 +1,369 @@
+# Argo CD Helm 릴리스(argo/argo-cd 10.9.6)의 기본 값. 2026-11-03 `helm get values` 로 클러스터에서 뽑았다.
+# 원래 레거시 OnePort 설치 때 손으로 넣은 값이라 Git 에 없었다. apply.sh 는 --reuse-values 대신 이 파일을 쓴다.
+# 비밀값(observer 비밀번호 해시)은 빼고, argocd-values.yaml 이 덮어쓰는 키도 뺐다 (값마다 위치 하나).
+#   적용 순서: argocd-values.base.yaml → argocd-values.yaml → .local/argocd-login.values.yaml
+applicationSet:
+  replicas: 0
+configs:
+  cm:
+    accounts.observer: login
+    admin.enabled: false
+    exec.enabled: false
+    resource.respectRBAC: normal
+    resourceExclusionsAdditional:
+    - apiGroups:
+      - ''
+      clusters:
+      - '*'
+      kinds:
+      - Secret
+    users.anonymous.enabled: false
+  params:
+    server.insecure: true
+  rbac:
+    policy.csv: 'p, role:debug, logs, get, */*, allow
+
+      g, observer, role:debug
+
+      '
+    policy.default: role:readonly
+  secret:
+    createSecret: true
+controller:
+  clusterRoleRules:
+    enabled: true
+    rules:
+    - apiGroups:
+      - ''
+      resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - events
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+      - serviceaccounts
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - apps
+      resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+      - controllerrevisions
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - batch
+      resources:
+      - jobs
+      - cronjobs
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - networking.k8s.io
+      resources:
+      - ingresses
+      - ingressclasses
+      - networkpolicies
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - storage.k8s.io
+      resources:
+      - storageclasses
+      - csidrivers
+      - csinodes
+      - volumeattachments
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - discovery.k8s.io
+      resources:
+      - endpointslices
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - events.k8s.io
+      resources:
+      - events
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - metrics.k8s.io
+      resources:
+      - pods
+      - nodes
+      verbs:
+      - get
+      - list
+    - apiGroups:
+      - autoscaling
+      resources:
+      - horizontalpodautoscalers
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - policy
+      resources:
+      - poddisruptionbudgets
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - apiextensions.k8s.io
+      resources:
+      - customresourcedefinitions
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - argoproj.io
+      resources:
+      - rollouts
+      - analysisruns
+      - analysistemplates
+      - clusteranalysistemplates
+      - experiments
+      - applications
+      - applicationsets
+      - appprojects
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - traefik.io
+      resources:
+      - ingressroutes
+      - ingressroutetcps
+      - ingressrouteudps
+      - traefikservices
+      - middlewares
+      - middlewaretcps
+      - serverstransports
+      - serverstransporttcps
+      - tlsoptions
+      - tlsstores
+      verbs:
+      - get
+      - list
+      - watch
+  replicas: 1
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+dex:
+  enabled: false
+fullnameOverride: argocd
+redis:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 25m
+      memory: 32Mi
+redisSecretInit:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+repoServer:
+  replicas: 1
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 25m
+      memory: 128Mi
+server:
+  clusterRoleRules:
+    enabled: true
+    rules:
+    - apiGroups:
+      - ''
+      resources:
+      - namespaces
+      - nodes
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - events
+      - configmaps
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+      - serviceaccounts
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - apps
+      resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+      - controllerrevisions
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - batch
+      resources:
+      - jobs
+      - cronjobs
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - networking.k8s.io
+      resources:
+      - ingresses
+      - ingressclasses
+      - networkpolicies
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - storage.k8s.io
+      resources:
+      - storageclasses
+      - csidrivers
+      - csinodes
+      - volumeattachments
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - discovery.k8s.io
+      resources:
+      - endpointslices
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - events.k8s.io
+      resources:
+      - events
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - metrics.k8s.io
+      resources:
+      - pods
+      - nodes
+      verbs:
+      - get
+      - list
+    - apiGroups:
+      - autoscaling
+      resources:
+      - horizontalpodautoscalers
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - policy
+      resources:
+      - poddisruptionbudgets
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - apiextensions.k8s.io
+      resources:
+      - customresourcedefinitions
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - argoproj.io
+      resources:
+      - rollouts
+      - analysisruns
+      - analysistemplates
+      - clusteranalysistemplates
+      - experiments
+      - applications
+      - applicationsets
+      - appprojects
+      verbs:
+      - get
+      - list
+      - watch
+    - apiGroups:
+      - traefik.io
+      resources:
+      - ingressroutes
+      - ingressroutetcps
+      - ingressrouteudps
+      - traefikservices
+      - middlewares
+      - middlewaretcps
+      - serverstransports
+      - serverstransporttcps
+      - tlsoptions
+      - tlsstores
+      verbs:
+      - get
+      - list
+      - watch
+  replicas: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 25m
+      memory: 64Mi
+  service:
+    type: ClusterIP

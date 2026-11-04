@@ -1,0 +1,25 @@
+# Let's Encrypt 운영 서버 + Route 53 DNS-01. IAM 키는 bootstrap-secrets.sh 가 .secrets.env 의
+# ROUTE53_ACCESS_KEY_ID / ROUTE53_SECRET_ACCESS_KEY 로 cert-manager/route53-credentials Secret 에 넣는다.
+# 키 권한은 yubin.dev 존의 레코드 변경만 (docs/OPERATIONS.md 의 IAM 정책).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-route53
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-route53-account
+    solvers:
+      - selector:
+          dnsZones:
+            - yubin.dev
+        dns01:
+          route53:
+            region: us-east-1
+            accessKeyIDSecretRef:
+              name: route53-credentials
+              key: AWS_ACCESS_KEY_ID
+            secretAccessKeySecretRef:
+              name: route53-credentials
+              key: AWS_SECRET_ACCESS_KEY

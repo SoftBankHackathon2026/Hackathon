@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: hackathon
+  namespace: argocd
+spec:
+  description: Namespace-scoped OneAction hackathon workloads
+  sourceRepos:
+    - https://github.com/SoftBankHackathon2026/gitops.git
+  destinations:
+    - namespace: hackathon
+      server: https://kubernetes.default.svc
+    # app-of-apps: 루트 Application 이 argocd 네임스페이스에 자식 Application 을 만든다
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# sample-app 은 gitops argocd/onprem/sample-app-onprem.yaml (루트 앱의 자식) 이 소유한다. 2026-11-03 이전에 여기 있던
+# hackathon-sample-app Application 은 같은 Rollout/Service 를 두 앱이 관리하는 충돌(SharedResourceWarning) 때문에 제거했다.
+---
+# app-of-apps 루트. gitops 레포 argocd/onprem/ 의 Application yaml 을 그대로 반영한다.
+# hackathon-user 는 argocd 네임스페이스에 쓸 수 없으므로, 이 루트만 관리자가 등록하고 이후는 레포 PR 로 관리한다.
+# 자식 Application 은 project: hackathon 이어야 하며, 목적지는 hackathon·argocd 네임스페이스로 제한된다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hackathon-root
+  namespace: argocd
+spec:
+  project: hackathon
+  source:
+    repoURL: https://github.com/SoftBankHackathon2026/gitops.git
+    targetRevision: main
+    path: argocd/onprem
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
