@@ -234,6 +234,27 @@ def test_slot_cleanup_can_be_disabled(state_dir, fakes):
     assert cp_cleanup(cut) == {"skipped": True} and "drop_slot:onprem" not in fakes["db"].calls
 
 
+def test_copying_sees_seed_inserted_after_stage_start(config, state_dir, fakes):
+    """seed 를 COPYING 시작 뒤에 넣어도 스냅샷 게이트가 열린다 (리허설에서 겪은 타임아웃 재현)."""
+    db = fakes["db"]
+    db.seed = {"onprem": 0, "aws": 0}
+    polls = {"n": 0}
+    orig = db.count_rows
+
+    def count_rows(target, phase=None):
+        if phase == "seed":
+            polls["n"] += 1
+            if polls["n"] > 2:  # 두 번째 폴링 뒤에 seed 가 양쪽에 들어온 상황
+                db.seed = {"onprem": 1000, "aws": 1000}
+        return orig(target, phase)
+
+    db.count_rows = count_rows
+    _simulate_replication(fakes)
+    with pytest.raises(ApprovalRequired):
+        _build(config, state_dir, fakes).run()
+    assert polls["n"] > 2
+
+
 def test_rerun_does_not_repeat_external_steps(config, state_dir, fakes):
     _simulate_replication(fakes)
     cut = _build(config, state_dir, fakes, approve="a")

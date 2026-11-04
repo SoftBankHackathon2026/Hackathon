@@ -57,3 +57,17 @@ def test_count_match_alone_does_not_pass():
     tgt = {"a": _row(1), "c": _row(2)}
     cmp = compare(src, tgt, committed=set())
     assert cmp.source_count == cmp.target_count and not cmp.passed
+
+
+def test_post_mode_tolerates_other_writers_but_pre_mode_does_not():
+    """전환 뒤 데모 앱·봇이 대상에만 쓴 행은 post 에서 실패가 아니다 (2026-11-05 리허설 T_minus_B=65 사례)."""
+    from migration.verify import compare
+    row = ("app", "rehearsal_live", 1, "p", "2026-11-05T00:00:00+00:00")
+    source = {"s1": row}
+    target = {"s1": row, "app1": row, "w1": row}
+    pre = compare(source, target, {"s1"}, allowed_extra=set())
+    assert pre.counts["T_minus_B"] == 2 and not pre.passed
+    post = compare(source, target, {"s1", "w1"}, allowed_extra={"w1"}, tolerate_other_writers=True)
+    assert post.passed and post.counts["T_minus_B"] == 0
+    assert post.other_writer_in_target == ["app1"] and post.allowed_extra_in_target == ["w1"]
+    assert post.as_report()["other_writer_in_target_count"] == 1
