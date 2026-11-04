@@ -58,3 +58,30 @@ def test_unknown_target_and_same_direction():
 
 def test_redact_masks_env_passwords(env):
     assert redact("password=app-secret host=x") == "password=*** host=x"
+
+
+def test_target_kind_parsed_and_validated():
+    from tests.conftest import RAW_CONFIG
+    raw = {**RAW_CONFIG, "targets": {k: dict(v) for k, v in RAW_CONFIG["targets"].items()}}
+    raw["targets"]["aws"]["kind"] = "rds"
+    cfg = parse_config(raw)
+    assert cfg.target("aws").kind == "rds" and cfg.target("onprem").kind is None
+    raw["targets"]["aws"]["kind"] = "cloud"
+    with pytest.raises(ConfigError, match="kind"):
+        parse_config(raw)
+
+
+def test_example_yamls_mark_aws_as_rds():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for name in ("config.example.yaml", "config.return.example.yaml"):
+        assert load_config(root / name).target("aws").kind == "rds"
+
+
+def test_bool_setting_parsed_not_stringified():
+    from tests.conftest import RAW_CONFIG
+    raw = {**RAW_CONFIG, "cutover": {**RAW_CONFIG["cutover"], "drop_source_slot_on_complete": "false"}}
+    assert parse_config(raw).cutover.drop_source_slot_on_complete is False
+    raw["cutover"]["drop_source_slot_on_complete"] = "maybe"
+    with pytest.raises(ConfigError, match="true/false"):
+        parse_config(raw)

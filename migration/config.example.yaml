@@ -27,6 +27,7 @@ targets:
 
   aws:
     host: CHANGE-ME.rds.amazonaws.com   # RDS PostgreSQL 16 엔드포인트 (미정)
+    kind: rds                            # RDS: REPLICATION 속성 대신 rds_replication 역할 (init_db·cutover 판단 근거)
     port: 5432
     dbname: migration_demo
     sslmode: require

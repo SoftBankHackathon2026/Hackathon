@@ -241,3 +241,10 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 - READY 단계에서 `--approve` 를 요구해 되돌리기 어려운 쓰기 차단 이전에 사람이 개입하는 지점을 두었다. 설계의 lease_owner/fencing_epoch 는 워커 1개·전환 실행자 1명 전제라 구현하지 않았다.
 - `phase` 는 요청 생성 시점의 값이다. PAUSED 중 생성된 요청은 `onprem_live` 로 표시되지만 실제 커밋 DB 는 요청 기록의 `target` 에 남는다 (설계 "실제 커밋 DB 는 별도 요청 기록" 그대로).
 - 워커는 재시작 시 `worker.json` 의 target 을 CLI 값보다 우선한다.
+
+## 귀환(AWS→온프렘) 대비 보강 (2026-11-04)
+
+- `targets.<name>.kind: rds | self_managed` — `init_db` 가 REPLICATION 부여 방식을 고를 때 쓴다. 없으면 종전처럼 `job.source` 가 아닌 쪽을 RDS 로 추정한다. 귀환처럼 AWS 가 source 면 반드시 `kind: rds` 를 적는다.
+- cutover PRECHECK 가 워커 `/status.known_targets` 로 **원본·대상 target 이 워커 설정에 있는지** 확인한다. 없으면 SWITCHING(자동 원복 없음)에서 `/target` 이 실패해 NEEDS_RECOVERY 가 되므로 미리 막는다. 워커 ConfigMap(gitops `apps/db-insert-worker`)에 귀환 대상 `onprem_return` 이 들어 있어야 한다.
+- COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
+- 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.

@@ -104,7 +104,9 @@ def run(config: Config, target_name: str, *, sql_path: Path, env: dict[str, str]
     """app_write: auto(job.source 만 허용) | allow | deny."""
     env = dict(os.environ) if env is None else env
     target = config.target(target_name)
-    managed_rds = target_name != config.job.source  # aws(RDS) 는 REPLICATION 속성을 직접 줄 수 없다
+    # RDS 는 REPLICATION 속성을 직접 줄 수 없다. targets.<name>.kind 가 있으면 그걸 따르고,
+    # 없으면 종전처럼 job.source 가 아닌 쪽을 RDS 로 추정한다 (귀환처럼 AWS 가 source 면 kind: rds 를 적는다).
+    managed_rds = (target.kind == "rds") if target.kind else (target_name != config.job.source)
     allow_app_write = {"auto": target_name == config.job.source, "allow": True, "deny": False}[app_write]
     admin_maint = config.connection(target_name, "admin", dbname=target.admin_dbname, env=env,
                                     application_name="migration-init")

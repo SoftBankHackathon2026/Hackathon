@@ -187,6 +187,7 @@ class WorkerSettings:
     http_port: int = 8080
     http_host: str = "0.0.0.0"
     latency_window: int = 10_000
+    known_targets: tuple[str, ...] = ()   # 설정 파일의 targets 이름. cutover PRECHECK 가 /status 로 확인한다
 
 
 def _percentile(samples: list[float], pct: float) -> float | None:
@@ -293,6 +294,7 @@ class Worker:
                 "target": self._target,
                 "phase": self._phase,
                 "run_id": self.settings.run_id,
+                "known_targets": list(self.settings.known_targets),
                 "rate_per_second": self.settings.rate_per_second,
                 "queue_length": len(self._queue),
                 "queue_oldest_age_seconds": oldest_age,
@@ -710,6 +712,7 @@ def build_settings(args: argparse.Namespace, config: Config) -> WorkerSettings:
         target=target,
         rate_per_second=args.rate,
         state_dir=state_dir,
+        known_targets=tuple(config.targets),
         max_queue=args.max_queue,
         max_queue_age_seconds=args.max_queue_age,
         max_consecutive_failures=args.max_consecutive_failures,
