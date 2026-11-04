@@ -1,0 +1,82 @@
+# AWS → 온프렘 귀환 설정 예시. 비밀번호는 절대 이 파일에 적지 않는다.
+# 정방향(config.example.yaml)과 별도 파일로 둔다. 공통 코드(init_db·cdc·cutover·verify·loadgen)는
+# 이 파일을 --config 로 받아 그대로 쓴다. 정방향 설정은 수정하지 않는다.
+#
+# 귀환 규칙
+# - 원본은 "현재 AWS" 다. 정방향 이후 AWS 에 쌓인 데이터를 그대로 가져간다.
+#   귀환에서는 seed 를 다시 넣지 않는다 (AWS 데이터를 1,000건으로 초기화하지 않는다).
+# - 대상은 옛 온프렘 DB(migration_demo)가 아니라 분리된 빈 DB(migration_demo_return)다.
+#   정방향 원본을 덮어쓰지 않기 위해서다.
+# - 정방향 커넥터(forward_001-source/-sink)는 종료·삭제된 상태여야 한다. return_precheck 가 확인한다.
+
+targets:
+  aws:
+    host: CHANGE-ME.rds.amazonaws.com   # oneaction-infra database 스택의 RDS 엔드포인트
+    port: 5432
+    dbname: migration_demo
+    sslmode: require                     # RDS 파라미터 rds.force_ssl=1
+    admin_dbname: postgres
+    users:
+      admin:
+        user: oneaction_admin            # oneaction-infra RDS 마스터 계정 (비밀번호는 Secrets Manager 관리)
+        password_env: MIGRATION_AWS_ADMIN_PASSWORD
+      app:
+        user: migration_app
+        password_env: MIGRATION_APP_PASSWORD
+      cdc:
+        user: migration_cdc              # 귀환 원본 CDC 계정. RDS 에서는 rds_replication 역할 필요
+        password_env: MIGRATION_CDC_PASSWORD
+      sink:
+        user: migration_sink
+        password_env: MIGRATION_SINK_PASSWORD
+      verify:
+        user: migration_verify
+        password_env: MIGRATION_VERIFY_PASSWORD
+
+  onprem_return:
+    host: postgres                       # k3s hackathon 네임스페이스의 플랫폼 Postgres 16 (정방향 원본과 같은 인스턴스)
+    port: 5432
+    dbname: migration_demo_return        # 정방향 원본 migration_demo 와 분리된 빈 귀환 대상
+    sslmode: require
+    admin_dbname: postgres
+    users:
+      admin:
+        user: postgres
+        password_env: MIGRATION_ADMIN_PASSWORD
+      app:
+        user: migration_app
+        password_env: MIGRATION_APP_PASSWORD
+      cdc:
+        user: migration_cdc
+        password_env: MIGRATION_CDC_PASSWORD
+      sink:
+        user: migration_sink
+        password_env: MIGRATION_SINK_PASSWORD
+      verify:
+        user: migration_verify
+        password_env: MIGRATION_VERIFY_PASSWORD
+
+job:
+  job_id: return_001                     # slot return_001, publication return_001_pub, 커넥터 return_001-source/-sink
+  source: aws
+  target: onprem_return
+  table: public.migration_demo
+  live_phase_before: aws_live
+  live_phase_after: onprem_return_live
+
+kafka:
+  bootstrap_servers: kafka:9092
+  connect_url: http://migration-connect:8083
+  secrets_file: /opt/kafka/secrets/migration.properties
+
+worker:
+  url: http://db-insert-worker:8080
+  state_dir: /var/lib/worker
+
+cutover:
+  state_dir: /var/lib/worker
+  min_live_rows_after_snapshot: 100
+  min_rows_after_switch: 100
+  offset_stable_seconds: 10
+  poll_interval_seconds: 5
+  stage_timeout_seconds: 1800
