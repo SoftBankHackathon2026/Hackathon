@@ -1,5 +1,5 @@
 # 온프렘 gitops 에 넣을 조각. 이 폴더를 그대로 Argo CD 앱으로 쓰지 않는다.
-#   1. 워커·Connect 노드 포트       → gitops apps/*/platform-access.yaml (SoftBankHackathon2026/gitops#19)
+#   1. 워커·Connect 상태           → gitops apps/platform-status-proxy (읽기 전용 프록시, SoftBankHackathon2026/gitops#19)
 #   2. reporter-sidecar.patch.yaml → 플랫폼을 띄워 내부 ALB 주소가 나온 뒤 gitops apps/db-insert-worker 의 patches 에 추가
 #                                    (주소 없이 붙이면 sidecar 가 재시작을 반복해 워커 파드가 NotReady 가 된다)
 #   3. 보고기 스크립트 ConfigMap    → 아래 configMapGenerator 와 같은 방식으로 생성

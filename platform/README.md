@@ -48,7 +48,7 @@ npm run dev
        ServiceAccount (EKS)    │   Tailscale  │   공개 엔드포인트 │
                                ▼              ▼                 ▼
                       EKS kube API   온프렘 kube API·워커·Connect   GKE kube API
-                                     (172.30.1.10)
+                                     (172.30.1.10·.7, 상태 프록시)
  온프렘 워커 Pod 의 보고기 ── Tailscale ──▶ 내부 ALB ──▶ POST /api/v1/ingest/...
 ```
 
@@ -65,7 +65,7 @@ npm run dev
 | 폴더 | 내용 |
 |---|---|
 | [`deploy/aws`](deploy/aws) | EKS용 kustomization. API·수집기·화면, 읽기 RBAC, 내부 ALB Ingress, 환경 설정(`fleet.json`) |
-| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 보고기 sidecar patch와 스크립트 ConfigMap. 워커·Connect NodePort는 gitops `apps/*/platform-access.yaml` |
+| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 보고기 sidecar patch와 스크립트 ConfigMap. 워커·Connect 상태는 gitops `apps/platform-status-proxy` |
 | [`deploy/reader`](deploy/reader) | 플랫폼 밖 클러스터(GKE, 온프렘)에 두는 읽기 전용 계정과 kubeconfig 생성 스크립트 |
 
 ### 2-1. 환경별로 먼저 준비할 것
@@ -77,14 +77,14 @@ npm run dev
 | 이미지 | `platform-images` 워크플로가 main 머지 때 `ghcr.io/softbankhackathon2026/oneport-platform-api`, `-web`을 올려요. 처음 한 번 GitHub 패키지를 공개(public)로 바꿔요 |
 | 플랫폼 DB | RDS `oneaction-review-db` 안에 `oneport_platform` 데이터베이스와 전용 사용자를 만들어요. 앱 DB와 섞지 않아요. 스키마는 API가 처음 뜰 때 만들어요 |
 | EKS 읽기 권한 | 필요 없어요. 수집기가 EKS 안에서 ServiceAccount `oneport-collector`(`deploy/aws/rbac.yaml`)로 읽어요. access entry는 쓰지 않아요 |
-| 온프렘으로 가는 경로 | oneaction-infra `infra/tailscale`의 `tailnet_routes`(`SoftBankHackathon2026/oneaction-infra#5`). 라우터가 `--accept-routes`로 `172.30.1.0/24`를 받고 VPC 라우팅 테이블이 그 대역을 라우터로 보내요 |
+| 온프렘으로 가는 경로 | oneaction-infra `infra/tailscale`의 `tailnet_routes`(`SoftBankHackathon2026/oneaction-infra#5`). 라우터가 `--accept-routes`로 홈랩 경로를 받고, VPC 라우팅 테이블은 k3s 노드 두 대(`/32`)만 라우터로 보내요 |
 
 **온프렘 k3s**
 
 | 준비물 | 방법 |
 |---|---|
 | 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://172.30.1.10:6443` |
-| 워커·Connect 노출 | gitops `apps/db-insert-worker/platform-access.yaml`, `apps/migration-cdc/platform-access.yaml` (`SoftBankHackathon2026/gitops#19`). 워커 `30880`, Connect `30883`. NetworkPolicy는 LAN(노드 IP 제외)만 허용해서, AWS에서 `proxmox-exit`를 거친 요청은 통과하고 다른 네임스페이스 파드는 막혀요 |
+| 워커·Connect 상태 | gitops `apps/platform-status-proxy` (`SoftBankHackathon2026/gitops#19`). nginx 프록시가 `GET /worker/status`, `GET /connect/connectors/<job>-(source\|sink)/status`만 넘겨요. 워커 제어 API(`/pause`, `/target` 등)와 Kafka Connect REST는 열지 않아요. NodePort `30880`, NetworkPolicy는 LAN(노드 IP 제외)만 허용 |
 | 보고기 | 플랫폼을 띄워 내부 ALB 주소가 나온 뒤 `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
 | AWS VPC 경로 | k3s 노드가 Tailscale `--accept-routes`로 `10.0.0.0/16`을 받아요 (설정 완료). LAN 우회 규칙 `tailscale-lan-bypass.service`가 노드 간 통신을 지켜요 |
 
@@ -107,7 +107,7 @@ npm run dev
 | `environments[].components` | 비우면 같은 `id`(onprem·aws·gcp)의 기본 아키텍처 배치를 써요. 직접 적으면 그 값을 써요 |
 | `environments[].data_services`, `boundary` | 화면에 그릴 이름. Terraform 출력과 맞춰요 |
 | `environments[].declared` | kube API로 알 수 없는 클라우드 보안 사실. Terraform에 있는 그대로 `true`/`false`, 모르면 빼요(미확인) |
-| `migrations[].worker_url`, `connect_url` | 온프렘 NodePort. 두 노드 주소를 쉼표로 적어요(`http://172.30.1.10:30880,http://172.30.1.7:30880`). NodePort가 `externalTrafficPolicy: Local`이라 파드가 있는 노드만 응답하고, 수집기는 응답하는 주소로 넘어가 다음부터 그 주소를 먼저 써요 |
+| `migrations[].worker_url`, `connect_url` | 온프렘 읽기 전용 상태 프록시. 두 노드 주소를 쉼표로 적어요(`http://172.30.1.10:30880/worker,http://172.30.1.7:30880/worker`, Connect는 `/connect`). 프록시 NodePort가 `externalTrafficPolicy: Local`이라 프록시 파드가 있는 노드만 응답하고, 수집기는 응답하는 주소로 넘어가 다음부터 그 주소를 먼저 써요 |
 
 [`deploy/aws/settings.env`](deploy/aws/settings.env)의 `REPLACE_WITH_ALB_DNS_NAME`은 첫 배포 뒤 내부 ALB 주소로 바꿔요. 도메인을 붙이면 그 이름을 써요.
 
