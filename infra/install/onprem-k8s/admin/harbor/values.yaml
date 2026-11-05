@@ -1,0 +1,86 @@
+# Harbor 최소 구성 (goharbor/harbor 1.19.4, Harbor 2.15.4) — 온프렘 k3s 워커 전용.
+# 적용: apply.sh 의 Harbor 단계 (helm upgrade --install harbor harbor/harbor -n harbor -f 이 파일)
+# 관리자 비밀번호는 bootstrap-secrets.sh 가 .secrets.env 의 HARBOR_ADMIN_PASSWORD 로 harbor/harbor-admin Secret 을 만든다.
+#
+# 최소화한 것: Trivy·메트릭·내부 TLS 끔, 모든 구성 요소 1개, PVC 최소, 요청량 작게, 워커 노드에 고정.
+# 노출: 도메인·인증서 없이 NodePort HTTP (http://172.30.1.7:30002). LAN·Tailscale 안에서만 쓴다.
+expose:
+  type: nodePort
+  tls:
+    enabled: false
+  nodePort:
+    name: harbor
+    ports:
+      http:
+        port: 80
+        nodePort: 30002
+externalURL: http://172.30.1.7:30002
+
+existingSecretAdminPassword: harbor-admin
+existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
+
+persistence:
+  enabled: true
+  resourcePolicy: keep
+  persistentVolumeClaim:
+    registry: {storageClass: local-path, size: 5Gi}
+    jobservice:
+      jobLog: {storageClass: local-path, size: 1Gi}
+    database: {storageClass: local-path, size: 1Gi}
+    redis: {storageClass: local-path, size: 1Gi}
+
+trivy:
+  enabled: false
+metrics:
+  enabled: false
+
+nginx:
+  replicas: 1
+  nodeSelector: {kubernetes.io/hostname: k3s-worker}
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+portal:
+  replicas: 1
+  nodeSelector: {kubernetes.io/hostname: k3s-worker}
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+core:
+  replicas: 1
+  nodeSelector: {kubernetes.io/hostname: k3s-worker}
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+jobservice:
+  replicas: 1
+  maxJobWorkers: 2
+  nodeSelector: {kubernetes.io/hostname: k3s-worker}
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 192Mi}
+registry:
+  replicas: 1
+  nodeSelector: {kubernetes.io/hostname: k3s-worker}
+  registry:
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 256Mi}
+  controller:
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 64Mi}
+database:
+  type: internal
+  internal:
+    nodeSelector: {kubernetes.io/hostname: k3s-worker}
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 256Mi}
+redis:
+  type: internal
+  internal:
+    nodeSelector: {kubernetes.io/hostname: k3s-worker}
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 64Mi}
