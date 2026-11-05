@@ -43,8 +43,12 @@ export function FleetPage({
       </PageActions>
       <PageHeader
         title="마이그레이션"
-        tabs={[{ id: "overview", label: "개요" }]}
+        tabs={[
+          { id: "overview", label: "개요" },
+          { id: "prepare", label: "준비" },
+        ]}
         active="overview"
+        onTab={(id) => id === "prepare" && onNavigate("#prepare")}
       />
       <ScopeFilterRow>
         <FilterSelect

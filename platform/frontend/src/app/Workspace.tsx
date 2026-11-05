@@ -8,6 +8,7 @@ import {
   EnvironmentsPage,
   FleetPage,
   MigrationDetailPage,
+  PreparePage,
   SecurityPage,
   TeamPage,
 } from "./lazyPages";
@@ -26,7 +27,10 @@ export function Workspace({
   useEffect(() => {
     document.title = `${title} - Oneport`;
   }, [title]);
-  const nav: View = route.view === "migration" ? "migrations" : route.view;
+  const nav: View =
+    route.view === "migration" || route.view === "prepare"
+      ? "migrations"
+      : route.view;
   return (
     <AppShell
       view={nav}
@@ -41,6 +45,7 @@ export function Workspace({
       showTeam={Boolean(access.user)}
       hideTitle={
         route.view === "migrations" ||
+        route.view === "prepare" ||
         route.view === "environments" ||
         route.view === "security" ||
         route.view === "costs"
@@ -48,6 +53,7 @@ export function Workspace({
     >
       <PageBoundary resetKeys={[route.view, "id" in route ? route.id : ""]}>
         {route.view === "migrations" && <FleetPage onNavigate={go} />}
+        {route.view === "prepare" && <PreparePage onNavigate={go} />}
         {route.view === "migration" && (
           <MigrationDetailPage key={route.id} jobId={route.id} />
         )}
