@@ -65,7 +65,7 @@ npm run dev
 | 폴더 | 내용 |
 |---|---|
 | [`deploy/aws`](deploy/aws) | EKS용 kustomization. API·수집기·화면, 읽기 RBAC, 내부 ALB Ingress, 환경 설정(`fleet.json`) |
-| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 조각. 워커·Connect NodePort, 보고기 sidecar patch |
+| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 보고기 sidecar patch와 스크립트 ConfigMap. 워커·Connect NodePort는 gitops `apps/*/platform-access.yaml` |
 | [`deploy/reader`](deploy/reader) | 플랫폼 밖 클러스터(GKE, 온프렘)에 두는 읽기 전용 계정과 kubeconfig 생성 스크립트 |
 
 ### 2-1. 환경별로 먼저 준비할 것
@@ -77,15 +77,15 @@ npm run dev
 | 이미지 | `platform-images` 워크플로가 main 머지 때 `ghcr.io/softbankhackathon2026/oneport-platform-api`, `-web`을 올려요. 처음 한 번 GitHub 패키지를 공개(public)로 바꿔요 |
 | 플랫폼 DB | RDS `oneaction-review-db` 안에 `oneport_platform` 데이터베이스와 전용 사용자를 만들어요. 앱 DB와 섞지 않아요. 스키마는 API가 처음 뜰 때 만들어요 |
 | EKS 읽기 권한 | 필요 없어요. 수집기가 EKS 안에서 ServiceAccount `oneport-collector`(`deploy/aws/rbac.yaml`)로 읽어요. access entry는 쓰지 않아요 |
-| 온프렘으로 가는 경로 | oneaction-infra `infra/tailscale` 라우터가 `--accept-routes`로 `172.30.1.0/24`를 받고, EKS 서브넷 라우팅 테이블에 `172.30.1.0/24 → 라우터 ENI`가 있어야 해요 |
+| 온프렘으로 가는 경로 | oneaction-infra `infra/tailscale`의 `tailnet_routes`(`SoftBankHackathon2026/oneaction-infra#5`). 라우터가 `--accept-routes`로 `172.30.1.0/24`를 받고 VPC 라우팅 테이블이 그 대역을 라우터로 보내요 |
 
 **온프렘 k3s**
 
 | 준비물 | 방법 |
 |---|---|
 | 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://172.30.1.10:6443` |
-| 워커·Connect 노출 | `deploy/onprem/nodeport-services.yaml`을 gitops에 추가해요. 워커 `30880`, Connect `30883` |
-| 보고기 | `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
+| 워커·Connect 노출 | gitops `apps/db-insert-worker/platform-access.yaml`, `apps/migration-cdc/platform-access.yaml` (`SoftBankHackathon2026/gitops#19`). 워커 `30880`, Connect `30883`, NetworkPolicy 포함 |
+| 보고기 | 플랫폼을 띄워 내부 ALB 주소가 나온 뒤 `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
 | AWS VPC 경로 | k3s 노드가 Tailscale `--accept-routes`로 `10.0.0.0/16`을 받아요 (설정 완료). LAN 우회 규칙 `tailscale-lan-bypass.service`가 노드 간 통신을 지켜요 |
 
 **GCP GKE** (oneaction-infra `infra/gcp`, PR #3. 결제 연결 뒤 apply)
