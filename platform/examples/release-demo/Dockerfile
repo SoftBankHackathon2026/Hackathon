@@ -1,0 +1,9 @@
+FROM python:3.12-alpine
+ARG VERSION=v1
+ENV VERSION=$VERSION PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN adduser -D -u 10001 app
+USER 10001
+WORKDIR /app
+COPY server.py /app/server.py
+EXPOSE 8080
+CMD ["python", "server.py"]

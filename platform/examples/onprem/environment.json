@@ -1,0 +1,12 @@
+{
+  "application": "demo-api",
+  "environment_id": "onprem-test",
+  "namespace": "oneport-apps",
+  "ingress_class": "traefik",
+  "hostname": "demo-api-a1b2.yubin.website",
+  "workload_service_account": "oneport-runtime",
+  "secret_refs": {},
+  "max_replicas": 1,
+  "max_cpu": 0.5,
+  "max_memory_mib": 1024
+}

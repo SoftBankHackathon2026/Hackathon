@@ -1,0 +1,27 @@
+{
+  "application": "onprem-notes-py",
+  "environment_id": "onprem-notes-demo",
+  "source": {
+    "kind": "image",
+    "image": "docker.io/inhoman/oneport-notes-demo@sha256:01400bc9e6409dbeccd9865c22fe32fb8d06c350562549acc7a36ba3a2d7b1b7"
+  },
+  "strategy": "blue_green",
+  "cpu": "0.5",
+  "memory_mib": 512,
+  "replicas": 1,
+  "port": 8080,
+  "health_path": "/ready",
+  "resources": {
+    "database": "postgresql",
+    "database_mode": "shared",
+    "redis": false
+  },
+  "secret_bindings": [
+    {
+      "name": "DATABASE_URL",
+      "binding": "notes-db"
+    }
+  ],
+  "env": {},
+  "migration": null
+}

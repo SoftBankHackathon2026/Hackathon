@@ -1,0 +1,116 @@
+{
+  "mode": "live",
+  "environments": [
+    {
+      "id": "onprem",
+      "name": "온프렘 k3s (부산)",
+      "kind": "k3s",
+      "provider": "onprem",
+      "region": "busan-local",
+      "role": "legacy",
+      "kubeconfig": "/etc/oneport/kube/onprem.kubeconfig",
+      "context": "hackathon",
+      "app_namespace": "hackathon",
+      "argocd_namespace": "argocd",
+      "data_services": [
+        {
+          "kind": "postgres",
+          "name": "postgres (PostgreSQL 16)",
+          "managed": false
+        },
+        {
+          "kind": "kafka",
+          "name": "kafka (KRaft 3.9.1)",
+          "managed": false
+        },
+        {
+          "kind": "object_storage",
+          "name": "SeaweedFS (S3 호환)",
+          "managed": false
+        },
+        {
+          "kind": "vector_db",
+          "name": "qdrant",
+          "managed": false
+        }
+      ],
+      "declared": {
+        "threat_detection": false,
+        "posture_service": false,
+        "db_tls_required": true,
+        "db_public": false,
+        "db_backups": true,
+        "workload_identity": false,
+        "ingress_tls": false,
+        "waf": false,
+        "policy_gates": true
+      }
+    },
+    {
+      "id": "aws",
+      "name": "AWS EKS oneaction (서울)",
+      "kind": "eks",
+      "provider": "aws",
+      "region": "ap-northeast-2",
+      "role": "target",
+      "kubeconfig": "/etc/oneport/kube/aws.kubeconfig",
+      "context": "oneaction",
+      "app_namespace": "platform",
+      "argocd_namespace": "argocd",
+      "data_services": [
+        {
+          "kind": "postgres",
+          "name": "RDS oneaction-review-db",
+          "managed": true
+        },
+        {
+          "kind": "kafka",
+          "name": "MSK oneaction-review",
+          "managed": true
+        },
+        {
+          "kind": "object_storage",
+          "name": "S3 oneaction-review-docs",
+          "managed": true
+        }
+      ],
+      "declared": {
+        "threat_detection": false,
+        "posture_service": false,
+        "audit_log": true,
+        "flow_logs": true,
+        "db_tls_required": true,
+        "db_public": false,
+        "db_encrypted_at_rest": true,
+        "db_backups": true,
+        "workload_identity": true,
+        "ingress_tls": false,
+        "waf": false,
+        "policy_gates": true
+      }
+    }
+  ],
+  "migrations": [
+    {
+      "job_id": "forward_001",
+      "direction": "forward",
+      "source_env": "onprem",
+      "target_env": "aws",
+      "data_source": "onprem",
+      "data_target": "aws",
+      "worker_url": "http://db-insert-worker:8080",
+      "connect_url": "http://migration-connect:8083"
+    },
+    {
+      "job_id": "return_001",
+      "direction": "return",
+      "source_env": "aws",
+      "target_env": "onprem",
+      "data_source": "aws",
+      "data_target": "onprem_return",
+      "worker_url": "http://db-insert-worker:8080",
+      "connect_url": "http://migration-connect:8083"
+    }
+  ],
+  "sample_seconds": 5
+}

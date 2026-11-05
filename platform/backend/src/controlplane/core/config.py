@@ -1,0 +1,118 @@
+import json
+import re
+from enum import StrEnum
+from importlib.resources import files
+from pathlib import Path
+from typing import Annotated
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from controlplane.core.secrets import secret_from_environment
+
+DEPLOYMENT_MODE_FILE = "deployment-mode.json"
+MIN_OPERATOR_TOKEN_LENGTH = 32
+
+
+class AuthMode(StrEnum):
+    OPERATOR = "operator"
+    DEMO = "demo"
+    LOGIN = "login"
+
+
+def _split_csv(value: object) -> object:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return value
+
+
+class HttpSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "testserver"]
+    )
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: ["http://127.0.0.1:4320", "http://localhost:4320"]
+    )
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def exact_hosts(cls, values: list[str]) -> list[str]:
+        if not values or any(not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]*", v) for v in values):
+            raise ValueError("Register exact hosts without scheme, port or wildcard")
+        return values
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def exact_origins(cls, values: list[str]) -> list[str]:
+        for value in values:
+            url = urlsplit(value)
+            if (
+                url.scheme not in {"https", "http"}
+                or not url.hostname
+                or url.username
+                or url.password
+                or url.path
+                or url.query
+                or url.fragment
+                or "*" in value
+            ):
+                raise ValueError("Register exact HTTP(S) origins without paths or wildcards")
+            _ = url.port
+        return values
+
+    @classmethod
+    def from_environment(cls) -> "HttpSettings":
+        return cls.model_validate(_HttpEnvironment().model_dump(exclude_none=True))
+
+
+class _HttpEnvironment(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="ONEPORT_", extra="ignore")
+
+    allowed_hosts: Annotated[list[str] | None, NoDecode] = None
+    allowed_origins: Annotated[list[str] | None, NoDecode] = None
+
+    @field_validator("allowed_hosts", "allowed_origins", mode="before")
+    @classmethod
+    def comma_separated(cls, value: object) -> object:
+        return _split_csv(value)
+
+
+class PlatformEnvironment(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="ONEPORT_", extra="ignore")
+
+    auth_mode: AuthMode | None = None
+    config: Path | None = None
+    runtime_config: Path | None = None
+    build_config: Path | None = None
+    demo_deploy_config: Path | None = None
+    fleet_config: Path | None = None
+
+
+def deployment_auth_mode(path: Path | None = None) -> AuthMode:
+    configured = PlatformEnvironment().auth_mode
+    if configured is not None:
+        return configured
+    packaged = path or Path(str(files("controlplane").joinpath(DEPLOYMENT_MODE_FILE)))
+    if not packaged.exists():
+        return AuthMode.OPERATOR
+    return AuthMode(json.loads(packaged.read_text())["auth_mode"])
+
+
+def operator_token_from_environment() -> SecretStr:
+    token = secret_from_environment("ONEPORT_OPERATOR_TOKEN")
+    if len(token.get_secret_value()) < MIN_OPERATOR_TOKEN_LENGTH:
+        raise ValueError("ONEPORT_OPERATOR_TOKEN must contain at least 32 characters")
+    return token
+
+
+def ingest_token_from_environment() -> SecretStr | None:
+    token = secret_from_environment("ONEPORT_INGEST_TOKEN")
+    value = token.get_secret_value()
+    if not value:
+        return None
+    if len(value) < MIN_OPERATOR_TOKEN_LENGTH:
+        raise ValueError("ONEPORT_INGEST_TOKEN must contain at least 32 characters")
+    return token

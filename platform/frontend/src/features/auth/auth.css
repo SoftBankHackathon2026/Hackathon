@@ -1,0 +1,46 @@
+.login-card {
+  width: min(380px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 28px;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--rail);
+  font-size: 15px;
+}
+.login-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-control);
+  background: var(--rail);
+  color: var(--on-dark);
+}
+.login-card .notice-line,
+.login-card .banner {
+  margin: 0;
+}
+.login-card input {
+  margin: 0;
+}
+.login-card .primary {
+  margin-top: 4px;
+  font-weight: 700;
+}
+.login-card .primary:disabled {
+  background: var(--paper-2);
+  color: var(--muted);
+}
+.login-card .text {
+  padding: 4px 0 0;
+  background: transparent;
+  font-weight: 700;
+}
+.login-card .primary {
+  background: var(--go);
+  color: var(--go-ink);
+}

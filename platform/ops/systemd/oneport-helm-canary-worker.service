@@ -1,0 +1,22 @@
+[Unit]
+Description=Oneport on-prem Helm canary demo release worker
+After=network-online.target postgresql.service oneport-api.service
+Wants=network-online.target
+PartOf=oneport-api.service
+ConditionPathExists=/etc/oneport/helm-canary-runtime.json
+
+[Service]
+User=oneport
+Group=oneport
+Environment=HOME=/var/lib/oneport
+WorkingDirectory=/opt/oneport/current/platform/backend
+ExecStart=/opt/oneport/current/platform/backend/.venv/bin/python -m controlplane.providers.onprem.helm.operator worker --config /etc/oneport/helm-canary-runtime.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/oneport
+
+[Install]
+WantedBy=multi-user.target

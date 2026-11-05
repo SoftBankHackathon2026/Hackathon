@@ -1,0 +1,144 @@
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.shell .primary {
+  background: var(--go);
+  border-color: transparent;
+  color: var(--go-ink);
+  font-weight: 600;
+}
+.shell .primary:hover:not(:disabled) {
+  background: var(--go-hover);
+}
+.shell .secondary {
+  background: var(--card);
+  border-color: var(--line);
+  color: var(--ink);
+  font-weight: 400;
+}
+.shell .secondary:hover:not(:disabled) {
+  background: var(--paper-2);
+  border-color: var(--line-strong);
+}
+.shell input:not([type="checkbox"]):not([type="radio"]),
+.shell select,
+.shell textarea,
+.login input {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 14px;
+}
+.shell input:focus,
+.shell select:focus,
+.shell textarea:focus,
+.login input:focus {
+  outline: none;
+}
+.shell .text {
+  padding: 0 0 0 8px;
+  font-weight: 600;
+}
+.rail-item.on {
+  background: var(--rail-hover);
+  color: var(--on-dark);
+}
+.stage {
+  flex: 1;
+  min-width: 0;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.account-menu {
+  position: relative;
+}
+.account-menu summary::-webkit-details-marker {
+  display: none;
+}
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--on-dark);
+  font-size: 12px;
+  font-weight: 600;
+}
+.account-menu .menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--sub);
+}
+.banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 4px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  color: var(--warn-ink);
+  font-size: 13px;
+}
+.notice-line {
+  margin: 0 0 16px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.empty {
+  color: var(--sub);
+  padding: 24px;
+  text-align: center;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 18px;
+}
+.card {
+  border-radius: 6px;
+  box-shadow: none;
+}
+.shell input:focus,
+.shell select:focus,
+.shell textarea:focus,
+.login input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--paper-3);
+}
+.shell input[type="checkbox"],
+.shell input[type="radio"],
+.login input[type="checkbox"] {
+  accent-color: var(--ink);
+}
+.login-card .text,
+.shell .text {
+  color: var(--accent-text);
+}
+.avatar {
+  background: var(--ink);
+}

@@ -1,0 +1,116 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  line-height: 1.6;
+}
+h1 {
+  font-size: 32px;
+  line-height: 1.22;
+  margin: 16px 0;
+}
+h2 {
+  font-size: 19px;
+  margin: 0 0 24px;
+}
+h3 {
+  font-size: 15px;
+  margin: 0;
+}
+button:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+label {
+  display: block;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+input,
+select,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+button {
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--text-knockout);
+  width: 100%;
+  padding: 13px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 8px;
+}
+button:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+@media (max-width: 900px) {
+  h1 {
+    font-size: 34px;
+  }
+  header {
+    padding: 0 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto;
+  }
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+[hidden] {
+  display: none !important;
+}
+main:focus,
+h1:focus {
+  outline: none;
+}
+label {
+  font-size: 12px;
+}
+input,
+select,
+textarea {
+  font-size: 12px;
+  padding: 10px 11px;
+}
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+html,
+body {
+  overflow-x: clip;
+}
+main:focus {
+  outline: none;
+}
+main {
+  padding: 16px 20px 48px;
+}

@@ -1,0 +1,9 @@
+{
+  "targets": {
+    "aws_ecs": "aws-demo-environment",
+    "gcp_cloud_run": "gcp-demo-environment",
+    "onprem_helm": "helm-demo-environment"
+  },
+  "max_pending": 3,
+  "poll_seconds": 5
+}

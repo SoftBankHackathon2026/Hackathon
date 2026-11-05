@@ -1,0 +1,147 @@
+.shell button {
+  width: auto;
+  margin: 0;
+  padding: 7px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 400;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid transparent;
+  transition:
+    background-color 80ms,
+    border-color 80ms;
+}
+.shell button:disabled {
+  background: var(--paper-2);
+  color: var(--muted);
+  border-color: var(--line-2);
+}
+.rail-item.on:before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--rail-accent);
+}
+.rail-item:after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--rail);
+  color: var(--on-dark);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms;
+}
+.page-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.account-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.account-menu summary:hover {
+  background: var(--paper-2);
+}
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--canvas);
+}
+.login-card h1 {
+  margin: 6px 0 0;
+  font-size: 20px;
+  color: var(--ink);
+}
+.login-card label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--sub);
+}
+.login-card button {
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.login > .banner,
+.login > .empty {
+  margin: 0;
+}
+.pill b {
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--line);
+  color: var(--ink);
+}
+.members th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--sub);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.members td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line-2);
+  vertical-align: middle;
+}
+.members em {
+  color: var(--sub);
+  font-style: normal;
+}
+.members select {
+  width: auto;
+  margin: 0;
+  padding: 6px 10px;
+}
+.role {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.shell .secondary,
+.shell .primary {
+  padding: 6px 12px;
+  box-shadow: none;
+}
+@media (max-width: 720px) {
+  .page-head {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 14px;
+    gap: 8px;
+  }
+}
+.shell .primary:disabled {
+  background: var(--paper-3);
+  border-color: transparent;
+  color: var(--muted);
+}

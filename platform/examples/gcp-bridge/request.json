@@ -1,0 +1,9 @@
+{
+  "application": "demo",
+  "environment_id": "gcp-demo",
+  "source": {
+    "kind": "repository",
+    "repository": "https://github.com/hyukvoid/cloud-bridge-e2e-sample.git"
+  },
+  "strategy": "blue_green"
+}
