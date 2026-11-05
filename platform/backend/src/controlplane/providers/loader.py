@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from controlplane.core.config import PlatformEnvironment
-from controlplane.core.secrets import DatabaseSettings
+from controlplane.core.secrets import DatabaseSettings, secret_from_environment
 from controlplane.domain.models import Runtime
 from controlplane.providers.factory import adapter_from_file
 from controlplane.providers.registry import ProviderRegistry
@@ -74,10 +74,24 @@ def _register(registry: ProviderRegistry, entries: list[ProviderEntry], dsn: str
     return dsn
 
 
+def _dashboard_only() -> LoadedPlatform | None:
+    """배포 Provider 없이 대시보드(실측 저널·로그인)용 DB만 쓴다.
+
+    ONEPORT_DATABASE_URL 또는 ONEPORT_DATABASE_URL_FILE 로 지정한다. 둘 다 없으면 시뮬레이션이다.
+    """
+    dsn = secret_from_environment("ONEPORT_DATABASE_URL").get_secret_value()
+    if not dsn:
+        return None
+    registry = ProviderRegistry()
+    store = ReleaseStore(dsn)
+    registry.enable_catalog(store)
+    return LoadedPlatform(registry, store)
+
+
 def load_platform(environment: PlatformEnvironment | None = None) -> LoadedPlatform | None:
     environment = environment or PlatformEnvironment()
     if not environment.config and not environment.runtime_config:
-        return None
+        return _dashboard_only()
     registry = ProviderRegistry()
     try:
         entries, dsn = _platform_entries(environment)

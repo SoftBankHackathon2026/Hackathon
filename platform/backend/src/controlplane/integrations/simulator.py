@@ -362,7 +362,7 @@ def _apps(env: EnvironmentConfig) -> list[AppState]:
         "migration-cdc",
         "db-insert-worker",
     ]
-    if env.provider == "aws":
+    if env.provider in ("aws", "gcp"):
         names = ["review-service", "sample-app"]
     return [
         AppState(name=name, namespace=env.app_namespace, sync="Synced", health="Healthy")

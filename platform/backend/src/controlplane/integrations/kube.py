@@ -83,10 +83,23 @@ def wildcard_roles(roles: list[Any]) -> list[str]:
     ]
 
 
+def api_client(env: EnvironmentConfig) -> client.ApiClient:
+    """환경마다 독립된 API 클라이언트. 전역 기본 설정을 바꾸지 않는다.
+
+    in_cluster 는 플랫폼이 그 클러스터 안에서 돌 때 Pod ServiceAccount 토큰으로 읽는다(EKS 등).
+    그 밖에는 kubeconfig 를 쓴다. GKE 는 kubeconfig 의 exec(gke-gcloud-auth-plugin)로 인증한다.
+    """
+    if env.in_cluster:
+        configuration = client.Configuration()
+        config.load_incluster_config(client_configuration=configuration)
+        return client.ApiClient(configuration)
+    return config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+
+
 class ClusterReader:
     def __init__(self, env: EnvironmentConfig) -> None:
         self._env = env
-        api = config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+        api = api_client(env)
         self._core = client.CoreV1Api(api)
         self._net = client.NetworkingV1Api(api)
         self._rbac = client.RbacAuthorizationV1Api(api)

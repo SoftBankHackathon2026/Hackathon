@@ -62,6 +62,13 @@ def component_view(component: ComponentConfig, cluster: ClusterFacts) -> Compone
     )
 
 
+READ_ACCESS_HINT = {
+    "onprem": "플랫폼 읽기 계정(hackathon-user kubeconfig)이 필요해요.",
+    "aws": "플랫폼 읽기 권한이 필요해요. EKS 안에서 실행하면 ServiceAccount RBAC, 밖이면 EKS access entry예요.",
+    "gcp": "플랫폼 읽기 권한이 필요해요. GKE RBAC와 Workload Identity 연동 kubeconfig예요.",
+}
+
+
 def environment_issues(
     snapshot: EnvironmentSnapshot, components: list[ComponentView]
 ) -> list[EnvironmentIssue]:
@@ -90,7 +97,7 @@ def environment_issues(
             EnvironmentIssue(
                 severity="warning",
                 title="클러스터 구성 상태를 읽지 못했어요",
-                detail="플랫폼 읽기 권한(EKS access entry 등)이 필요해요.",
+                detail=READ_ACCESS_HINT.get(snapshot.config.provider, READ_ACCESS_HINT["onprem"]),
             )
         )
     return issues

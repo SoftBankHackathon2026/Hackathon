@@ -25,7 +25,12 @@ export function ComplianceOverview({
   posture: Posture;
   environments: Posture["environments"];
 }) {
-  const compare = compareSummary(posture.parity, posture.controls);
+  const parities =
+    posture.parities && posture.parities.length > 0
+      ? posture.parities
+      : [posture.parity];
+  const envName = (id: string) =>
+    environments.find((e) => e.env_id === id)?.name ?? id;
   const scaleMax = Math.max(
     0,
     ...environments.map((e) => e.passed + e.failed + e.unknown),
@@ -54,26 +59,34 @@ export function ComplianceOverview({
             />
           );
         })}
-        <SummaryCard
-          title="전환 전후 비교"
-          label={null}
-          value={String(compare.weakened.length)}
-          unit="개 새로 실패"
-          lines={[
-            compare.weakened.length > 0
-              ? `도착 환경에서 새로 실패한 통제가 ${compare.weakened.length}개 있어요`
-              : "도착 환경에서 새로 실패한 통제는 없어요",
-            ...(compare.strengthened.length > 0
-              ? [
-                  `새로 통과한 통제: ${compare.strengthened.join(", ")}${
-                    compare.moreStrengthened > 0
-                      ? ` 외 ${compare.moreStrengthened}개`
-                      : ""
-                  }`,
-                ]
-              : []),
-          ]}
-        />
+        {parities.map((parity) => {
+          const compare = compareSummary(parity, posture.controls);
+          return (
+            <SummaryCard
+              key={`${parity.source_env}-${parity.target_env}`}
+              title={
+                parities.length > 1
+                  ? `전환 전후 비교 · ${envName(parity.target_env)}`
+                  : "전환 전후 비교"
+              }
+              label={null}
+              value={String(compare.weakened.length)}
+              unit="개 새로 실패"
+              lines={[
+                compare.sentence,
+                ...(compare.strengthened.length > 0
+                  ? [
+                      `새로 통과한 통제: ${compare.strengthened.join(", ")}${
+                        compare.moreStrengthened > 0
+                          ? ` 외 ${compare.moreStrengthened}개`
+                          : ""
+                      }`,
+                    ]
+                  : []),
+              ]}
+            />
+          );
+        })}
       </div>
       <div className="pk-lanes">
         <div className="pk-chart-title">

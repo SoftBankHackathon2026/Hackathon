@@ -37,12 +37,15 @@ export type Posture = {
   standards: { id: string; name: string }[];
   environments: EnvironmentScore[];
   controls: Control[];
-  parity: {
-    source_env: string;
-    target_env: string;
-    regressions: string[];
-    improvements: string[];
-  };
+  parity: Parity;
+  parities?: Parity[];
+};
+
+export type Parity = {
+  source_env: string;
+  target_env: string;
+  regressions: string[];
+  improvements: string[];
 };
 
 export function getPosture(signal?: AbortSignal) {

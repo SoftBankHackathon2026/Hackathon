@@ -75,14 +75,12 @@ class SecurityService:
     def __init__(self, source: FleetSource) -> None:
         self._source = source
 
-    def _pair(self, snapshots: list[EnvironmentSnapshot]) -> tuple[str, str]:
+    def _pairs(self, snapshots: list[EnvironmentSnapshot]) -> list[tuple[str, str]]:
         legacy = next(
             (s.config.id for s in snapshots if s.config.role == "legacy"), snapshots[0].config.id
         )
-        target = next(
-            (s.config.id for s in snapshots if s.config.role == "target"), snapshots[-1].config.id
-        )
-        return legacy, target
+        targets = [s.config.id for s in snapshots if s.config.role == "target"]
+        return [(legacy, target) for target in targets or [snapshots[-1].config.id]]
 
     def get_posture(self) -> SecurityPosture:
         snapshots = self._source.list_environments()
@@ -90,7 +88,7 @@ class SecurityService:
         for snapshot in snapshots:
             for control_id, result in results[snapshot.config.id].items():
                 result.resources = affected_components(control_id, snapshot)
-        source_env, target_env = self._pair(snapshots)
+        parities = [parity_of(results, source, target) for source, target in self._pairs(snapshots)]
         return SecurityPosture(
             evaluated_at=datetime.now(UTC),
             source=self._source.mode,
@@ -110,5 +108,6 @@ class SecurityService:
                 )
                 for control in CONTROLS
             ],
-            parity=parity_of(results, source_env, target_env),
+            parity=parities[0],
+            parities=parities,
         )

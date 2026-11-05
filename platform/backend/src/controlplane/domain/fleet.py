@@ -54,12 +54,14 @@ class EnvironmentConfig(BaseModel):
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     name: str
-    kind: Literal["k3s", "eks"]
-    provider: Literal["onprem", "aws"]
+    kind: Literal["k3s", "eks", "gke"]
+    provider: Literal["onprem", "aws", "gcp"]
     region: str
     role: Literal["legacy", "target"]
     kubeconfig: str | None = None
     context: str | None = None
+    # 플랫폼이 이 클러스터 안에서 실행될 때 kubeconfig 대신 Pod의 ServiceAccount로 읽는다.
+    in_cluster: bool = False
     app_namespace: str
     argocd_namespace: str = "argocd"
     data_services: list[DataService] = Field(default_factory=list)

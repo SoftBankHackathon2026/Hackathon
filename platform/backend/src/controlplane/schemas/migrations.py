@@ -48,8 +48,8 @@ class EnvironmentIssue(BaseModel):
 class EnvironmentView(BaseModel):
     id: str
     name: str
-    kind: Literal["k3s", "eks"]
-    provider: Literal["onprem", "aws"]
+    kind: Literal["k3s", "eks", "gke"]
+    provider: Literal["onprem", "aws", "gcp"]
     region: str
     role: Literal["legacy", "target"]
     connected: bool

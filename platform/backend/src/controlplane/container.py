@@ -83,15 +83,21 @@ def _resolve_platform(
     loaded = load_platform()
     if loaded is None:
         return ProviderRegistry(), None, None
-    if auth_mode == AuthMode.OPERATOR:
+    if auth_mode == AuthMode.OPERATOR and loaded.registry.runtimes():
         token = operator_token_from_environment()
     return loaded.registry, loaded.store, token
 
 
 def _check_operator_token(
-    auth_mode: AuthMode, store: ReleaseStore | None, token: SecretStr | None
+    auth_mode: AuthMode,
+    store: ReleaseStore | None,
+    token: SecretStr | None,
+    registry: ProviderRegistry | None = None,
 ) -> None:
+    # 배포 Provider 가 없는 대시보드 전용 구성은 실행할 배포가 없으므로 운영자 토큰을 요구하지 않는다.
     if auth_mode != AuthMode.OPERATOR or store is None:
+        return
+    if registry is not None and not registry.runtimes():
         return
     if not token or len(token.get_secret_value()) < MIN_OPERATOR_TOKEN_LENGTH:
         raise ValueError("Execution requires an explicit operator token")
@@ -113,7 +119,7 @@ def build_container(
 ) -> Container:
     mode = AuthMode(auth_mode) if auth_mode is not None else deployment_auth_mode()
     registry, store, token = _resolve_platform(registry, store, operator_token, mode)
-    _check_operator_token(mode, store, token)
+    _check_operator_token(mode, store, token, registry)
     if store:
         registry.enable_catalog(store)
     build_settings = BuildSettings.from_environment()

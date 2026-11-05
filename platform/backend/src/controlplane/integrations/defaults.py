@@ -183,6 +183,73 @@ AWS_COMPONENTS = [
     ),
 ]
 
+GCP_COMPONENTS = [
+    component(
+        "cloud-lb",
+        "Cloud Load Balancing",
+        "entry",
+        "load_balancer",
+        managed=True,
+        note="도메인을 넣으면 관리형 인증서로 HTTPS",
+    ),
+    component(
+        "argocd", "Argo CD", "platform", "gitops", workload="argocd/deployment/argocd-server"
+    ),
+    component(
+        "eso",
+        "External Secrets Operator",
+        "platform",
+        "secrets",
+        workload="external-secrets/deployment/external-secrets",
+    ),
+    component(
+        "cloud-logging", "Cloud Logging·알림", "platform", "monitoring", managed=True, placement=[]
+    ),
+    component(
+        "review-service",
+        "review-service",
+        "app",
+        "app",
+        argo_app="review-service",
+        depends_on=["cloud-lb", "cloud-sql", "managed-kafka"],
+    ),
+    component(
+        "sample-app", "sample-app", "app", "app", argo_app="sample-app", depends_on=["cloud-lb"]
+    ),
+    component(
+        "cloud-sql",
+        "Cloud SQL oneaction-dev-review",
+        "data",
+        "postgres",
+        managed=True,
+        placement=["VPC oneaction-dev-vpc", "data 서브넷"],
+    ),
+    component(
+        "managed-kafka",
+        "Managed Kafka oneaction-dev-review",
+        "data",
+        "kafka",
+        managed=True,
+        placement=["VPC oneaction-dev-vpc", "data 서브넷"],
+    ),
+    component(
+        "gcs",
+        "Cloud Storage review-docs",
+        "data",
+        "object_storage",
+        managed=True,
+        placement=[],
+    ),
+    component(
+        "tailscale-gcp",
+        "Tailscale 라우터",
+        "link",
+        "network",
+        managed=True,
+        note="oneaction-dev-gcp-router, 10.20.32.0/19·10.20.10.0/24·10.20.128.0/20 광고",
+    ),
+]
+
 K3S = "k3s 클러스터"
 VPC = "VPC 10.0.0.0/16"
 EKS_SUBNET = "EKS 서브넷"
@@ -204,6 +271,19 @@ AWS_PLACEMENT = {
     "rds": [VPC, "data 서브넷"],
     "msk": [VPC, "data 서브넷"],
     "tailscale-aws": [VPC, EKS_SUBNET],
+}
+GCP_VPC = "VPC oneaction-dev-vpc"
+GKE_SUBNET = "GKE 서브넷"
+GKE = "GKE oneaction-dev"
+GCP_PLACEMENT = {
+    "cloud-lb": [GCP_VPC],
+    "argocd": [GCP_VPC, GKE_SUBNET, GKE, "ns argocd"],
+    "eso": [GCP_VPC, GKE_SUBNET, GKE, "ns external-secrets"],
+    "review-service": [GCP_VPC, GKE_SUBNET, GKE, "ns platform"],
+    "sample-app": [GCP_VPC, GKE_SUBNET, GKE, "ns platform"],
+    "cloud-sql": [GCP_VPC, "data 서브넷"],
+    "managed-kafka": [GCP_VPC, "data 서브넷"],
+    "tailscale-gcp": [GCP_VPC, GKE_SUBNET],
 }
 
 
@@ -283,9 +363,42 @@ AWS = EnvironmentConfig(
     ),
 )
 
+# oneaction-infra infra/gcp (PR #3, project softbank-ghost) 기준. 아직 apply 전이라 실측 전까지는 설정 값이다.
+GCP = EnvironmentConfig(
+    id="gcp",
+    name="GCP GKE oneaction-dev (서울)",
+    kind="gke",
+    provider="gcp",
+    region="asia-northeast3",
+    role="target",
+    context="oneaction-gke",
+    app_namespace="platform",
+    data_services=[
+        DataService(kind="postgres", name="Cloud SQL oneaction-dev-review", managed=True),
+        DataService(kind="kafka", name="Managed Kafka oneaction-dev-review", managed=True),
+        DataService(kind="object_storage", name="Cloud Storage review-docs", managed=True),
+    ],
+    components=placed(GCP_COMPONENTS, GCP_PLACEMENT, []),
+    boundary=["GCP 프로젝트 softbank-ghost", "리전 asia-northeast3"],
+    declared=DeclaredFacts(
+        threat_detection=False,
+        posture_service=False,
+        audit_log=True,
+        flow_logs=True,
+        db_tls_required=True,
+        db_public=False,
+        db_encrypted_at_rest=True,
+        db_backups=True,
+        workload_identity=True,
+        ingress_tls=None,
+        waf=False,
+        policy_gates=True,
+    ),
+)
+
 DEFAULT_FLEET = FleetConfig(
     mode="simulated",
-    environments=[ONPREM, AWS],
+    environments=[ONPREM, AWS, GCP],
     migrations=[
         MigrationConfig(
             job_id="forward_001",

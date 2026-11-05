@@ -8,6 +8,7 @@ from controlplane.schemas.security import Category, ControlResult, Severity, Sta
 STANDARDS = [
     Standard(id="CIS-K8S", name="CIS Kubernetes Benchmark v1.10"),
     Standard(id="AWS-FSBP", name="AWS Foundational Security Best Practices"),
+    Standard(id="CIS-GCP", name="CIS Google Cloud Platform Foundation Benchmark"),
     Standard(id="NSA-K8S", name="NSA/CISA Kubernetes Hardening Guide"),
     Standard(id="ONEPORT", name="Oneport 마이그레이션 정책 (OPA)"),
 ]
@@ -183,8 +184,8 @@ CONTROLS: tuple[Control, ...] = (
         "DB 비공개 (SEC-01)",
         "network",
         "critical",
-        ("ONEPORT SEC-01", "AWS-FSBP RDS.2"),
-        "DB를 사설 서브넷·ClusterIP로만 노출하세요.",
+        ("ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"),
+        "DB를 사설 서브넷·ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
         _db_private,
     ),
     Control(
@@ -193,7 +194,7 @@ CONTROLS: tuple[Control, ...] = (
         "network",
         "high",
         ("AWS-FSBP ELB.1",),
-        "ALB/Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
+        "ALB·Cloud Load Balancing·Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
         _declared("ingress_tls", "외부 진입점이 TLS로 보호됨", "외부 진입점이 평문 HTTP"),
     ),
     Control(
@@ -202,7 +203,7 @@ CONTROLS: tuple[Control, ...] = (
         "network",
         "medium",
         ("AWS-FSBP WAF.1",),
-        "ALB 앞에 WAF(또는 오픈소스 WAF Ingress)를 두세요.",
+        "ALB 앞에 AWS WAF, Cloud Load Balancing 앞에 Cloud Armor(또는 오픈소스 WAF Ingress)를 두세요.",
         _declared("waf", "WAF 적용", "WAF 미적용"),
     ),
     Control(
@@ -283,7 +284,7 @@ CONTROLS: tuple[Control, ...] = (
         "identity",
         "high",
         ("AWS-FSBP IAM.6",),
-        "EKS Pod Identity/IRSA 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
+        "EKS Pod Identity·GKE Workload Identity 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
         _declared(
             "workload_identity", "워크로드 ID로 클라우드 권한 위임", "정적 토큰·키로 권한 부여"
         ),
@@ -293,8 +294,8 @@ CONTROLS: tuple[Control, ...] = (
         "DB 전송 구간 TLS 강제",
         "data",
         "high",
-        ("ONEPORT",),
-        "rds.force_ssl=1 또는 pg_hba hostssl만 허용하세요.",
+        ("ONEPORT", "CIS-GCP 6.4"),
+        "rds.force_ssl=1, Cloud SQL ssl_mode=ENCRYPTED_ONLY 또는 pg_hba hostssl만 허용하세요.",
         _declared("db_tls_required", "DB가 TLS 연결만 허용", "DB가 평문 연결 허용"),
     ),
     Control(
@@ -311,7 +312,7 @@ CONTROLS: tuple[Control, ...] = (
         "DB 백업",
         "data",
         "medium",
-        ("AWS-FSBP RDS.11",),
+        ("AWS-FSBP RDS.11", "CIS-GCP 6.7"),
         "자동 백업 또는 주기 덤프를 구성하세요.",
         _declared("db_backups", "DB 백업 구성됨", "DB 백업 없음"),
     ),
@@ -321,7 +322,7 @@ CONTROLS: tuple[Control, ...] = (
         "data",
         "medium",
         ("NSA-K8S",),
-        "External Secrets Operator로 Secrets Manager/Vault에서 동기화하세요.",
+        "External Secrets Operator로 Secrets Manager·Secret Manager·Vault에서 동기화하세요.",
         _external_secrets,
     ),
     Control(
@@ -330,7 +331,7 @@ CONTROLS: tuple[Control, ...] = (
         "detection",
         "high",
         ("AWS-FSBP GuardDuty.1",),
-        "AWS는 GuardDuty, 온프렘은 Falco 같은 런타임 탐지를 켜세요.",
+        "AWS는 GuardDuty, GCP는 Security Command Center 위협 탐지, 온프렘은 Falco 같은 런타임 탐지를 켜세요.",
         _declared("threat_detection", "위협 탐지 활성", "위협 탐지 없음"),
     ),
     Control(
@@ -339,7 +340,7 @@ CONTROLS: tuple[Control, ...] = (
         "detection",
         "medium",
         ("AWS-FSBP SecurityHub.1",),
-        "Security Hub 또는 동등한 posture 집계를 켜세요.",
+        "Security Hub, Security Command Center 또는 동등한 posture 집계를 켜세요.",
         _declared("posture_service", "posture 집계 활성", "posture 집계 없음"),
     ),
     Control(
@@ -347,7 +348,7 @@ CONTROLS: tuple[Control, ...] = (
         "클러스터 감사 로그",
         "detection",
         "high",
-        ("CIS-K8S 3.2.1", "AWS-FSBP EKS.8"),
+        ("CIS-K8S 3.2.1", "AWS-FSBP EKS.8", "CIS-GCP 2.1"),
         "API server audit 로그를 켜고 보관하세요.",
         _declared("audit_log", "감사 로그 수집", "감사 로그 없음"),
     ),
@@ -356,8 +357,8 @@ CONTROLS: tuple[Control, ...] = (
         "네트워크 흐름 로그",
         "detection",
         "low",
-        ("AWS-FSBP EC2.6",),
-        "VPC Flow Logs 또는 CNI 흐름 로그를 켜세요.",
+        ("AWS-FSBP EC2.6", "CIS-GCP 3.8"),
+        "VPC Flow Logs(AWS·GCP) 또는 CNI 흐름 로그를 켜세요.",
         _declared("flow_logs", "흐름 로그 수집", "흐름 로그 없음"),
     ),
     Control(

@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_fleet_config()
     platform = load_platform()
     if platform is None:
-        parser.error("ONEPORT_CONFIG로 플랫폼 DB를 지정하세요.")
+        parser.error("ONEPORT_DATABASE_URL_FILE(또는 ONEPORT_CONFIG)로 플랫폼 DB를 지정하세요.")
     collector = FleetCollector(config, FleetJournal(platform.store))
     with db.pooling():
         platform.store.migrate()

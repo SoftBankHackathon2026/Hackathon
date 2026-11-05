@@ -63,4 +63,7 @@ class SecurityPosture(BaseModel):
     standards: list[Standard]
     environments: list[EnvironmentPosture]
     controls: list[ControlView]
+    # 첫 번째 출발→도착 쌍. 이전 화면 호환용으로 남긴다.
     parity: Parity
+    # 출발 환경과 각 도착 환경(AWS, GCP 등)의 쌍 전체
+    parities: list[Parity] = Field(default_factory=list)
