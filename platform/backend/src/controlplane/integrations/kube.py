@@ -4,6 +4,7 @@ from typing import Any
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from urllib3 import Timeout
 from urllib3.exceptions import HTTPError
 
 from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, Workload
@@ -13,6 +14,8 @@ ARGOPROJ = ("argoproj.io", "v1alpha1")
 EXTERNAL_SECRETS = ("external-secrets.io", "v1beta1")
 APP_HEALTH = {"Healthy", "Progressing", "Degraded", "Suspended", "Missing"}
 APP_SYNC = {"Synced", "OutOfSync"}
+# 닿지 않는 클러스터 하나가 수집기 전체를 OS 기본 TCP 시간(수 분) 동안 붙잡지 않게 한다.
+REQUEST_TIMEOUT = Timeout(connect=3.0, read=10.0)
 
 
 def _optional[T](read: Callable[[], T]) -> T | None:
@@ -92,8 +95,11 @@ def api_client(env: EnvironmentConfig) -> client.ApiClient:
     if env.in_cluster:
         configuration = client.Configuration()
         config.load_incluster_config(client_configuration=configuration)
-        return client.ApiClient(configuration)
-    return config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+        api = client.ApiClient(configuration)
+    else:
+        api = config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+    api.rest_client.pool_manager.connection_pool_kw["timeout"] = REQUEST_TIMEOUT
+    return api
 
 
 class ClusterReader:

@@ -37,6 +37,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        # Secret 파일을 그룹 읽기(0440)로 마운트해 비root 프로세스가 읽게 한다. 그룹 쓰기·공개 권한은 주지 않는다.
+        fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: api
@@ -78,7 +80,7 @@ spec:
         - name: secrets
           secret:
             secretName: oneport-secrets
-            defaultMode: 0400
+            defaultMode: 0440
             items:
               - {key: database-url, path: database-url}
               - {key: ingest-token, path: ingest-token}
@@ -107,6 +109,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        # Secret 파일을 그룹 읽기(0440)로 마운트해 비root 프로세스가 읽게 한다. 그룹 쓰기·공개 권한은 주지 않는다.
+        fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: collector
@@ -131,13 +135,13 @@ spec:
         - name: secrets
           secret:
             secretName: oneport-secrets
-            defaultMode: 0400
+            defaultMode: 0440
             items:
               - {key: database-url, path: database-url}
         - name: kube
           secret:
             secretName: oneport-secrets
-            defaultMode: 0400
+            defaultMode: 0440
             optional: true
             items:
               - {key: onprem.kubeconfig, path: onprem.kubeconfig}

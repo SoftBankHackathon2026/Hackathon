@@ -64,6 +64,8 @@ def test_in_cluster_reader_uses_its_own_configuration(monkeypatch):
     api = kube.api_client(env)
     assert api.configuration is seen["configuration"]
     assert api.configuration.host == "https://10.100.0.1"
+    timeout = api.rest_client.pool_manager.connection_pool_kw["timeout"]
+    assert (timeout.connect_timeout, timeout.read_timeout) == (3.0, 10.0)
 
 
 def test_in_cluster_reader_outside_a_cluster_raises_config_error():
