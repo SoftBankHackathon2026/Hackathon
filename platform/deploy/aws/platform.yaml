@@ -1,0 +1,202 @@
+# Oneport 플랫폼 (EKS oneport 네임스페이스).
+#   oneport-api        : FastAPI. 화면 API, 보고기 ingest
+#   oneport-collector  : 수집기. EKS 는 ServiceAccount 로, 온프렘·GKE 는 kubeconfig 로 읽는다
+#   oneport-web        : 화면(nginx). /api 는 oneport-api 로 넘긴다
+#
+# 비밀값은 Secret oneport-secrets 로 넣는다 (README 의 kubectl create secret 명령).
+#   database-url       : 플랫폼 DB DSN 한 줄
+#   ingest-token       : 보고기 push 토큰 (32자 이상)
+#   onprem.kubeconfig  : 온프렘 k3s 읽기 전용 kubeconfig (hackathon-user)
+#   gcp.kubeconfig     : GKE 읽기 전용 kubeconfig (deploy/reader)
+apiVersion: v1
+kind: Service
+metadata:
+  name: oneport-api
+spec:
+  selector:
+    app.kubernetes.io/name: oneport-api
+  ports:
+    - {name: http, port: 8320, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oneport-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oneport-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oneport-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: ghcr.io/softbankhackathon2026/oneport-platform-api
+          ports:
+            - {name: http, containerPort: 8320}
+          envFrom:
+            - configMapRef: {name: oneport-settings}
+          env:
+            - {name: ONEPORT_DATABASE_URL_FILE, value: /etc/oneport/secrets/database-url}
+            - {name: ONEPORT_INGEST_TOKEN_FILE, value: /etc/oneport/secrets/ingest-token}
+            - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
+          volumeMounts:
+            - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
+            - {name: fleet, mountPath: /etc/oneport/fleet, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          # TrustedHost 검사를 통과하도록 프로브도 허용된 Host 로 보낸다.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: oneport-secrets
+            defaultMode: 0400
+            items:
+              - {key: database-url, path: database-url}
+              - {key: ingest-token, path: ingest-token}
+        - name: fleet
+          configMap: {name: oneport-fleet}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oneport-collector
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oneport-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oneport-collector
+    spec:
+      serviceAccountName: oneport-collector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: collector
+          image: ghcr.io/softbankhackathon2026/oneport-platform-api
+          command: ["python", "-m", "controlplane.execution.fleet_collector"]
+          env:
+            - {name: ONEPORT_DATABASE_URL_FILE, value: /etc/oneport/secrets/database-url}
+            - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
+          volumeMounts:
+            - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
+            - {name: kube, mountPath: /etc/oneport/kube, readOnly: true}
+            - {name: fleet, mountPath: /etc/oneport/fleet, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 20m, memory: 128Mi}
+            limits: {cpu: 250m, memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: oneport-secrets
+            defaultMode: 0400
+            items:
+              - {key: database-url, path: database-url}
+        - name: kube
+          secret:
+            secretName: oneport-secrets
+            defaultMode: 0400
+            optional: true
+            items:
+              - {key: onprem.kubeconfig, path: onprem.kubeconfig}
+              - {key: gcp.kubeconfig, path: gcp.kubeconfig}
+        - name: fleet
+          configMap: {name: oneport-fleet}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oneport-web
+spec:
+  selector:
+    app.kubernetes.io/name: oneport-web
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oneport-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oneport-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oneport-web
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: web
+          image: ghcr.io/softbankhackathon2026/oneport-platform-web
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - {name: cache, mountPath: /var/cache/nginx}
+            - {name: tmp, mountPath: /tmp}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

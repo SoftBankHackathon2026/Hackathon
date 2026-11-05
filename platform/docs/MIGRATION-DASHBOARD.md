@@ -31,14 +31,14 @@ cutover 상태는 워커 PVC의 SQLite(`cutover.sqlite3`, `policy.sqlite3`)에 �
 실측:
 
 ```sh
-export ONEPORT_CONFIG=/safe/path/platform.json          # 플랫폼 DB
+export ONEPORT_DATABASE_URL_FILE=/safe/path/database-url  # 플랫폼 DB (배포 Provider 설정 불필요)
 export ONEPORT_FLEET_CONFIG=/safe/path/fleet.live.json  # examples/fleet/fleet.live.json 참고
 export ONEPORT_INGEST_TOKEN_FILE=/safe/path/ingest-token # 32자 이상
 uv run --project platform/backend uvicorn controlplane.main:app --host 127.0.0.1 --port 8320
 uv run --project platform/backend python -m controlplane.execution.fleet_collector
 ```
 
-수집기는 워커·Connect 서비스 주소에 닿는 곳(클러스터 안 또는 Tailscale 경로)에서 실행합니다. kubeconfig는 `Hackathon/infra/install/onprem-k8s/generate-kubeconfig.sh`가 만드는 읽기 전용 사용자 파일을 씁니다. EKS에는 현재 읽기 전용 access entry가 없으므로 `AmazonEKSViewPolicy` access entry를 추가해야 합니다.
+수집기는 워커·Connect 주소에 닿는 곳에서 실행합니다. 기본 배치는 AWS EKS `oneport` 네임스페이스이고(`deploy/aws`), EKS는 `in_cluster: true`로 Pod ServiceAccount를 써서 access entry가 필요 없습니다. 온프렘은 `Hackathon/infra/install/onprem-k8s/generate-kubeconfig.sh`의 읽기 전용 사용자, GKE는 `deploy/reader`의 읽기 전용 계정 kubeconfig를 씁니다. 자세한 순서는 [platform/README.md](../README.md) 2장을 따릅니다.
 
 보고기는 워커 Pod에 sidecar로 붙여 같은 PVC를 읽습니다(표준 라이브러리만 사용).
 

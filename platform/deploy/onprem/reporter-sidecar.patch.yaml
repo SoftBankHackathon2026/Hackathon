@@ -1,0 +1,40 @@
+# gitops apps/db-insert-worker/deployment.yaml 에 붙이는 strategic merge patch.
+# 워커 PVC(/var/lib/worker)의 cutover·policy SQLite 와 verify 보고서를 읽어 플랫폼으로 5초마다 보낸다.
+# 보고기는 표준 라이브러리만 쓰므로 공식 python 이미지에 스크립트(ConfigMap)만 얹는다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-insert-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: fleet-reporter
+          image: python:3.12-alpine
+          command: ["python", "/opt/reporter/fleet_reporter.py"]
+          args: ["--job-id", "$(WORKER_RUN_ID)", "--state-dir", "/var/lib/worker", "--interval", "5"]
+          env:
+            - name: WORKER_RUN_ID
+              value: forward_001
+            # AWS 내부 ALB 주소. Tailscale 경로(10.0.0.0/16)로 닿는다.
+            - name: ONEPORT_PLATFORM_URL
+              value: http://REPLACE_WITH_ALB_DNS_NAME
+            - name: ONEPORT_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef: {name: oneport-ingest, key: token}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/worker, readOnly: true}
+            - {name: reporter, mountPath: /opt/reporter, readOnly: true}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: reporter
+          configMap:
+            name: oneport-fleet-reporter

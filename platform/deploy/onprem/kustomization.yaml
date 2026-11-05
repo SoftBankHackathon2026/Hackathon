@@ -1,0 +1,15 @@
+# 온프렘 gitops 에 넣을 조각. 이 폴더를 그대로 Argo CD 앱으로 쓰지 않는다.
+#   1. nodeport-services.yaml      → gitops apps/db-insert-worker/ (또는 별도 앱)에 추가
+#   2. reporter-sidecar.patch.yaml → gitops apps/db-insert-worker/kustomization.yaml 의 patches 에 추가
+#   3. 보고기 스크립트 ConfigMap    → 아래 configMapGenerator 와 같은 방식으로 생성
+#   4. Secret oneport-ingest(token) → kubectl -n hackathon create secret generic oneport-ingest --from-file=token=<파일>
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: hackathon
+resources:
+  - nodeport-services.yaml
+configMapGenerator:
+  - name: oneport-fleet-reporter
+    files: [../../ops/fleet_reporter.py]
+    options:
+      disableNameSuffixHash: true

@@ -1,0 +1,23 @@
+# EKS 에 플랫폼을 띄운다. kubectl apply -k platform/deploy/aws
+# 그 전에 Secret oneport-secrets 를 만든다 (platform/README.md "AWS 에 띄우기").
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oneport
+labels:
+  - pairs: {app.kubernetes.io/part-of: oneport-platform}
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - platform.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: oneport-fleet
+    files: [fleet.json]
+  - name: oneport-settings
+    envs: [settings.env]
+images:
+  - name: ghcr.io/softbankhackathon2026/oneport-platform-api
+    newTag: main
+  - name: ghcr.io/softbankhackathon2026/oneport-platform-web
+    newTag: main

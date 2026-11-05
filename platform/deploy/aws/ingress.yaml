@@ -1,0 +1,23 @@
+# 내부 ALB. VPC 안과 Tailscale(온프렘 보고기, 팀원)에서만 닿는다.
+# 공개하려면 scheme 을 internet-facing 으로 바꾸고 HTTPS·인증 모드를 함께 정한다.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oneport
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/tags: Project=oneaction,Env=dev,App=oneport-platform
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oneport-web
+                port: {name: http}
