@@ -1,0 +1,18 @@
+{
+  "application": "demo-api",
+  "environment_id": "onprem-test",
+  "source": {
+    "kind": "image",
+    "image": "registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "strategy": "blue_green",
+  "port": 8080,
+  "health_path": "/healthz",
+  "cpu": "0.5",
+  "memory_mib": 1024,
+  "replicas": 1,
+  "architecture": "X86_64",
+  "env": {
+    "APP_MODE": "demo"
+  }
+}

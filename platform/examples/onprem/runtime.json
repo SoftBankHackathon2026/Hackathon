@@ -1,0 +1,25 @@
+{
+  "environment": {
+    "application": "demo-api",
+    "environment_id": "onprem-test",
+    "namespace": "oneport-apps",
+    "ingress_class": "traefik",
+    "hostname": "demo-api-a1b2.yubin.website",
+    "workload_service_account": "oneport-runtime",
+    "secret_refs": {},
+    "max_replicas": 1,
+    "max_cpu": 0.5,
+    "max_memory_mib": 1024
+  },
+  "kubeconfig": "/run/secrets/oneport-platform.kubeconfig",
+  "context": "oneport-onprem",
+  "server": "https://kube-api.yubin.website",
+  "database_url": "postgresql://REPLACE_WITH_OPERATOR_DATABASE_CONNECTION",
+  "allowed_images": [
+    "registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "poll_seconds": 5,
+  "required_health_samples": 3,
+  "production_check_limit": 12,
+  "engine": "argo"
+}

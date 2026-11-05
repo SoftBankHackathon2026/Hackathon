@@ -1,0 +1,25 @@
+{
+  "engine": "cloud_run",
+  "environment": {
+    "application": "demo-api",
+    "environment_id": "gcp-demo",
+    "project_id": "replace-project",
+    "region": "asia-northeast3",
+    "service": "demo-api",
+    "service_uid": "REPLACE_WITH_EXISTING_SERVICE_UID",
+    "service_url": "https://demo-api.gcp.example.com",
+    "max_replicas": 5,
+    "max_cpu": 2,
+    "max_memory_mib": 4096
+  },
+  "database_url": "postgresql://REPLACE_WITH_OPERATOR_DATABASE_CONNECTION",
+  "deployer_service_account": "oneport-deployer@replace-project.iam.gserviceaccount.com",
+  "allowed_images": [
+    "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9"
+  ],
+  "poll_seconds": 5,
+  "required_health_samples": 3,
+  "production_check_limit": 12,
+  "release_timeout_seconds": 7200,
+  "service_access": "authenticated"
+}

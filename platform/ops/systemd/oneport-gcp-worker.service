@@ -1,0 +1,22 @@
+[Unit]
+Description=Oneport GCP Cloud Run release worker
+After=network-online.target postgresql.service oneport-api.service
+Wants=network-online.target
+PartOf=oneport-api.service
+ConditionPathExists=/etc/oneport/gcp-runtime.json
+
+[Service]
+User=oneport
+Group=oneport
+Environment=HOME=/var/lib/oneport GOOGLE_APPLICATION_CREDENTIALS=/etc/oneport/secrets/gcp-credentials.json
+WorkingDirectory=/opt/oneport/current/platform/backend
+ExecStart=/opt/oneport/current/platform/backend/.venv/bin/python -m controlplane.execution.gcp.operator worker --config /etc/oneport/gcp-runtime.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/oneport
+
+[Install]
+WantedBy=multi-user.target

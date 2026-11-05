@@ -1,0 +1,24 @@
+[Unit]
+Description=Oneport source build worker
+After=network-online.target oneport-api.service
+Wants=network-online.target
+PartOf=oneport-api.service
+ConditionPathExists=/etc/oneport/build.json
+
+[Service]
+Type=simple
+User=oneport
+Group=oneport
+WorkingDirectory=/opt/oneport/current/platform/backend
+EnvironmentFile=/etc/oneport/platform.env
+Environment=ONEPORT_BUILD_CONFIG=/etc/oneport/build.json
+ExecStart=/opt/oneport/current/platform/backend/.venv/bin/python -m controlplane.builds.worker
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

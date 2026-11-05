@@ -1,0 +1,32 @@
+# Review/apply by the infrastructure administrator only. The platform does not grant itself access.
+# Legacy compatibility: infra/onprem/cluster/platform-access.yaml already includes these grants.
+# Does not grant Node/Namespace/RBAC/PV, pod exec, or other namespaces' Secret access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oneport-platform-data
+  namespace: oneport-apps
+rules:
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [list, watch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oneport-platform-data
+  namespace: oneport-apps
+subjects:
+  - kind: ServiceAccount
+    name: oneport-deployer
+    namespace: oneport-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oneport-platform-data

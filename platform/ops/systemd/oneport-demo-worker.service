@@ -1,0 +1,26 @@
+[Unit]
+Description=Oneport multi-environment deployment run worker
+After=network-online.target oneport-api.service oneport-build-worker.service
+Wants=network-online.target
+PartOf=oneport-api.service
+ConditionPathExists=/etc/oneport/build.json
+ConditionPathExists=/etc/oneport/demo-deploy.json
+
+[Service]
+Type=simple
+User=oneport
+Group=oneport
+WorkingDirectory=/opt/oneport/current/platform/backend
+EnvironmentFile=/etc/oneport/platform.env
+Environment=ONEPORT_BUILD_CONFIG=/etc/oneport/build.json
+Environment=ONEPORT_DEMO_DEPLOY_CONFIG=/etc/oneport/demo-deploy.json
+ExecStart=/opt/oneport/current/platform/backend/.venv/bin/python -m controlplane.demo_deployments.worker
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

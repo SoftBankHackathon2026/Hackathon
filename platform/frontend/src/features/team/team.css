@@ -1,0 +1,11 @@
+.members {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.members tr:last-child td {
+  border-bottom: 0;
+}
+.members .sub {
+  color: var(--sub);
+}

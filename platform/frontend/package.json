@@ -1,0 +1,26 @@
+{
+  "name": "oneport-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "dev": "vite --host 127.0.0.1 --port 4320",
+    "build": "tsc --noEmit && vite build",
+    "format": "prettier --write src vite.config.ts",
+    "format:check": "prettier --check src vite.config.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.106.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-error-boundary": "^6.1.6"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "prettier": "3.9.9",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}

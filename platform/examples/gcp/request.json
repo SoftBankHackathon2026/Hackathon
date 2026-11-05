@@ -1,0 +1,22 @@
+{
+  "application": "demo-api",
+  "environment_id": "gcp-demo",
+  "source": {
+    "kind": "image",
+    "image": "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9"
+  },
+  "strategy": "canary",
+  "cpu": "1",
+  "memory_mib": 1024,
+  "replicas": 2,
+  "port": 8080,
+  "health_path": "/health",
+  "rollout": {
+    "canary_percent": 10,
+    "hold_seconds": 300,
+    "promotion": "manual",
+    "auto_rollback": true,
+    "failure_threshold": 3,
+    "bake_seconds": 60
+  }
+}

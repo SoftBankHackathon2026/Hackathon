@@ -1,0 +1,10 @@
+{
+  "project": "oneport-source-build",
+  "region": "ap-northeast-2",
+  "image_repository": "docker.io/inhoman/oneport-release-demo",
+  "max_daily": null,
+  "max_pending": null,
+  "required_databases": {
+    "https://github.com/softbank-hackathon-2026-term1-azalea/oneport-platform-app-example": "postgresql"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "application": "demo",
+  "environment_id": "gcp-demo",
+  "database_url": "postgresql://REPLACE_WITH_OPERATOR_DATABASE_CONNECTION",
+  "upstream_url": "http://127.0.0.1:8331",
+  "service_url": "https://demo-q37hkgfc2a-du.a.run.app",
+  "service_access": "public",
+  "allowed_repositories": [
+    "https://github.com/hyukvoid/cloud-bridge-e2e-sample.git"
+  ],
+  "poll_seconds": 2
+}

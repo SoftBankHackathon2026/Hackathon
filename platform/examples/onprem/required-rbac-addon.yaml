@@ -1,0 +1,28 @@
+# Infrastructure-admin review/apply only. Supplements Oneport PR #9; not an SDK action.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oneport-platform-migrations
+  namespace: oneport-apps
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    resourceNames: [oneport-runtime]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oneport-platform-migrations
+  namespace: oneport-apps
+subjects:
+  - kind: ServiceAccount
+    name: oneport-deployer
+    namespace: oneport-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oneport-platform-migrations

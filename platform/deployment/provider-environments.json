@@ -1,0 +1,145 @@
+{
+  "aws_demo_image": "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9",
+  "gcp": {
+    "catalog_target_id": "gcp-main",
+    "engine": "cloud_run",
+    "environment": {
+      "application": "oneport-demo",
+      "environment_id": "gcp-oneport-demo",
+      "project_id": "project-079b4282-ed6c-40b4-954",
+      "region": "asia-northeast3",
+      "service": "oneport-demo",
+      "service_uid": "12ff7e78-811a-496b-ab10-b5093dfb14d1",
+      "service_url": "https://oneport-demo.gcp.yubin.dev",
+      "max_cpu": 1,
+      "max_memory_mib": 512,
+      "max_replicas": 1
+    },
+    "service_access": "public",
+    "allowed_images": [
+      "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9"
+    ],
+    "deployer_service_account": null,
+    "data_provisioning": {
+      "app_id": "demo",
+      "network": "projects/project-079b4282-ed6c-40b4-954/global/networks/oneport",
+      "subnetwork": "projects/project-079b4282-ed6c-40b4-954/regions/asia-northeast3/subnetworks/oneport-cloud-run",
+      "allocated_ip_range": "oneport-private-services"
+    },
+    "tracing": {
+      "sample_ratio": 1.0,
+      "python_platform": "glibc",
+      "python_image": "asia-northeast3-docker.pkg.dev/project-079b4282-ed6c-40b4-954/oneport-apps/otel-python@sha256:a461c391b0c4e5fea4196eca857ed106ee1fa2f65f32c78603e6026e6bf2593a",
+      "agent_images": {
+        "java": "asia-northeast3-docker.pkg.dev/project-079b4282-ed6c-40b4-954/oneport-apps/otel-java@sha256:6f70427eee0ddfaaa861632eadf2d1c9ba03f4daa30e68ae352eac269e9caf7e",
+        "nodejs": "asia-northeast3-docker.pkg.dev/project-079b4282-ed6c-40b4-954/oneport-apps/otel-nodejs@sha256:576e2b00bdf9a6040a7e3a497dd5eea4e624f60dcfd28871d9190752a0f18955",
+        "dotnet": "asia-northeast3-docker.pkg.dev/project-079b4282-ed6c-40b4-954/oneport-apps/otel-dotnet@sha256:642e740b926ce7a736d674df40f7d9796451b9b018130e5dbeb2d4dd5a0f9323"
+      }
+    },
+    "credentials_file": "/etc/oneport/secrets/gcp-credentials.json",
+    "cache_provisioning": {
+      "app_id": "demo",
+      "network": "projects/project-079b4282-ed6c-40b4-954/global/networks/oneport",
+      "subnetwork": "projects/project-079b4282-ed6c-40b4-954/regions/asia-northeast3/subnetworks/oneport-cloud-run"
+    }
+  },
+  "onprem": {
+    "engine": "argo",
+    "environment": {
+      "application": "oneport-demo",
+      "environment_id": "onprem-demo",
+      "namespace": "oneport-apps",
+      "hostname": "oneport-demo.yubin.website",
+      "max_cpu": 0.5,
+      "max_memory_mib": 512,
+      "max_replicas": 1
+    },
+    "context": "oneport-onprem",
+    "server": "https://kube-api.yubin.website",
+    "allowed_images": [
+      "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9"
+    ],
+    "preview_probe_mode": "job",
+    "preview_probe_image": "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9",
+    "observability": {
+      "logs_backend": "loki"
+    }
+  },
+  "helm": {
+    "environment": {
+      "application": "notes-helm-demo",
+      "environment_id": "onprem-helm-notes",
+      "hostname": "notes-helm-demo.yubin.website",
+      "max_cpu": 0.5,
+      "max_memory_mib": 512,
+      "max_replicas": 1
+    },
+    "context": "oneport-onprem",
+    "server": "https://kube-api.yubin.website",
+    "binary": "/opt/oneport/current/platform/vendor/bin/helm",
+    "allowed_images": [
+      "docker.io/inhoman/oneport-release-demo@sha256:5011ef61c8f315d0fbc78fc064194fabc492a6714e2c97ae24d22efccaa470e1"
+    ],
+    "app_chart": {
+      "name": "oneport-app",
+      "version": "0.3.0",
+      "path": "/opt/oneport/current/platform/vendor/helm/oneport-app-0.3.0.tgz",
+      "sha256": "c1aaa967e3b44808f60f56314dc62d0d12e76e930a315e4250e7843425c28540"
+    },
+    "data_chart": {
+      "name": "oneport-data",
+      "version": "0.1.1",
+      "path": "/opt/oneport/current/platform/vendor/helm/oneport-data-0.1.1.tgz",
+      "sha256": "1126e8c397598ea9868c39653f6bf51b8a5b2837c89d2e24024d2ff24110d3b6"
+    },
+    "engine": "helm",
+    "required_database": "postgresql",
+    "observability": {
+      "python_image": "ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.66b0@sha256:0baba8785795d1ecaf9e5aafba9b400bae59ea4dba03f320d59845abf63d623e",
+      "python_platform": "glibc",
+      "trace_sample_ratio": 1.0,
+      "logs_backend": "loki"
+    },
+    "chart_source_commit": "1ca90866e3d6f273e46364625983ed7e1fd253fb",
+    "catalog_target_id": "onprem-main"
+  },
+  "helm_canary": {
+    "environment": {
+      "application": "canary-demo",
+      "environment_id": "onprem-canary-demo",
+      "hostname": "canary-demo.yubin.website",
+      "max_cpu": 0.5,
+      "max_memory_mib": 512,
+      "max_replicas": 1
+    },
+    "context": "oneport-onprem",
+    "server": "https://kube-api.yubin.website",
+    "binary": "/opt/oneport/current/platform/vendor/bin/helm",
+    "allowed_images": [
+      "docker.io/inhoman/oneport-release-demo@sha256:155a6e8597f135c2832499479711787e8aed53901170d457c4b839a57ad772a9"
+    ],
+    "app_chart": {
+      "name": "oneport-app",
+      "version": "0.3.0",
+      "path": "/opt/oneport/current/platform/vendor/helm/oneport-app-0.3.0.tgz",
+      "sha256": "c1aaa967e3b44808f60f56314dc62d0d12e76e930a315e4250e7843425c28540"
+    },
+    "data_chart": {
+      "name": "oneport-data",
+      "version": "0.1.1",
+      "path": "/opt/oneport/current/platform/vendor/helm/oneport-data-0.1.1.tgz",
+      "sha256": "1126e8c397598ea9868c39653f6bf51b8a5b2837c89d2e24024d2ff24110d3b6"
+    },
+    "engine": "helm",
+    "required_database": "none",
+    "demo_database": false,
+    "default_strategy": "canary",
+    "chart_source_commit": "1ca90866e3d6f273e46364625983ed7e1fd253fb",
+    "observability": {
+      "python_image": "ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.66b0@sha256:0baba8785795d1ecaf9e5aafba9b400bae59ea4dba03f320d59845abf63d623e",
+      "python_platform": "glibc",
+      "trace_sample_ratio": 1.0,
+      "logs_backend": "loki"
+    }
+  }
+}
