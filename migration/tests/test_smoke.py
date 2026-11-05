@@ -606,6 +606,54 @@ def test_token_refused_over_cleartext_non_loopback():
     assert TOKEN not in str(err.value)
 
 
+@pytest.mark.parametrize("url", [
+    "http://sample-app.hackathon.svc",
+    "http://sample-app.hackathon.svc:8080",
+    "http://sample-app.hackathon.svc.cluster.local",
+    "http://sample-app.hackathon.svc.cluster.local:8080/",
+    "http://SAMPLE-APP.Hackathon.SVC.Cluster.Local:8080",
+    "http://127.0.0.1:8080",
+    "http://[::1]:8080",
+    "https://sample-app.example.com",
+    "https://sample-app.example.com:8443",
+])
+def test_token_transport_allowed(url):
+    assert smoke.RequestApi(url, TOKEN, 1.0).base_url == url.rstrip("/")
+
+
+@pytest.mark.parametrize("url", [
+    "http://sample-app.example.com",                       # 외부 http
+    "http://sample-app:8080",                              # 짧은 이름은 클러스터 내부로 단정할 수 없다
+    "http://evil.svc.cluster.local.example.com",           # 접미사 위장
+    "http://evil.svc.example.com",
+    "http://evil.svc.cluster.local.",                      # 끝 점은 접미사가 아니다
+    "http://evilsvc",
+    "http://evil-svc.cluster.local",
+    "http://svc",
+    "http://.svc",
+    "http://svc.cluster.local",
+    "http://evil.com\\.svc",                               # 호스트 파서마다 해석이 갈리는 이름
+    "http://evil.example.com/a.svc",                       # 경로의 .svc 는 호스트가 아니다
+    "http://127.0.0.2",
+    "http://localhost:8080",
+])
+def test_token_transport_refused_over_http(url):
+    with pytest.raises(SmokeConfigError) as err:
+        smoke.RequestApi(url, TOKEN, 1.0)
+    assert TOKEN not in str(err.value)
+
+
+@pytest.mark.parametrize("url", ["http://x.svc@evil.example.com", "http://evil.example.com?host=x.svc",
+                                 "http://evil.example.com#x.svc"])
+def test_url_tricks_with_cluster_suffix_are_refused(url):
+    with pytest.raises(SmokeConfigError):
+        smoke.RequestApi(url, TOKEN, 1.0)
+
+
+def test_cleartext_external_http_is_still_allowed_without_token():
+    assert smoke.RequestApi("http://sample-app.example.com", None, 1.0).base_url == "http://sample-app.example.com"
+
+
 @pytest.mark.parametrize("url", ["ftp://x", "nothing", "http://user:pw@127.0.0.1", "http://127.0.0.1?a=1"])
 def test_bad_url_is_config_error_without_echoing_it(url):
     with pytest.raises(SmokeConfigError) as err:

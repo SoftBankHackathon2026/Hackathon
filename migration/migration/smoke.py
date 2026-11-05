@@ -57,6 +57,8 @@ DEFAULT_TOKEN_ENV = "SMOKE_API_TOKEN"
 MAX_BODY_BYTES = 1024 * 1024
 MAX_RUN_ID_LENGTH = 200  # sample-app docs/api.md 입력 한도
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
+# urlsplit 의 hostname 에 전체 일치시킨다. 라벨 문자를 제한해 `evil.com\.svc` 같은 이름도 통과하지 못한다.
+_CLUSTER_HOST_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+svc(?:\.cluster\.local)?")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9\-._~+/]{32,}=*")
 _ERROR_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _REQUEST_ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -232,10 +234,14 @@ def _validated_base_url(url: str, token: str | None) -> str:
         raise SmokeConfigError("앱 URL 은 http(s)://호스트 형식이어야 한다")
     if parts.username or parts.password or parts.query or parts.fragment:
         raise SmokeConfigError("앱 URL 에 인증정보·쿼리·fragment 를 넣지 않는다")
-    if token and parts.scheme != "https" and parts.hostname not in _LOOPBACK_HOSTS:
-        # sample-app traffic-bot 의 INSECURE_TOKEN_TRANSPORT 규칙과 같다.
-        raise SmokeConfigError("토큰은 https 또는 http://127.0.0.1, http://[::1] 로만 보낸다")
+    if token and parts.scheme != "https" and not _allows_cleartext_token(parts.hostname):
+        raise SmokeConfigError("토큰을 http 로 보낼 수 있는 곳은 루프백과 *.svc, *.svc.cluster.local 뿐이다. 그 밖에는 https 를 쓴다")
     return url.rstrip("/")
+
+
+def _allows_cleartext_token(hostname: str) -> bool:
+    """에이전트 파드가 클러스터 내부 Service 를 http 로 부르는 경로를 허용한다. traffic-bot 규칙보다 넓은 예외다."""
+    return hostname in _LOOPBACK_HOSTS or _CLUSTER_HOST_RE.fullmatch(hostname) is not None
 
 
 def token_from_env(name: str = DEFAULT_TOKEN_ENV, env: dict[str, str] | None = None) -> str | None:
