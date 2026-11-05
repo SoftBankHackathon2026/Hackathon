@@ -19,7 +19,7 @@ rules:
     resourceNames: [argocd-cm]
     verbs: [get]
   - apiGroups: [apps]
-    resources: [deployments, statefulsets]
+    resources: [deployments, statefulsets, deployments/status, statefulsets/status]
     verbs: [get, list]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
