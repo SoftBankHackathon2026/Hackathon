@@ -23,3 +23,8 @@ export const SecurityPage = lazy(() =>
 export const TeamPage = lazy(() =>
   import("../features/team/TeamPage").then((m) => ({ default: m.TeamPage })),
 );
+export const PreparePage = lazy(() =>
+  import("../features/prepare/PreparePage").then((m) => ({
+    default: m.PreparePage,
+  })),
+);

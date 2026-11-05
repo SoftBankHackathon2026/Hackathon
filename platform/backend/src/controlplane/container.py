@@ -21,11 +21,13 @@ from controlplane.integrations.live import JournalFleet
 from controlplane.integrations.simulator import SimulatedFleet
 from controlplane.providers.loader import load_platform
 from controlplane.providers.registry import ProviderRegistry
+from controlplane.repositories.enrollments import EnrollmentStore
 from controlplane.repositories.fleet_journal import FleetJournal
 from controlplane.repositories.releases import ReleaseStore
 from controlplane.services.auth import AuthService, LoginThrottle
 from controlplane.services.builds import BuildService
 from controlplane.services.deployments import DeploymentService
+from controlplane.services.enrollments import EnrollmentService, aws_principal_from_environment
 from controlplane.services.environments import EnvironmentService
 from controlplane.services.fleet import FleetService
 from controlplane.services.ingest import IngestService
@@ -55,6 +57,7 @@ class Container:
     security: SecurityService
     ingest: IngestService | None
     ingest_token: SecretStr | None
+    enrollments: EnrollmentService | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -147,4 +150,7 @@ def build_container(
         security=SecurityService(source),
         ingest=IngestService(fleet_config, FleetJournal(store)) if store else None,
         ingest_token=ingest_token_from_environment(),
+        enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
+        if store
+        else None,
     )

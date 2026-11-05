@@ -1,12 +1,14 @@
 export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
+  | { view: "prepare" }
   | { view: "environments"; select?: { envId: string; id: string } }
   | { view: "security"; control?: string }
   | { view: "team" };
 
 export function readRoute(hash = "#"): Route {
   const [head, id, extra] = hash.replace(/^#/, "").split("/");
+  if (head === "prepare") return { view: "prepare" };
   if (head === "migrations" && id)
     return { view: "migration", id: decodeURIComponent(id) };
   if (head === "environments") {
@@ -44,6 +46,8 @@ export function routeTitle(route: Route, teamName: string) {
   switch (route.view) {
     case "migration":
       return route.id;
+    case "prepare":
+      return "마이그레이션 준비";
     case "environments":
       return "환경";
     case "security":

@@ -2845,3 +2845,299 @@ body {
 .shell .marker-pop .marker-pop-meta a:hover {
   text-decoration: underline;
 }
+
+/* ---- 마이그레이션 준비 (#prepare) ---- */
+.prep-steps {
+  display: flex;
+  gap: 24px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.prep-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+  font-weight: 600;
+}
+.prep-steps li.disabled {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+.prep-step-no {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.prep-steps li[aria-current="step"] .prep-step-no {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-knockout);
+}
+.prep-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.shell .prep-kind {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: auto;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+}
+.shell .prep-kind:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.shell .prep-kind[aria-checked="true"] {
+  border-color: var(--accent);
+}
+.shell .prep-kind:disabled {
+  background: var(--surface);
+  color: var(--text-tertiary);
+}
+.prep-radio {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+.prep-kind[aria-checked="true"] .prep-radio {
+  border: 4px solid var(--accent);
+}
+.prep-kind-text {
+  display: grid;
+  gap: 2px;
+}
+.prep-kind-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.prep-kind-text small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.prep-kind:disabled .prep-kind-text small {
+  color: var(--text-tertiary);
+}
+.prep-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 24px;
+  max-width: 880px;
+}
+.prep-field {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.prep-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.prep-help {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.prep-actions,
+.prep-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+}
+.shell .prep-actions .primary,
+.shell .prep-footer .primary {
+  width: auto;
+  margin: 0;
+}
+.prep-footer {
+  margin: 8px 0 32px;
+}
+.prep-note {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.prep-commands {
+  display: grid;
+  gap: 16px;
+  max-width: 960px;
+}
+.prep-command-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.prep-command-head h3,
+.prep-does h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.shell .prep-copy {
+  width: auto;
+  margin: 0;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+.prep-code {
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: pre;
+}
+.prep-comment {
+  color: var(--text-tertiary);
+}
+.prep-prompt {
+  color: var(--text-tertiary);
+  user-select: none;
+}
+.prep-does {
+  max-width: 960px;
+  margin-top: 16px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+}
+.prep-does ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 22px;
+}
+.prep-waiting {
+  margin: 0;
+  font-size: 13px;
+}
+.prep-result {
+  display: grid;
+  gap: 16px;
+}
+.prep-headline {
+  margin: 0;
+  font-size: 13px;
+}
+.prep-kv {
+  max-width: 720px;
+}
+.ux-kv.prep-kv > div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+}
+.ux-kv.prep-kv dd {
+  color: var(--text);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.prep-groups {
+  display: grid;
+  gap: 20px;
+  max-width: 880px;
+}
+.prep-group {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.prep-group legend {
+  padding: 0 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.prep-group > .prep-help {
+  margin: -6px 0 0;
+}
+.shell textarea.prep-secret {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+}
+.prep-checks {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.prep-checks li {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+}
+.prep-check-detail {
+  color: var(--text-secondary);
+}
+/* 준비 화면 정렬: 카드·입력 영역 폭을 맞추고, 선택 버튼을 입력칸 높이에 맞춘다 */
+.prep-kinds,
+.prep-groups,
+.prep-commands,
+.prep-does {
+  max-width: 960px;
+}
+.prep-kinds {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.prep-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: none;
+}
+.prep-field .seg {
+  justify-self: start;
+  height: 38px;
+}
+.shell .prep-field .seg button {
+  height: 100%;
+  padding: 0 14px;
+}
+.prep-field > input,
+.prep-field > select {
+  height: 38px;
+}
+@media (max-width: 900px) {
+  .prep-kinds,
+  .prep-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.prep-form.prep-form-ssh {
+  grid-template-columns: minmax(0, 2fr) 88px minmax(0, 1.5fr) auto;
+}
+@media (max-width: 900px) {
+  .prep-form.prep-form-ssh {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

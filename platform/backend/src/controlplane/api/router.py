@@ -4,6 +4,7 @@ from controlplane.api.routes import (
     applications,
     auth,
     builds,
+    enrollments,
     environments,
     migrations,
     monitoring,
@@ -21,10 +22,10 @@ for module in (
     builds,
     runs,
     applications,
+    enrollments,
     environments,
     migrations,
     monitoring,
     releases,
-    migrations,
 ):
     api_router.include_router(module.router)
