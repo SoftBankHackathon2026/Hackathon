@@ -363,7 +363,8 @@ def _apps(env: EnvironmentConfig) -> list[AppState]:
         "db-insert-worker",
     ]
     if env.provider in ("aws", "gcp"):
-        names = ["review-service", "sample-app"]
+        # 실제 Argo CD 앱 이름은 환경 접미사가 붙는다 (review-service-aws 등). 구성 요소의 argo_app 과 맞춘다.
+        names = [c.argo_app for c in env.components if c.argo_app]
     return [
         AppState(name=name, namespace=env.app_namespace, sync="Synced", health="Healthy")
         if env.provider == "onprem"

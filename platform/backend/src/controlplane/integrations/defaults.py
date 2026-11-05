@@ -144,15 +144,34 @@ AWS_COMPONENTS = [
         "cloudwatch", "CloudWatch 로그·알람", "platform", "monitoring", managed=True, placement=[]
     ),
     component(
+        "argo-rollouts",
+        "Argo Rollouts",
+        "platform",
+        "rollout",
+        workload="argo-rollouts/deployment/argo-rollouts",
+    ),
+    component(
+        "prometheus",
+        "Prometheus·Grafana",
+        "platform",
+        "monitoring",
+        workload="monitoring/statefulset/prometheus-monitoring-kube-prometheus-prometheus",
+    ),
+    component(
         "review-service",
         "review-service",
         "app",
         "app",
-        argo_app="review-service",
+        argo_app="review-service-aws",
         depends_on=["aws-lbc", "rds", "msk"],
     ),
     component(
-        "sample-app", "sample-app", "app", "app", argo_app="sample-app", depends_on=["aws-lbc"]
+        "sample-app",
+        "sample-app",
+        "app",
+        "app",
+        argo_app="sample-app-aws",
+        depends_on=["aws-lbc"],
     ),
     component(
         "rds",
@@ -210,11 +229,11 @@ GCP_COMPONENTS = [
         "review-service",
         "app",
         "app",
-        argo_app="review-service",
+        argo_app="review-service-gcp",
         depends_on=["cloud-lb", "cloud-sql", "managed-kafka"],
     ),
     component(
-        "sample-app", "sample-app", "app", "app", argo_app="sample-app", depends_on=["cloud-lb"]
+        "sample-app", "sample-app", "app", "app", argo_app="sample-app-gcp", depends_on=["cloud-lb"]
     ),
     component(
         "cloud-sql",
@@ -266,8 +285,10 @@ AWS_PLACEMENT = {
     "aws-lbc": [VPC, EKS_SUBNET, EKS, "ns kube-system"],
     "argocd": [VPC, EKS_SUBNET, EKS, "ns argocd"],
     "eso": [VPC, EKS_SUBNET, EKS, "ns external-secrets"],
+    "argo-rollouts": [VPC, EKS_SUBNET, EKS, "ns argo-rollouts"],
+    "prometheus": [VPC, EKS_SUBNET, EKS, "ns monitoring"],
     "review-service": [VPC, EKS_SUBNET, EKS, "ns platform"],
-    "sample-app": [VPC, EKS_SUBNET, EKS, "ns platform"],
+    "sample-app": [VPC, EKS_SUBNET, EKS, "ns sample-app"],
     "rds": [VPC, "data 서브넷"],
     "msk": [VPC, "data 서브넷"],
     "tailscale-aws": [VPC, EKS_SUBNET],

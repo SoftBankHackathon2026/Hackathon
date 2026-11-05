@@ -84,7 +84,7 @@ npm run dev
 | 준비물 | 방법 |
 |---|---|
 | 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://172.30.1.10:6443` |
-| 워커·Connect 노출 | gitops `apps/db-insert-worker/platform-access.yaml`, `apps/migration-cdc/platform-access.yaml` (`SoftBankHackathon2026/gitops#19`). 워커 `30880`, Connect `30883`, NetworkPolicy 포함 |
+| 워커·Connect 노출 | gitops `apps/db-insert-worker/platform-access.yaml`, `apps/migration-cdc/platform-access.yaml` (`SoftBankHackathon2026/gitops#19`). 워커 `30880`, Connect `30883`. NetworkPolicy는 LAN(노드 IP 제외)만 허용해서, AWS에서 `proxmox-exit`를 거친 요청은 통과하고 다른 네임스페이스 파드는 막혀요 |
 | 보고기 | 플랫폼을 띄워 내부 ALB 주소가 나온 뒤 `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
 | AWS VPC 경로 | k3s 노드가 Tailscale `--accept-routes`로 `10.0.0.0/16`을 받아요 (설정 완료). LAN 우회 규칙 `tailscale-lan-bypass.service`가 노드 간 통신을 지켜요 |
 
@@ -104,9 +104,10 @@ npm run dev
 |---|---|
 | `environments[].in_cluster` | 플랫폼이 그 클러스터 안에서 돌면 `true` (EKS). 나머지는 `kubeconfig`·`context` |
 | `environments[].kubeconfig` | `/etc/oneport/kube/onprem.kubeconfig`, `/etc/oneport/kube/gcp.kubeconfig` (Secret에서 마운트) |
+| `environments[].components` | 비우면 같은 `id`(onprem·aws·gcp)의 기본 아키텍처 배치를 써요. 직접 적으면 그 값을 써요 |
 | `environments[].data_services`, `boundary` | 화면에 그릴 이름. Terraform 출력과 맞춰요 |
 | `environments[].declared` | kube API로 알 수 없는 클라우드 보안 사실. Terraform에 있는 그대로 `true`/`false`, 모르면 빼요(미확인) |
-| `migrations[].worker_url`, `connect_url` | 온프렘 NodePort `http://172.30.1.10:30880`, `:30883` |
+| `migrations[].worker_url`, `connect_url` | 온프렘 NodePort. 두 노드 주소를 쉼표로 적어요(`http://172.30.1.10:30880,http://172.30.1.7:30880`). NodePort가 `externalTrafficPolicy: Local`이라 파드가 있는 노드만 응답하고, 수집기는 응답하는 주소로 넘어가 다음부터 그 주소를 먼저 써요 |
 
 [`deploy/aws/settings.env`](deploy/aws/settings.env)의 `REPLACE_WITH_ALB_DNS_NAME`은 첫 배포 뒤 내부 ALB 주소로 바꿔요. 도메인을 붙이면 그 이름을 써요.
 

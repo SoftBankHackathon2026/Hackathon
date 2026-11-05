@@ -154,3 +154,86 @@ def test_environment_config_rejects_unknown_provider():
                 "app_namespace": "platform",
             }
         )
+
+
+def test_status_clients_fail_over_to_the_node_that_answers():
+    import httpx
+
+    from controlplane.integrations import http_clients
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host)
+        if request.url.host == "172.30.1.10":
+            raise httpx.ConnectTimeout("no local endpoint", request=request)
+        if request.url.path == "/connectors/forward_001-source/status":
+            return httpx.Response(200, json={"connector": {"state": "RUNNING"}, "tasks": []})
+        return httpx.Response(404)
+
+    http_clients._PREFERRED.clear()
+    urls = "http://172.30.1.10:30883, http://172.30.1.7:30883/"
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    found = http_clients.ConnectStatusClient(urls, client).get_status("forward_001-source")
+    assert found == {"connector": {"state": "RUNNING"}, "tasks": []}
+    assert calls == ["172.30.1.10", "172.30.1.7"]
+    # 다음 tick 은 응답한 노드부터 시도한다.
+    calls.clear()
+    http_clients.ConnectStatusClient(urls, client).get_status("forward_001-source")
+    assert calls == ["172.30.1.7"]
+    # HTTP 응답(404)은 다음 주소로 넘기지 않는다.
+    calls.clear()
+    assert http_clients.ConnectStatusClient(urls, client).get_status("missing") is None
+    assert calls == ["172.30.1.7"]
+
+
+def test_status_client_raises_when_no_address_answers():
+    import httpx
+
+    from controlplane.integrations import http_clients
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    http_clients._PREFERRED.clear()
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.ConnectError):
+        http_clients.WorkerStatusClient("http://a:1,http://b:2", client).get_status()
+
+
+def test_live_config_without_components_inherits_default_layout(monkeypatch, tmp_path):
+    from controlplane.integrations.config import load_fleet_config
+
+    raw = {
+        "mode": "live",
+        "environments": [
+            {
+                "id": "gcp",
+                "name": "GCP",
+                "kind": "gke",
+                "provider": "gcp",
+                "region": "asia-northeast3",
+                "role": "target",
+                "app_namespace": "platform",
+            },
+            {
+                "id": "custom",
+                "name": "직접 정의",
+                "kind": "k3s",
+                "provider": "onprem",
+                "region": "lab",
+                "role": "legacy",
+                "app_namespace": "apps",
+            },
+        ],
+        "migrations": [],
+    }
+    import json
+
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setenv("ONEPORT_FLEET_CONFIG", str(path))
+    config = load_fleet_config()
+    assert [c.id for c in config.environment("gcp").components] == [c.id for c in GCP.components]
+    assert config.environment("gcp").boundary == GCP.boundary
+    assert config.environment("custom").components == []
