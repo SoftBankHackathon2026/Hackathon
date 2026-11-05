@@ -36,3 +36,5 @@ uv run --frozen --extra aws pytest -q tests/test_workload_inventory.py tests/tes
 ```
 
 AWS overlay 렌더링은 AWS 실환경 연결 검증이 아니다. 실환경 앱·DB 전환 사전 확인에서 migration-policy 파드 2개가 GHCR 이미지 인증 401로 ImagePullBackOff이며 서비스 endpoint가 없었다. 정책 판정이 가능한 상태로 복구되기 전에는 앱·DB 왕복/롤백 통합 성공으로 표시할 수 없다. 이 PR은 분석기 통합 검증 범위다.
+
+검증 결과: 단위 6개 + 선택 통합 3개(onprem/AWS 렌더링·온프렘 API) = **9 passed**. 별도 임시 PostgreSQL 16 컨테이너를 만든 백엔드 전체 실행은 440 passed / 2 failed 시점에 진행 정체로 중단했다(전체 통과 아님). 실패 항목은 `tests/aws/test_migration.py::test_migration_runs_before_ecs_and_then_deploys`, `tests/test_argo.py::test_failed_update_restores_saved_template_and_rechecks[True]`. 두 항목만 분리하면 main `1fb375b`와 PR 양쪽 모두 2 passed였으므로 전체 실행에서의 실패 원인은 미확정이다. 임시 테스트 DB 컨테이너는 제거했다. 기능 관련 ruff와 diff check는 통과했다.
