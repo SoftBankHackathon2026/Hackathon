@@ -20,3 +20,19 @@ Deployment/Pod/StatefulSet/DaemonSet/Job/CronJob/ReplicaSet/Argo Rollout의 일�
 ```sh
 PYTHONPATH=platform/backend/src python3 -m unittest discover -s platform/backend/tests -p test_workload_inventory.py -v
 ```
+
+## 통합 검증 (2026-11-06)
+
+GitOps `ca45f5b`의 sample-app onprem/AWS overlay를 실제 `kubectl kustomize`로 렌더링한 뒤 분석했다. 각각 리소스 3/4개, 의존성 4/3개, 이미지 1개를 확인했다. 온프렘 hackathon API에서 일반 리소스 57개·참조 54개·이미지 14개를 읽었고, 별도 Argo Rollout 조회로 sample-app 이미지와 참조도 확인했다. Secret 원문은 조회하지 않았다.
+
+재현용 선택 통합 테스트는 다음 환경변수를 명시해야 실행된다. 값을 지정하지 않으면 skip하며, 클러스터 변경은 없다.
+
+```sh
+export INVENTORY_TEST_GITOPS_ROOT=/path/to/reviewed/gitops
+export INVENTORY_TEST_KUBECONFIG=/path/to/local/kubeconfig
+export INVENTORY_TEST_CONTEXT=hackathon
+export INVENTORY_TEST_NAMESPACE=hackathon
+uv run --frozen --extra aws pytest -q tests/test_workload_inventory.py tests/test_workload_inventory_integration.py
+```
+
+AWS overlay 렌더링은 AWS 실환경 연결 검증이 아니다. 실환경 앱·DB 전환 사전 확인에서 migration-policy 파드 2개가 GHCR 이미지 인증 401로 ImagePullBackOff이며 서비스 endpoint가 없었다. 정책 판정이 가능한 상태로 복구되기 전에는 앱·DB 왕복/롤백 통합 성공으로 표시할 수 없다. 이 PR은 분석기 통합 검증 범위다.
