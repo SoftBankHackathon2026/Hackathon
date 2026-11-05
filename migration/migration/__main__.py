@@ -12,6 +12,7 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("migration.cutover", "전환 상태 머신 실행 (--dry-run 지원)"),
     ("migration.verify", "원본 B / 대상 T / 성공 요청 S 집합 비교 보고서"),
     ("migration.policy", "OPA 정책 판정 (evaluate/history/show). 실행 전 gate 와 판정 기록"),
+    ("migration.smoke", "요청 API 스모크 테스트 후 target_app_db check 출력 (--stage pre_cutover|final_verify)"),
 )
 
 
