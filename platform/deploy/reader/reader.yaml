@@ -59,6 +59,9 @@ rules:
   - apiGroups: [external-secrets.io]
     resources: [externalsecrets]
     verbs: [list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
