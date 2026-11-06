@@ -13,12 +13,28 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+harbor-infra = [
+    "ansible-core==2.20.11",
+    "kubernetes==37.0.2",
+    "cryptography==50.0.2",
+]
 dev = [
     "pytest>=8.0",
+    "jsonschema>=4.23,<5",
 ]
 
 [tool.setuptools]
-packages = ["migration"]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["migration", "migration.*"]
+exclude = ["*.__pycache__"]
+
+[tool.setuptools.package-data]
+"migration.harbor_infra" = ["ansible/ansible.cfg", "ansible/requirements.yml", "ansible/releases.json", "ansible/playbooks/*.yml", "ansible/library/*.py", "ansible/module_utils/*.py", "ansible/callback_plugins/*.py", "ansible/templates/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/*.pyc", "**/__pycache__/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

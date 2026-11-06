@@ -1,0 +1,35 @@
+name: harbor-infra
+on:
+  pull_request:
+    paths: ['migration/**', '.github/workflows/harbor-infra.yml']
+  push:
+    branches: [main]
+    paths: ['migration/**', '.github/workflows/harbor-infra.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: migration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install controller and validation dependencies
+        run: python -m pip install '.[harbor-infra,dev]' build wheel 'setuptools>=69' ruff==0.17.4 jsonschema
+      - name: Static and format checks
+        run: |
+          ruff check --isolated --select E9,F,I migration/harbor_infra tests/harbor_infra
+          ruff format --check migration/harbor_infra tests/harbor_infra
+      - name: Migration regression, TLS model and actual Ansible invocation
+        run: python -m pytest --tb=short
+      - name: Build and verify packaged resources
+        run: |
+          python -m build --no-isolation
+          python -c 'from pathlib import Path; import zipfile; z=zipfile.ZipFile(next(Path("dist").glob("*.whl"))); assert "migration/harbor_infra/ansible/playbooks/install.yml" in z.namelist(); assert "migration/harbor_infra/ansible/templates/harbor.yml.tmpl" in z.namelist(); assert not any("__pycache__" in p for p in z.namelist())'
+          cd /tmp
+          python -m migration.harbor_infra --help

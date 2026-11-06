@@ -1,0 +1,386 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "organization_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "cluster": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "kubeconfig_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "context": {
+          "type": "string"
+        },
+        "namespaces": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kubeconfig_ref",
+        "context"
+      ]
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+          },
+          "uid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+          },
+          "ssh_host": {
+            "type": "string"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "ssh_user": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+          },
+          "private_key_ref": {
+            "type": "string",
+            "pattern": "^/[^\\s]*$"
+          },
+          "known_hosts_ref": {
+            "type": "string",
+            "pattern": "^/[^\\s]*$"
+          },
+          "become_password_ref": {
+            "type": "string",
+            "pattern": "^/[^\\s]*$"
+          }
+        },
+        "required": [
+          "name",
+          "uid",
+          "ssh_host",
+          "ssh_user",
+          "private_key_ref",
+          "known_hosts_ref"
+        ]
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "new",
+            "reuse"
+          ]
+        },
+        "installation_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,39}$"
+        },
+        "node_name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+        }
+      },
+      "required": [
+        "mode",
+        "installation_id"
+      ]
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ca_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "admin_username": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "admin_password_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data_path": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "mount_path": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "capacity_gb": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 1000000
+        },
+        "install_runtime": {
+          "type": "boolean"
+        },
+        "database_password_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        }
+      },
+      "required": [
+        "data_path",
+        "mount_path",
+        "capacity_gb",
+        "database_password_ref"
+      ]
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "provided",
+            "self_signed"
+          ]
+        },
+        "certificate_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "private_key_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "ca_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer_url": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "username_claim": {
+          "type": "string"
+        },
+        "groups_claim": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "admin_group": {
+          "type": "string"
+        },
+        "ca_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "client_secret_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "admin_token_ref": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "manage_client": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issuer_url",
+        "client_id",
+        "client_secret_ref"
+      ]
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+          },
+          "adopt_existing": {
+            "type": "boolean"
+          },
+          "writer_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "reader_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "role_id": {
+                  "enum": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "role_id"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "writer_days",
+          "reader_days"
+        ]
+      }
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+          }
+        },
+        "restart_approved": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "type": "string",
+          "pattern": "^/[^\\s]*$"
+        },
+        "action": {
+          "enum": [
+            "prepare",
+            "ack",
+            "cleanup"
+          ]
+        },
+        "receipt_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "ttl_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "directory"
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restart_harbor": {
+          "type": "boolean"
+        },
+        "image_tests": {
+          "type": "boolean"
+        },
+        "runtime_pull": {
+          "type": "boolean"
+        },
+        "test_namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,62}$"
+        }
+      }
+    },
+    "plan_digest": {
+      "type": "string"
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 7200
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "organization_id"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harbor infrastructure input v1",
+  "description": "작업별 필수 입력, 파일 소유권·내용과 교차 조건은 config.validate에서 검사합니다."
+}

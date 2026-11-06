@@ -1,0 +1,68 @@
+# 문서용 주소·식별자·파일을 실제 플랫폼 입력으로 바꾸십시오. 비밀 원문은 넣지 않습니다.
+schema_version: 1
+request_id: harbor-prepare-001
+organization_id: team-ghost
+cluster:
+  id: onprem-01
+  kubeconfig_ref: /run/oneport/kubeconfig
+  context: onprem
+  namespaces: []
+nodes:
+  - name: worker-01
+    uid: replace-with-current-node-uid
+    ssh_host: 192.0.2.10
+    ssh_user: ubuntu
+    ssh_port: 22
+    private_key_ref: /run/oneport/ssh-key
+    known_hosts_ref: /run/oneport/known-hosts
+target:
+  mode: new                    # 기존 주소 재사용은 reuse. install은 new에서만 허용
+  installation_id: registry-01
+  node_name: worker-01
+endpoint:
+  url: https://registry.example.com:8444
+  admin_username: admin
+  admin_password_ref: /run/oneport/harbor-admin-password
+  # ca_ref: /run/oneport/existing-harbor-ca.pem
+install:
+  data_path: /srv/registry/harbor-data
+  mount_path: /srv/registry     # 실제 마운트 지점. 루트 디스크이면 /를 명시
+  capacity_gb: 160              # 설치 시 필요한 여유 디스크 기준
+  install_runtime: true
+  database_password_ref: /run/oneport/harbor-database-password
+tls:
+  mode: self_signed            # provided이면 certificate_ref, private_key_ref, ca_ref 필요
+keycloak:
+  issuer_url: https://identity.example.com/realms/migration
+  manage_client: false         # true: 기존 realm에 전용 client 생성·대조
+  # admin_token_ref: /run/oneport/keycloak-admin-token
+  client_id: harbor
+  client_secret_ref: /run/oneport/harbor-oidc-secret
+  # ca_ref: /run/oneport/keycloak-ca.pem
+  username_claim: preferred_username
+  groups_claim: groups
+  scope: openid,profile,email
+  admin_group: ''
+projects:
+  - name: migrated
+    adopt_existing: false
+    writer_days: 7
+    reader_days: 30
+    groups:
+      - name: /migration-operators
+        role_id: 2             # 1 관리자, 2 개발자, 3 읽기, 4 유지관리
+trust:
+  targets: [worker-01]          # 설치 대상과 별도. 실제 이미지 실행 노드만 선택
+  restart_approved: []          # k3s 재시작은 승인한 노드 이름만 명시
+handoff:
+  directory: /var/lib/oneport/harbor-state
+  ttl_seconds: 3600
+  action: prepare
+  # receipt_digest: 사용자가 보관 확인한 export.json의 sha256
+verification:
+  restart_harbor: false
+  image_tests: false            # true: 지정 프로젝트에 전용 시험 이미지 생성·검사·정리
+  runtime_pull: false           # true: 임시 시험 Pod·Secret 생성·정리. 업무 앱은 수정 안 함
+  # test_namespace: migration-verification  # runtime_pull일 때 기존 전용 공간 필수
+# preflight 결과의 값으로 바꾼 뒤 install/configure/trust 호출
+plan_digest: replace-with-preflight-plan-digest

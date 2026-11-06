@@ -1,0 +1,11 @@
+---
+- name: Harbor declared endpoint operation
+  hosts: controllers
+  gather_facts: false
+  tasks:
+    - name: Execute fixed Harbor endpoint action
+      harbor_endpoint:
+        operation: "{{ harbor_operation }}"
+        config: "{{ harbor_config }}"
+        secrets_value: "{{ harbor_secrets }}"
+        state_directory: "{{ harbor_state_directory }}"

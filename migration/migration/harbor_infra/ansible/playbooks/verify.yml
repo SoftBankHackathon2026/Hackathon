@@ -1,0 +1,16 @@
+---
+- name: Harbor declared host operation
+  hosts: harbor_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Execute fixed Harbor host action
+      harbor_host:
+        operation: "{{ harbor_operation }}"
+        config: "{{ harbor_config }}"
+        node: "{{ harbor_node }}"
+        secrets_value: "{{ harbor_secrets }}"
+        releases: "{{ harbor_releases }}"
+        harbor_yaml: "{{ harbor_yaml }}"

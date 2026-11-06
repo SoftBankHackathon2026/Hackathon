@@ -248,3 +248,8 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 - cutover PRECHECK 가 워커 `/status.known_targets` 로 **원본·대상 target 이 워커 설정에 있는지** 확인한다. 없으면 SWITCHING(자동 원복 없음)에서 `/target` 이 실패해 NEEDS_RECOVERY 가 되므로 미리 막는다. 워커 ConfigMap(gitops `apps/db-insert-worker`)에 귀환 대상 `onprem_return` 이 들어 있어야 한다.
 - COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
 - 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.
+
+
+## Harbor 온프레미스 목적지 준비
+
+별도 Ansible 모듈 `python -m migration.harbor_infra`로 기존 Harbor 조사·신규 설치·접근권한·노드 인증서 신뢰 설정을 준비합니다. 실제 업무 이미지 복사는 수행하지 않습니다. [설치와 플랫폼 호출 안내](docs/harbor-infra/README.md)를 참조하십시오.
