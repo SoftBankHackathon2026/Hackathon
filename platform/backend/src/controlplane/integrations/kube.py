@@ -169,26 +169,6 @@ class ClusterReader:
             unique.setdefault(workload.name, workload)
         return list(unique.values())
 
-    def _readiness(self, workload: str) -> tuple[int, int] | None:
-        namespace, kind, name = workload.split("/")
-        read = (
-            self._apps_api.read_namespaced_deployment_status
-            if kind == "deployment"
-            else self._apps_api.read_namespaced_stateful_set_status
-        )
-        try:
-            obj = read(name, namespace)
-        except ApiException as exc:
-            return (0, 0) if exc.status == 404 else None
-        return obj.status.ready_replicas or 0, obj.spec.replicas or 0
-
-    def _workload_ready(self) -> dict[str, tuple[int, int]]:
-        found = {}
-        for component in self._env.components:
-            if component.workload and (ready := self._readiness(component.workload)) is not None:
-                found[component.workload] = ready
-        return found
-
     def _workload_specs(self) -> list[WorkloadSpec] | None:
         try:
             listed = {
@@ -260,6 +240,5 @@ class ClusterReader:
             external_secrets=self._external_secrets(namespace),
             resource_quota_namespaces={namespace} if quotas else set(),
             apps=self._apps(),
-            workload_ready=self._workload_ready(),
             inventory=self._inventory(),
         )

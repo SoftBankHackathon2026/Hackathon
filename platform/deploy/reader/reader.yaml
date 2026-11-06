@@ -37,7 +37,7 @@ rules:
     resourceNames: [argocd-cm]
     verbs: [get]
   - apiGroups: [apps]
-    resources: [deployments, statefulsets, deployments/status, statefulsets/status]
+    resources: [deployments, statefulsets]
     verbs: [get, list]
   - apiGroups: [apps]
     resources: [daemonsets]
