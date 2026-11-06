@@ -6,6 +6,8 @@ INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을
 Keycloak 인증 기반의 탐색·점검·호스트 설치는 독립 명령
 `python -m migration.keycloak_infra`로 제공한다.
 [사용법과 플랫폼 입출력 규약](keycloak-infra/README.md)을 참고한다.
+[주요 구현 디렉토리의 설치 흐름·구성도·수집 정보 안내](migration/keycloak_infra/README.md)에서
+기존 환경 조사 방식과 신규 설치 후 반환 정보의 범위를 확인할 수 있다.
 이 명령은 계정·IAM 정책 이관이나 기존 데이터베이스 전환을 실행하지 않는다.
 
 > **주의: 이 코드는 아직 실제 클러스터(온프렘 k3s, 기존 Postgres, RDS, Kafka Connect)에서 실행·검증하지 않았다.**

@@ -1,5 +1,8 @@
 # Keycloak 환경 탐색·점검·호스트 설치
 
+설치 흐름·설치 후 구성도와 수집 정보/최종 반환 정보의 차이는
+[주요 구현 디렉토리의 README](../migration/keycloak_infra/README.md)에 정리했습니다.
+
 플랫폼이 사용자에게 기존 Keycloak 목록과 점검 결과를 보여주고, 신규 설치 시 Kubernetes 소속 노드를 선택하게 하기 위한 실행 도구입니다. UI와 선택은 플랫폼이 담당하며 이 도구는 입력 파일을 받아 **한 개의 JSON 결과**를 반환합니다. AWS 우선·GCP 후속 계정 이관에서 공통으로 사용하는 기반이며 클라우드 자격증명은 사용하지 않습니다.
 
 기존 `migration`은 PostgreSQL 데이터 이관 도구입니다. 설정·상태·서비스 계정을 공유하지 않고 `migration.keycloak_infra`와 그 안의 Ansible 실행 자료로 분리했습니다. `infra/install/onprem-k8s/apply.sh`는 호출하지 않습니다. 계정·그룹·IAM 정책의 수집·변환·적용, Kubernetes 로그인 설정, 앱 변경은 이 도구의 범위 밖입니다. IAM은 신원 및 접근 권한 관리입니다.
