@@ -117,11 +117,11 @@ EOF
 | `aws.kubeconfig` | EKS에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-eks aws.kubeconfig`. 주소는 EKS 공개 엔드포인트예요 |
 | `gcp.kubeconfig` | GKE에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-gke gcp.kubeconfig`. GKE 승인 네트워크를 좁혀 두었다면 고정 IP를 더해요 |
 
-워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요.
+워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요. 비용 설정 `deploy/aws/cost.json`은 그대로 보내요.
 
 ## 배포
 
-- 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.
+- 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`, `platform/deploy/aws/cost.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.
 - 수동: Actions에서 `platform-ec2`를 `Run workflow`.
 - 인스턴스에서는 `/opt/oneport/releases/<커밋>`에 풀린 `deploy.sh`가 `docker compose pull` → `up --wait` → `/healthz` 확인 순서로 돌아요. 최근 5개 릴리즈만 남겨요.
 

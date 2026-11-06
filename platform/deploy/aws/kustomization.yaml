@@ -12,7 +12,7 @@ resources:
   - platform.yaml
 configMapGenerator:
   - name: oneport-fleet
-    files: [fleet.json]
+    files: [fleet.json, cost.json]
   - name: oneport-settings
     envs: [settings.env]
 images:

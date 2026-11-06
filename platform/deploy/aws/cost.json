@@ -1,0 +1,6 @@
+{
+  "environments": {
+    "aws": {"tags": {"Project": "oneaction"}},
+    "onprem": {"meter": {"name": "cost-exporter", "options": {"namespace": "oneport-cost"}}}
+  }
+}
