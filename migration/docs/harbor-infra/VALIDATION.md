@@ -4,12 +4,12 @@
 
 ## 실행한 검사
 
-Python 3.12.14의 독립 가상환경에서 전체 이관 검사는 **289개 통과·24개 생략**입니다. 이 중 새 Harbor 검사는 **82개 통과**입니다. 생략한 기존 검사는 실제 PostgreSQL 접속 정보가 필요한 8개와 OPA 실행 도구가 필요한 16개입니다.
+검사 설정은 `harbor-infra.ruff.toml`에 명시하여 실행 폴더에 따른 가져오기 구문 분류 차이를 없앴습니다. Python 3.12.14의 독립 가상환경에서 전체 이관 검사는 **289개 통과·24개 생략**입니다. 이 중 새 Harbor 검사는 **82개 통과**입니다. 생략한 기존 검사는 실제 PostgreSQL 접속 정보가 필요한 8개와 OPA 실행 도구가 필요한 16개입니다.
 
 ```sh
 python -m pytest -o addopts='' --tb=short -q
-ruff check --isolated --select E9,F,I migration/harbor_infra tests/harbor_infra
-ruff format --check migration/harbor_infra tests/harbor_infra
+ruff check --config harbor-infra.ruff.toml migration/harbor_infra tests/harbor_infra
+ruff format --config harbor-infra.ruff.toml --check migration/harbor_infra tests/harbor_infra
 python -m build --no-isolation
 ```
 

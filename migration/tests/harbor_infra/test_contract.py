@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import pytest
+
 from migration.harbor_infra.config import ConfigError, secret_file, validate
 from migration.harbor_infra.runner import plan_digest, run
 

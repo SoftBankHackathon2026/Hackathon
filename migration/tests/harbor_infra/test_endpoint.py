@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from migration.harbor_infra.ansible.module_utils.harbor_core import (
     Api,
     HarborError,
@@ -159,6 +160,7 @@ def test_runtime_probe_uses_temporary_objects_and_uid_cleanup(raw, monkeypatch):
     from types import SimpleNamespace as N
 
     from kubernetes import client, config
+
     from migration.harbor_infra.verification import runtime_probe
 
     c = validate(raw, "preflight")

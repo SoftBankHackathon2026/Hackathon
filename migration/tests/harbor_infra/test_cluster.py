@@ -2,6 +2,7 @@ from types import SimpleNamespace as N
 
 import pytest
 from kubernetes import client, config
+
 from migration.harbor_infra.cluster import collect
 from migration.harbor_infra.config import ConfigError
 

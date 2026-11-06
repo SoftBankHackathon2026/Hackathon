@@ -1,6 +1,7 @@
 import json
 
 import pytest
+
 from migration.harbor_infra.ansible.module_utils.harbor_core import (
     HarborError,
     configure,

@@ -1,6 +1,7 @@
 import copy
 
 import pytest
+
 from migration.harbor_infra.ansible.module_utils import harbor_core as core
 from migration.harbor_infra.config import validate
 
