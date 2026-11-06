@@ -24,6 +24,7 @@ import {
 } from "./ConnectionRegistration";
 import { CopyFailure, copyEnrollmentCommand } from "./copyEnrollmentCommand";
 import { connectionStatus, formatTime, STEPS, stepFor } from "./model";
+import { AppSelectStep } from "./AppSelectStep";
 import "./prepare.css";
 
 function useServerClock(snapshot: ConnectionSnapshot | null) {
@@ -66,6 +67,8 @@ export function PreparePage({
   const [message, setMessage] = useState(""),
     [error, setError] = useState(""),
     [confirmRevoke, setConfirmRevoke] = useState(false);
+  // 준비 단계: 1 환경 연결 → 2 앱 선택. 환경을 등록한 뒤에만 2 로 갈 수 있다
+  const [phase, setPhase] = useState<"connect" | "apps">("connect");
   const lock = useRef(false),
     alive = useRef(true),
     heading = useRef<HTMLDivElement>(null);
@@ -103,6 +106,7 @@ export function PreparePage({
       setMessage("");
     }
     setConfirmRevoke(false);
+    setPhase("connect");
   }, [requestId]);
   useEffect(() => {
     if (previousView.current && previousView.current !== view)
@@ -170,8 +174,13 @@ export function PreparePage({
       });
   }
   const status = snapshot ? connectionStatus(snapshot) : null;
+  const registered = Boolean(snapshot?.environmentId && snapshot.target);
+  const apps = phase === "apps" && registered;
+  const source = snapshot?.collected.find(
+    (c) => c.id === snapshot.selectedEnvironmentId,
+  );
   return (
-    <div className="pk-page connection-page">
+    <div className={`pk-page connection-page${apps ? " is-apps" : ""}`}>
       <PageHeader title="마이그레이션 준비" />
       {gateway.mode === "preview" && (
         <div className="connection-preview-banner">
@@ -183,11 +192,11 @@ export function PreparePage({
         </div>
       )}
       <ol className="connection-phases" aria-label="마이그레이션 준비 단계">
-        <li aria-current="step">
+        <li aria-current={apps ? undefined : "step"}>
           <span>1</span>환경 연결
         </li>
-        <li>
-          <span>2</span>앱 선택 <small>준비 중</small>
+        <li aria-current={apps ? "step" : undefined}>
+          <span>2</span>앱 선택 {!registered && <small>환경등록 뒤</small>}
         </li>
       </ol>
       {!gateway.available && (
@@ -195,7 +204,28 @@ export function PreparePage({
           {gateway.reason}
         </p>
       )}
-      <div className="connection-layout" aria-busy={busy}>
+      {apps && snapshot?.target && (
+        <>
+          <AppSelectStep
+            sourceName={snapshot.target.name}
+            namespace={source?.context ?? "default"}
+          />
+          <div className="appsel-bar">
+            <span className="appsel-bar-status">
+              <StatusDot tone="ok">
+                {snapshot.target.name} 환경등록 완료
+              </StatusDot>
+            </span>
+            <button className="secondary" onClick={() => setPhase("connect")}>
+              이전: 환경 연결
+            </button>
+            <button className="primary" disabled>
+              다음: 사전 점검 (준비 중)
+            </button>
+          </div>
+        </>
+      )}
+      <div className="connection-layout" aria-busy={busy} hidden={apps}>
         <aside className="connection-sidebar" aria-label="연결 환경">
           <div className="connection-sidebar-heading">
             <h2>연결 환경</h2>
@@ -333,7 +363,10 @@ export function PreparePage({
                   {snapshot?.device === "REVOKED" ? (
                     <CleanupResult snapshot={snapshot} />
                   ) : snapshot?.environmentId ? (
-                    <RegisteredEnvironment snapshot={snapshot} />
+                    <RegisteredEnvironment
+                      snapshot={snapshot}
+                      onNext={registered ? () => setPhase("apps") : undefined}
+                    />
                   ) : step === 1 && snapshot ? (
                     <ConnectionTargetForm
                       key={snapshot.id + ":" + snapshot.inventoryDigest}

@@ -65,8 +65,10 @@ export function CollectionSource({
 
 export function RegisteredEnvironment({
   snapshot: s,
+  onNext,
 }: {
   snapshot: ConnectionSnapshot;
+  onNext?: () => void;
 }) {
   const source = s.collected.find((c) => c.id === s.selectedEnvironmentId);
   return (
@@ -117,12 +119,13 @@ export function RegisteredEnvironment({
         </div>
       </dl>
       <div className="connection-next">
-        <button className="primary" disabled>
+        <button className="primary" disabled={!onNext} onClick={onNext}>
           다음: 앱 선택
         </button>
         <p>
-          앱 선택은 준비 중이에요. 마이그레이션 범위, 데이터 접근, 설치 및 실행
-          계획은 이 단계에서 이어서 검토하게 돼요.
+          {onNext
+            ? "이 환경에서 읽은 워크로드 중 옮길 앱을 고르고, 같이 가야 하는 데이터와 비밀값을 확인해요."
+            : "앱 선택은 준비 중이에요. 마이그레이션 범위, 데이터 접근, 설치 및 실행 계획은 이 단계에서 이어서 검토하게 돼요."}
         </p>
       </div>
     </section>

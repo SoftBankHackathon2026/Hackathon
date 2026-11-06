@@ -71,9 +71,17 @@ test("only two stages; collection precedes environment metadata and registration
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
   await expect(
-    page.getByRole("button", { name: "다음: 앱 선택" }),
-  ).toBeDisabled();
+    page.getByRole("heading", { name: "옮길 앱 고르기" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: "sample-app 선택" }),
+  ).toBeChecked();
+  await page.getByRole("button", { name: "이전: 환경 연결" }).click();
+  await expect(
+    page.getByRole("heading", { name: "환경을 등록했어요" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "이 계획 승인" })).toHaveCount(
     0,
   );
