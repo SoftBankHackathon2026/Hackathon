@@ -5,6 +5,7 @@
   읽기 권한이 없으면 빈 목록과 함께 gaps 에 이유를 남긴다.
 """
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -17,6 +18,9 @@ from kubernetes.config import ConfigException
 from pydantic import BaseModel, Field
 from urllib3.exceptions import HTTPError as Urllib3Error
 
+from controlplane.cost.meters.cost_exporter import DATA_KEY as EXPORTER_DATA_KEY
+from controlplane.cost.meters.cost_exporter import DEFAULT_NAMESPACE as EXPORTER_NAMESPACE
+from controlplane.cost.meters.cost_exporter import LABEL_SELECTOR as EXPORTER_LABEL_SELECTOR
 from controlplane.cost.models import (
     HOURS_PER_MONTH,
     CostInventory,
@@ -170,13 +174,42 @@ def summarize(
     return node_list, volumes, demands
 
 
+def exporter_nodes(core: Any) -> list[dict[str, Any]]:
+    items = core.list_namespaced_config_map(
+        EXPORTER_NAMESPACE, label_selector=EXPORTER_LABEL_SELECTOR
+    ).items
+    nodes = []
+    for item in items:
+        try:
+            reading = json.loads((item.data or {})[EXPORTER_DATA_KEY])
+            capacity = {"cpu": str(reading["vcpus"]), "memory": str(reading["memory_bytes"])}
+            nodes.append(
+                {"metadata": {"name": reading["node"]}, "status": {"allocatable": capacity}}
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return nodes
+
+
+def list_nodes(core: Any, serialize: Callable[[Any], Any]) -> list[dict[str, Any]]:
+    try:
+        return [serialize(n) for n in core.list_node().items]
+    except ApiException as exc:
+        if exc.status != 403:
+            raise
+        nodes = exporter_nodes(core)
+        if not nodes:
+            raise
+        return nodes
+
+
 def read_kubernetes(
     env: EnvironmentConfig,
 ) -> tuple[list[Node], list[Volume], list[WorkloadDemand]]:
     api = api_client(env)
     core = client.CoreV1Api(api)
     serialize = api.sanitize_for_serialization
-    nodes = [serialize(n) for n in core.list_node().items]
+    nodes = list_nodes(core, serialize)
     pods = [
         serialize(p)
         for p in core.list_pod_for_all_namespaces(field_selector="status.phase=Running").items
