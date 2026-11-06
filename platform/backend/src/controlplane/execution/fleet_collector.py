@@ -8,6 +8,11 @@ import httpx
 from kubernetes.config import ConfigException
 
 from controlplane.core import db
+from controlplane.cost.collect import collect_inventory
+from controlplane.cost.config import CostConfig, load_cost_config
+from controlplane.cost.models import CostInventory
+from controlplane.cost.onprem import OnPremMeter, create_meter
+from controlplane.cost.store import CostStore
 from controlplane.domain.fleet import EnvironmentConfig, FleetConfig, MigrationConfig
 from controlplane.integrations.codec import (
     connector_view,
@@ -23,6 +28,18 @@ from controlplane.repositories.fleet_journal import FleetJournal
 
 LOG = logging.getLogger(__name__)
 FACTS_EVERY_TICKS = 12
+# 노드·PVC·태그 자원은 자주 바뀌지 않고 AWS API 호출 수도 있어 5초 tick 기준 약 5분마다 읽는다.
+COST_EVERY_TICKS = 60
+
+
+class _BrokenMeter:
+    """만들지 못한 측정기. 읽을 때마다 같은 오류를 내 화면에 수집 공백으로 남긴다."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def read(self, env: EnvironmentConfig):
+        raise self._error
 
 
 class FleetCollector:
@@ -32,11 +49,39 @@ class FleetCollector:
         journal: FleetJournal,
         *,
         reader: Callable[[EnvironmentConfig], ClusterReader] = ClusterReader,
+        costs: CostStore | None = None,
+        cost_config: CostConfig | None = None,
+        cost_reader: Callable[..., CostInventory] = collect_inventory,
     ) -> None:
         self._config = config
         self._journal = journal
         self._reader = reader
+        self._costs = costs
+        self._cost_config = cost_config or CostConfig()
+        self._cost_reader = cost_reader
+        self._meters: dict[str, OnPremMeter] = {}
         self._ticks = 0
+
+    def _meter(self, env: EnvironmentConfig) -> OnPremMeter | None:
+        """비용 설정이 고른 온프렘 측정기. 환경마다 한 번 만든다."""
+        chosen = self._cost_config.environment(env.id).meter
+        if chosen is None:
+            return None
+        if env.id not in self._meters:
+            try:
+                self._meters[env.id] = create_meter(chosen.name, chosen.options)
+            except Exception as exc:  # noqa: BLE001 - 잘못된 측정기 설정이 수집 전체를 멈추지 않게 한다
+                LOG.warning("env=%s meter=%s error=%s", env.id, chosen.name, type(exc).__name__)
+                self._meters[env.id] = _BrokenMeter(exc)
+        return self._meters[env.id]
+
+    def collect_costs(self, env: EnvironmentConfig) -> None:
+        if self._costs is None:
+            return
+        settings = self._cost_config.environment(env.id)
+        self._costs.put(
+            self._cost_reader(env, settings.tags, meter=self._meter(env), project=settings.project)
+        )
 
     def collect_worker(self, job: MigrationConfig) -> None:
         if not job.worker_url:
@@ -81,6 +126,12 @@ class FleetCollector:
                     self.collect_environment(env)
                 except (ConfigException, OSError) as exc:
                     LOG.warning("env=%s facts error=%s", env.id, type(exc).__name__)
+        if self._ticks % COST_EVERY_TICKS == 0:
+            for env in self._config.environments:
+                try:
+                    self.collect_costs(env)
+                except (ConfigException, OSError) as exc:
+                    LOG.warning("env=%s cost error=%s", env.id, type(exc).__name__)
         self._ticks += 1
 
 
@@ -93,7 +144,12 @@ def main(argv: list[str] | None = None) -> int:
     platform = load_platform()
     if platform is None:
         parser.error("ONEPORT_DATABASE_URL_FILE(또는 ONEPORT_CONFIG)로 플랫폼 DB를 지정하세요.")
-    collector = FleetCollector(config, FleetJournal(platform.store))
+    collector = FleetCollector(
+        config,
+        FleetJournal(platform.store),
+        costs=CostStore(platform.store),
+        cost_config=load_cost_config(),
+    )
     with db.pooling():
         platform.store.migrate()
         while True:

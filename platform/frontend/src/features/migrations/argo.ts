@@ -27,14 +27,13 @@ export function appCell(app: FleetApp | undefined): {
 } {
   if (!app) return { tone: "idle", label: "-" };
   if (app.sync === "Unknown" && app.health === "Unknown")
-    return { tone: "idle", label: "상태 미수집" };
-  if (app.health === "Missing")
-    return { tone: "bad", label: "배포돼 있지 않음" };
-  if (app.health === "Degraded") return { tone: "bad", label: "문제 있음" };
+    return { tone: "idle", label: "상태 정보 없음" };
+  if (app.health === "Missing") return { tone: "bad", label: "배포 안 됨" };
+  if (app.health === "Degraded") return { tone: "bad", label: "실행 오류" };
   if (app.sync === "OutOfSync")
     return { tone: "warn", label: "저장소 설정과 다름" };
   if (app.health === "Progressing")
     return { tone: "running", label: "배포 중" };
   if (app.health === "Healthy") return { tone: "ok", label: "정상" };
-  return { tone: "idle", label: "상태 미수집" };
+  return { tone: "idle", label: "상태 정보 없음" };
 }

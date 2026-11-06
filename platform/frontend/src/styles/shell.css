@@ -50,7 +50,7 @@
   place-items: center;
   height: 40px;
   margin: 2px 6px;
-  border-radius: 4px;
+  border-radius: 10px;
   color: inherit;
 }
 .rail-item:hover {
@@ -89,7 +89,7 @@
 .shell .page-crumb {
   padding: 0;
   color: var(--accent-text);
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 400;
 }
 .shell .page-crumb:hover {
@@ -97,7 +97,7 @@
 }
 .page-sep {
   color: var(--muted);
-  font-size: 20px;
+  font-size: var(--fs-xl);
 }
 .page-tabs {
   display: flex;

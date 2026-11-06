@@ -29,6 +29,7 @@ rules:
   - apiGroups: [""]
     resources: [namespaces, pods, resourcequotas]
     verbs: [get, list]
+  # 비용 추산: 노드 할당 가능 자원·인스턴스 유형과 PVC 용량. 목록만 읽는다.
   - apiGroups: [""]
     resources: [nodes, persistentvolumeclaims]
     verbs: [list]

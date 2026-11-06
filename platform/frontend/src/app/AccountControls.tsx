@@ -33,8 +33,8 @@ export function AccountControls({
     );
   if (access.auth_mode === "demo")
     return (
-      <span className="pill" title="시연 모드: 로그인 없이 볼 수 있어요">
-        시연 모드<span className="pill-long">: 로그인 없이 볼 수 있어요</span>
+      <span className="pill" title="로그인 없이 볼 수 있는 시연 모드예요">
+        시연 모드
       </span>
     );
   return null;

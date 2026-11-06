@@ -89,7 +89,7 @@ export function GraphPanel({
       <div className="chart" ref={ref}>
         {n < 2 ? (
           <p className="chart-empty" role="status">
-            표시할 데이터가 아직 부족해요.
+            값이 두 번 이상 쌓이면 그래프가 그려져요.
           </p>
         ) : (
           <svg

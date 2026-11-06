@@ -57,11 +57,11 @@ test("outcomeTone maps each outcome to a distinct tone", () => {
 test("eventTitle makes gate events readable and leaves other titles alone", () => {
   assert.equal(
     eventTitle("정책 게이트 final_verify: allow"),
-    "정책 게이트 · 최종 검증 단계 허용",
+    "정책 게이트, 최종 검증 단계 허용",
   );
   assert.equal(
     eventTitle("정책 게이트 pre_cutover: hold"),
-    "정책 게이트 · 전환 전 단계 보류",
+    "정책 게이트, 전환 전 단계 보류",
   );
   assert.equal(eventTitle("전환 시작"), "전환 시작");
 });

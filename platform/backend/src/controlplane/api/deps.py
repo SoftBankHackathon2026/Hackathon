@@ -6,11 +6,13 @@ from fastapi import Depends, Header, Request
 from controlplane.container import Container
 from controlplane.core.config import AuthMode
 from controlplane.core.errors import AccessDenied, NotConfigured, OperationNotFound, Unauthenticated
+from controlplane.cost.service import CostService
 from controlplane.repositories.accounts import SESSION_COOKIE
 from controlplane.schemas.accounts import Identity
 from controlplane.services.auth import AuthService
 from controlplane.services.builds import BuildService
 from controlplane.services.deployments import DeploymentService
+from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
 from controlplane.services.fleet import FleetService
 from controlplane.services.ingest import IngestService
@@ -62,6 +64,10 @@ def get_security(container: ContainerDep) -> SecurityService:
     return container.security
 
 
+def get_costs(container: ContainerDep) -> CostService:
+    return container.costs
+
+
 def require_ingest(
     container: ContainerDep, authorization: str = Header(default="")
 ) -> IngestService:
@@ -73,10 +79,20 @@ def require_ingest(
     return container.ingest
 
 
+def get_enrollments(container: ContainerDep) -> EnrollmentService:
+    if container.enrollments is None:
+        raise NotConfigured(
+            "환경 연결에는 플랫폼 DB 가 필요합니다. ONEPORT_DATABASE_URL_FILE 을 설정하세요."
+        )
+    return container.enrollments
+
+
 MigrationsDep = Annotated[MigrationService, Depends(get_migrations)]
+EnrollmentsDep = Annotated[EnrollmentService, Depends(get_enrollments)]
 FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
+CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
 MonitoringDep = Annotated[MonitoringService, Depends(get_monitoring)]
@@ -154,6 +170,34 @@ def optional_viewer(
 
 
 ViewerIdentity = Annotated[Identity | None, Depends(optional_viewer)]
+
+
+def require_enroller(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> Identity | None:
+    """환경 연결 명령을 만드는 권한. 배포 Provider 가 없는 대시보드 전용 구성에서도 쓴다.
+
+    operator 모드는 운영자 토큰이 설정돼 있어야 하고, demo·login 모드는 등록된 화면 Origin 이 필요하다.
+    login 모드는 배포 권한(owner·member)이 있는 팀원만 만들 수 있다.
+    """
+    if container.auth_mode == AuthMode.OPERATOR:
+        if container.operator_token is None:
+            raise AccessDenied("운영자 토큰이 설정되지 않아 환경 연결 명령을 만들 수 없습니다.")
+        _check_operator_token(container, authorization)
+    check_browser_origin(
+        request, container, required=container.auth_mode in {AuthMode.DEMO, AuthMode.LOGIN}
+    )
+    if container.auth_mode != AuthMode.LOGIN:
+        return None
+    identity = session_identity(request, container)
+    if identity is None:
+        raise Unauthenticated("로그인이 필요합니다.")
+    if not identity.can_deploy:
+        raise AccessDenied("보기 전용 계정입니다. 팀 관리자에게 권한을 요청하세요.")
+    return identity
+
+
+EnrollerIdentity = Annotated[Identity | None, Depends(require_enroller)]
 
 
 def require_login_mode(request: Request, container: ContainerDep) -> AuthService:

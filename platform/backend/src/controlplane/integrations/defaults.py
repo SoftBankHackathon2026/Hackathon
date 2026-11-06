@@ -141,7 +141,7 @@ AWS_COMPONENTS = [
         workload="external-secrets/deployment/external-secrets",
     ),
     component(
-        "cloudwatch", "CloudWatch 로그·알람", "platform", "monitoring", managed=True, placement=[]
+        "cloudwatch", "CloudWatch 로그/알람", "platform", "monitoring", managed=True, placement=[]
     ),
     component(
         "argo-rollouts",
@@ -230,7 +230,7 @@ GCP_COMPONENTS = [
         workload="external-secrets/deployment/external-secrets",
     ),
     component(
-        "cloud-logging", "Cloud Logging·알림", "platform", "monitoring", managed=True, placement=[]
+        "cloud-logging", "Cloud Logging/알림", "platform", "monitoring", managed=True, placement=[]
     ),
     component(
         "review-service",

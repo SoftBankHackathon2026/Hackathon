@@ -3,7 +3,9 @@
     opacity: 0.35;
   }
 }
+/* 버튼: TDS fill(주요) / weak(보조, 회색 면) */
 .shell .primary {
+  border-radius: var(--radius-control);
   background: var(--go);
   border-color: transparent;
   color: var(--go-ink);
@@ -13,14 +15,16 @@
   background: var(--go-hover);
 }
 .shell .secondary {
-  background: var(--card);
-  border-color: var(--line);
-  color: var(--ink);
-  font-weight: 400;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  border-color: transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 .shell .secondary:hover:not(:disabled) {
-  background: var(--paper-2);
-  border-color: var(--line-strong);
+  background: var(--surface-sunken);
+  border-color: transparent;
+  color: var(--text);
 }
 .shell input:not([type="checkbox"]):not([type="radio"]),
 .shell select,
@@ -28,10 +32,10 @@
 .login input {
   padding: 8px 12px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--card);
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .shell input:focus,
 .shell select:focus,
@@ -44,7 +48,7 @@
   font-weight: 600;
 }
 .rail-item.on {
-  background: var(--rail-hover);
+  background: var(--nav-selected);
   color: var(--on-dark);
 }
 .stage {
@@ -55,7 +59,7 @@
   display: inline-flex;
   align-items: center;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .account-menu {
   position: relative;
@@ -70,7 +74,7 @@
   height: 24px;
   border-radius: 50%;
   color: var(--on-dark);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .account-menu .menu {
@@ -84,9 +88,9 @@
   padding: 12px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   box-shadow: var(--shadow-md);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .menu-row {
   display: flex;
@@ -98,16 +102,16 @@
 .banner {
   margin: 0 0 16px;
   padding: 10px 14px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--warn-soft);
   border: 1px solid var(--warn-line);
   color: var(--warn-ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .notice-line {
   margin: 0 0 16px;
   color: var(--sub);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .empty {
   color: var(--sub);
@@ -120,7 +124,7 @@
   padding: 18px;
 }
 .card {
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   box-shadow: none;
 }
 .shell input:focus,

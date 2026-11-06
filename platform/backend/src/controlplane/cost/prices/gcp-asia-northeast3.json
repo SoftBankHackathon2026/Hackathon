@@ -1,0 +1,122 @@
+{
+  "provider": "gcp",
+  "region": "asia-northeast3",
+  "currency": "USD",
+  "source": "GCP Cloud Billing Catalog API (services.skus.list), On-Demand",
+  "fetched_at": "2026-11-06T01:48:18+00:00",
+  "hours_per_month": 730,
+  "labels": {
+    "compute": "Compute Engine",
+    "kubernetes_control_plane": "GKE 클러스터 관리 요금",
+    "load_balancer": "Cloud Load Balancing 전달 규칙",
+    "nat_gateway": "Cloud NAT IP",
+    "postgres": "Cloud SQL for PostgreSQL (Zonal)",
+    "kafka_broker": "Managed Kafka",
+    "block": "Persistent Disk Balanced",
+    "database": "Cloud SQL 스토리지",
+    "kafka": "Managed Kafka 로컬 스토리지",
+    "object": "Cloud Storage Standard"
+  },
+  "notes": {
+    "kafka_broker": "Managed Kafka 는 DCU 단위로 과금해요. vCPU와 메모리를 DCU로 바꾸는 공식 기준을 확인하기 전까지 가격 정보 없음",
+    "nat_gateway": "Cloud NAT 는 IP 사용료만 포함해요. 게이트웨이 VM 요금과 처리 GB 요금은 빠져 있어요",
+    "transfer": "서울 리전에서 국내로 나가는 송신 SKU 를 확인하지 못해 데이터 전송은 단가 없음"
+  },
+  "compute": {
+    "e2-standard-2": {
+      "hourly": 0.08596572,
+      "vcpu": 2,
+      "memory_gib": 8
+    },
+    "e2-standard-4": {
+      "hourly": 0.17193144,
+      "vcpu": 4,
+      "memory_gib": 16
+    },
+    "e2-standard-8": {
+      "hourly": 0.34386288,
+      "vcpu": 8,
+      "memory_gib": 32
+    },
+    "n2-standard-2": {
+      "hourly": 0.124718,
+      "vcpu": 2,
+      "memory_gib": 8
+    },
+    "n2-standard-4": {
+      "hourly": 0.249436,
+      "vcpu": 4,
+      "memory_gib": 16
+    },
+    "n2-standard-8": {
+      "hourly": 0.498872,
+      "vcpu": 8,
+      "memory_gib": 32
+    },
+    "n2d-standard-2": {
+      "hourly": 0.10850800000000001,
+      "vcpu": 2,
+      "memory_gib": 8
+    },
+    "n2d-standard-4": {
+      "hourly": 0.21701600000000001,
+      "vcpu": 4,
+      "memory_gib": 16
+    },
+    "n2d-standard-8": {
+      "hourly": 0.43403200000000003,
+      "vcpu": 8,
+      "memory_gib": 32
+    }
+  },
+  "compute_rates": {
+    "e2": {
+      "vcpu_hourly": 0.02802642,
+      "memory_gib_hourly": 0.00373911
+    },
+    "n2": {
+      "vcpu_hourly": 0.040595,
+      "memory_gib_hourly": 0.005441
+    },
+    "n2d": {
+      "vcpu_hourly": 0.035318,
+      "memory_gib_hourly": 0.004734
+    }
+  },
+  "managed": {
+    "postgres": {
+      "db-custom-1-3840": {
+        "hourly": 0.087825,
+        "vcpu": 1,
+        "memory_gib": 3.75
+      },
+      "db-custom-2-7680": {
+        "hourly": 0.17565,
+        "vcpu": 2,
+        "memory_gib": 7.5
+      },
+      "db-custom-4-15360": {
+        "hourly": 0.3513,
+        "vcpu": 4,
+        "memory_gib": 15.0
+      }
+    }
+  },
+  "managed_rates": {
+    "postgres": {
+      "vcpu_hourly": 0.0537,
+      "memory_gib_hourly": 0.0091
+    }
+  },
+  "storage_gib_month": {
+    "block": 0.13,
+    "database": 0.221,
+    "kafka": 0.221,
+    "object": 0.023
+  },
+  "hourly": {
+    "kubernetes_control_plane": 0.1,
+    "load_balancer": 0.038,
+    "nat_gateway": 0.005
+  }
+}

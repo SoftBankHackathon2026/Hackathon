@@ -1,24 +1,35 @@
+import { migrationHash } from "../../app/routes";
 import { useQueries, useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { migrationHash } from "../../app/routes";
-import { SourceTag } from "../../components/Badge";
-import { PageActions } from "../../components/PageSlots";
+import { AttentionStrip } from "../../components/AttentionStrip";
 import {
   FilterSelect,
   PageHeader,
   ScopeFilterRow,
   Section,
-  SummaryCard,
 } from "../../components/PageKit";
-import { formatAgo } from "../../lib/format";
+import { PageActions } from "../../components/PageSlots";
+import { RefreshStatus } from "../../components/RefreshStatus";
 import { AppMatrix } from "./EnvironmentTables";
+import { appProblems, attentionItems } from "./flow";
 import { JobsTable } from "./JobsTable";
 import { LaneChart } from "./LaneChart";
+import { buildLanes } from "./lanes";
+import { MigrationFlow } from "./MigrationFlow";
 import { fleetQueryOptions, migrationQueryOptions } from "./queries";
-import { filterJobs, overviewCards } from "./summary";
+import { filterJobs } from "./summary";
 
 type StatusChoice = "all" | "active" | "waiting" | "done";
 
+function scrollTo(id: string) {
+  document
+    .getElementById(id)
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/**
+ * 마이그레이션 개요. 위에서부터 먼저 볼 것(타일) → 이전 흐름(어떻게·어디까지) → 작업 표 → 앱 상태.
+ */
 export function FleetPage({
   onNavigate,
 }: {
@@ -28,23 +39,40 @@ export function FleetPage({
   const [envId, setEnvId] = useState("all");
   const [status, setStatus] = useState<StatusChoice>("all");
   const rows = filterJobs(fleet.migrations, envId, status);
-  const details = useQueries({
+  const scoped = fleet.environments.filter(
+    (e) => envId === "all" || e.id === envId,
+  );
+  const queries = useQueries({
     queries: rows.map((m) => migrationQueryOptions(m.job_id)),
   });
-  const jobs = rows.flatMap((m, i) => {
-    const detail = details[i]?.data;
+  const details = Object.fromEntries(
+    rows.map((m, i) => [m.job_id, queries[i]?.data]),
+  );
+  const lanes = rows.flatMap((m) => {
+    const detail = details[m.job_id];
     return detail ? [{ jobId: m.job_id, stages: detail.stages }] : [];
   });
+  const hasLanes = buildLanes(lanes, Date.now()) !== null;
+  const problems = appProblems(scoped).length;
+  const onTile = (id: string) => {
+    if (id === "apps") return scrollTo("apps");
+    if (id === "active") setStatus("active");
+    else if (id === "approval") setStatus("waiting");
+    else setStatus("all");
+    scrollTo("jobs");
+  };
   return (
     <div className="pk-page">
       <PageActions>
-        <SourceTag source={fleet.source} />
-        <span className="updated-at">기준 {formatAgo(fleet.generated_at)}</span>
+        <RefreshStatus source={fleet.source} at={fleet.generated_at} />
       </PageActions>
       <PageHeader
         title="마이그레이션"
-        tabs={[{ id: "overview", label: "개요" }]}
-        active="overview"
+        actions={
+          <a className="pk-button" href="#prepare">
+            새 이전 준비
+          </a>
+        }
       />
       <ScopeFilterRow>
         <FilterSelect
@@ -68,32 +96,17 @@ export function FleetPage({
           ]}
         />
       </ScopeFilterRow>
+      <AttentionStrip items={attentionItems(rows, scoped)} onSelect={onTile} />
       <Section
-        title="이전 현황"
-        description="이전 작업의 쓰기 실패와 데이터 일치"
-        action={{
-          label: "작업 목록 보기",
-          onClick: () =>
-            document
-              .getElementById("jobs")
-              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
-        }}
+        id="flow"
+        title="이전 흐름"
+        meta={`작업 ${rows.length}개`}
+        action={{ label: "준비 방법 보기", href: "#prepare" }}
       >
-        <div className="pk-cards">
-          {overviewCards(rows).map((card) => (
-            <SummaryCard
-              key={card.title}
-              title={card.title}
-              label={card.label}
-              value={card.value}
-              unit={card.unit}
-              lines={card.lines}
-            />
-          ))}
-        </div>
-        <LaneChart jobs={jobs} now={Date.now()} />
+        <MigrationFlow migrations={rows} environments={scoped} />
+        {hasLanes && <LaneChart jobs={lanes} now={Date.now()} />}
       </Section>
-      <Section id="jobs" title="작업" description="이전 작업별 단계와 쓰기량">
+      <Section id="jobs" title="작업" meta={rows.length}>
         <JobsTable
           fleet={fleet}
           rows={rows}
@@ -101,11 +114,12 @@ export function FleetPage({
         />
       </Section>
       <Section
+        id="apps"
         title="앱 배포 상태"
-        description="환경별 앱 배포와 동작 상태"
-        action={{ label: "환경에서 보기", href: "#environments" }}
+        meta={problems > 0 ? `비정상 앱 ${problems}개` : "모두 정상"}
+        action={{ label: "환경 보기", href: "#environments" }}
       >
-        <AppMatrix environments={fleet.environments} />
+        <AppMatrix environments={scoped} />
       </Section>
     </div>
   );
