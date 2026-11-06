@@ -62,7 +62,7 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 }
 ```
 
-역할을 만든 뒤 ARN을 저장소 변수 `ONEPORT_DEPLOY_ROLE_ARN`에 넣어요(Settings → Secrets and variables → Actions → Variables).
+역할을 만든 뒤 ARN을 저장소 secret `ONEPORT_DEPLOY_ROLE_ARN`에 넣고, 저장소 변수 `ONEPORT_EC2_CD=enabled`로 켜요(Settings → Secrets and variables → Actions). 공개 저장소라 ARN을 변수로 두면 계정 번호가 Actions 로그에 찍혀서 secret 으로 둬요.
 
 ## 처음 한 번 준비 (인스턴스 안, root)
 
