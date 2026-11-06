@@ -37,6 +37,12 @@ fi
   --version 91.9.0 --create-namespace -f "$ROOT/admin/monitoring/values.yaml" --wait --timeout 10m >/dev/null
 "${K[@]}" apply -k "$ROOT/admin/monitoring"
 
+# 4b. Harbor 최소 구성 (워커 고정, NodePort http://172.30.1.7:30002)
+"${H[@]}" repo add harbor https://helm.goharbor.io >/dev/null 2>&1 || true
+"${H[@]}" repo update harbor >/dev/null
+"${H[@]}" -n harbor upgrade --install harbor harbor/harbor --version 1.19.4 \
+  -f "$ROOT/admin/harbor/values.yaml" --wait --timeout 10m >/dev/null
+
 # 5. 워크로드와 관리자 리소스
 "${K[@]}" apply -k "$ROOT"
 "${K[@]}" apply -k "$ROOT/admin"

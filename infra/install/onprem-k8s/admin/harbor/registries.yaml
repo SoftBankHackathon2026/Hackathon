@@ -1,0 +1,20 @@
+# k3s 노드용 /etc/rancher/k3s/registries.yaml — ghcr.io · docker.io · quay.io 풀을 Harbor proxy-cache 로 돌린다.
+# 적용: 두 노드(k3s-master, k3s-worker) 모두 이 파일을 두고 k3s(server/agent) 재시작. 재시작 전 아무것도 바뀌지 않는다.
+# Harbor 쪽 프로젝트(2026-11-05 생성, 모두 public proxy-cache): ghcr → https://ghcr.io, dockerhub → Docker Hub, quay → https://quay.io
+# rewrite 는 이미지 이름만 바꾸고 태그·digest 는 그대로다. Harbor 가 죽어도 k3s 는 원래 레지스트리를 마지막에 시도한다.
+mirrors:
+  ghcr.io:
+    endpoint:
+      - "http://172.30.1.7:30002"
+    rewrite:
+      "^(.*)": "ghcr/$1"
+  docker.io:
+    endpoint:
+      - "http://172.30.1.7:30002"
+    rewrite:
+      "^(.*)": "dockerhub/$1"
+  quay.io:
+    endpoint:
+      - "http://172.30.1.7:30002"
+    rewrite:
+      "^(.*)": "quay/$1"

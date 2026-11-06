@@ -15,9 +15,9 @@
 
 ARG DEBEZIUM_VERSION=3.7.0.Final
 # quay.io/debezium/connect:3.7.0.Final 의 OCI index digest (linux/amd64 + linux/arm64).
-# 2026-11-04 갱신: quay 가 같은 태그를 다시 push 해 이전 digest(ef2bf87d…)가 not found 가 됐다.
+# 2026-11-06 갱신: quay 가 같은 태그를 다시 push 해 이전 digest(b866eea1…, 그 전 ef2bf87d…)가 not found 가 됐다.
 # `docker buildx imagetools inspect quay.io/debezium/connect:3.7.0.Final` 로 확인한 값.
-ARG BASE_DIGEST=@sha256:b866eea14029201e7eef9ee38ee8633bb47cef7229dde38321e139f3c13ccb0c
+ARG BASE_DIGEST=@sha256:b9b983eda59570c526ddffa86ff73e56c53180d2676158ba5a5184cfd1b59a79
 
 FROM quay.io/debezium/connect:${DEBEZIUM_VERSION}${BASE_DIGEST}
 

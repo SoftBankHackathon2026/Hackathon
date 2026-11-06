@@ -6,13 +6,44 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
-from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, Workload
+from controlplane.domain.fleet import (
+    ClusterFacts,
+    EnvironmentConfig,
+    InventoryItem,
+    NodeFact,
+    Workload,
+)
+from controlplane.integrations.kube_inventory import (
+    ClusterObjects,
+    ConfigValue,
+    IngressSpec,
+    KubeObject,
+    ServiceSpec,
+    WorkloadSpec,
+    build_inventory,
+    pods_by_workload,
+)
+from controlplane.integrations.kube_nodes import node_facts
 from controlplane.schemas.migrations import AppState
 
 ARGOPROJ = ("argoproj.io", "v1alpha1")
 EXTERNAL_SECRETS = ("external-secrets.io", "v1beta1")
+METRICS = ("metrics.k8s.io", "v1beta1")
 APP_HEALTH = {"Healthy", "Progressing", "Degraded", "Suspended", "Missing"}
 APP_SYNC = {"Synced", "OutOfSync"}
+REQUEST_TIMEOUT = (3.0, 10.0)
+
+
+def with_request_timeout(api: client.ApiClient) -> client.ApiClient:
+    call_api = api.call_api
+
+    def call(*args, **kwargs):
+        if kwargs.get("_request_timeout") is None:
+            kwargs["_request_timeout"] = REQUEST_TIMEOUT
+        return call_api(*args, **kwargs)
+
+    api.call_api = call
+    return api
 
 
 def _optional[T](read: Callable[[], T]) -> T | None:
@@ -92,14 +123,20 @@ def api_client(env: EnvironmentConfig) -> client.ApiClient:
     if env.in_cluster:
         configuration = client.Configuration()
         config.load_incluster_config(client_configuration=configuration)
-        return client.ApiClient(configuration)
-    return config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+        api = client.ApiClient(configuration)
+    elif env.kubeconfig is None:
+        raise config.ConfigException(f"{env.id}: kubeconfig 나 in_cluster 를 지정해야 해요")
+    else:
+        api = config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
+    return with_request_timeout(api)
 
 
 class ClusterReader:
     def __init__(self, env: EnvironmentConfig) -> None:
         self._env = env
         api = api_client(env)
+        self._api = api
+        self._serialize = api.sanitize_for_serialization
         self._core = client.CoreV1Api(api)
         self._net = client.NetworkingV1Api(api)
         self._rbac = client.RbacAuthorizationV1Api(api)
@@ -144,37 +181,92 @@ class ClusterReader:
             unique.setdefault(workload.name, workload)
         return list(unique.values())
 
-    def _readiness(self, workload: str) -> tuple[int, int] | None:
-        namespace, kind, name = workload.split("/")
-        read = (
-            self._apps_api.read_namespaced_deployment_status
-            if kind == "deployment"
-            else self._apps_api.read_namespaced_stateful_set_status
-        )
+    def _workload_specs(self) -> list[WorkloadSpec] | None:
         try:
-            obj = read(name, namespace)
-        except ApiException as exc:
-            return (0, 0) if exc.status == 404 else None
-        return obj.status.ready_replicas or 0, obj.spec.replicas or 0
+            listed = {
+                "deployment": self._apps_api.list_deployment_for_all_namespaces().items,
+                "statefulset": self._apps_api.list_stateful_set_for_all_namespaces().items,
+                "daemonset": self._apps_api.list_daemon_set_for_all_namespaces().items,
+            }
+        except ApiException:
+            return None
+        specs = [
+            WorkloadSpec.from_k8s(kind, self._serialize(obj))
+            for kind, objs in listed.items()
+            for obj in objs
+        ]
+        rollouts = _optional(lambda: self._custom.list_cluster_custom_object(*ARGOPROJ, "rollouts"))
+        specs += [
+            WorkloadSpec.from_k8s("rollout", obj) for obj in (rollouts or {}).get("items", [])
+        ]
+        return specs
 
-    def _workload_ready(self) -> dict[str, tuple[int, int]]:
+    def _configmap(self, namespace: str, name: str) -> list[ConfigValue] | None:
+        configmap = _optional(lambda: self._core.read_namespaced_config_map(name, namespace))
+        if configmap is None:
+            return None
+        return [ConfigValue(key, str(value)) for key, value in (configmap.data or {}).items()]
+
+    def _configmap_values(
+        self, workloads: list[WorkloadSpec]
+    ) -> dict[tuple[str, str], list[ConfigValue]]:
+        referenced = sorted({(w.namespace, name) for w in workloads for name in w.configmaps})
         found = {}
-        for component in self._env.components:
-            if component.workload and (ready := self._readiness(component.workload)) is not None:
-                found[component.workload] = ready
+        for namespace, name in referenced:
+            values = self._configmap(namespace, name)
+            if values is not None:
+                found[(namespace, name)] = values
         return found
 
+    def _listed(self, read: Callable[[], list[Any]]) -> list[KubeObject] | None:
+        listed = _optional(read)
+        return None if listed is None else [self._serialize(obj) for obj in listed]
+
+    def _pods(self) -> list[KubeObject] | None:
+        return self._listed(lambda: self._core.list_pod_for_all_namespaces().items)
+
+    def _version(self) -> str | None:
+        version = _optional(lambda: client.VersionApi(self._api).get_code())
+        return version.git_version if version else None
+
+    def _nodes(self, pods: list[KubeObject] | None) -> list[NodeFact] | None:
+        nodes = self._listed(lambda: self._core.list_node().items)
+        metrics = _optional(lambda: self._custom.list_cluster_custom_object(*METRICS, "nodes"))
+        return node_facts(nodes, pods, None if metrics is None else metrics.get("items", []))
+
+    def _inventory(self, pods: list[KubeObject] | None) -> list[InventoryItem] | None:
+        workloads = self._workload_specs()
+        if workloads is None:
+            return None
+        services = _optional(lambda: self._core.list_service_for_all_namespaces().items) or []
+        ingresses = _optional(lambda: self._net.list_ingress_for_all_namespaces().items) or []
+        objects = ClusterObjects(
+            workloads=workloads,
+            services=[ServiceSpec.from_k8s(self._serialize(s)) for s in services],
+            ingresses=[IngressSpec.from_k8s(self._serialize(i)) for i in ingresses],
+            configmaps=self._configmap_values(workloads),
+            pods=None if pods is None else pods_by_workload(pods),
+        )
+        hints = {c.id: c.endpoint_hints for c in self._env.components if c.endpoint_hints}
+        return build_inventory(objects, hints)
+
     def read(self) -> ClusterFacts:
-        namespace = self._env.app_namespace
         observed = datetime.now(UTC)
         try:
-            labels = self._core.read_namespace(namespace).metadata.labels or {}
-        except (ApiException, HTTPError, OSError):
+            return self._read(observed)
+        except ApiException as exc:
+            return ClusterFacts(observed_at=observed, connected=False, read_status=exc.status)
+        except (HTTPError, OSError):
             return ClusterFacts(observed_at=observed, connected=False)
+
+    def _read(self, observed: datetime) -> ClusterFacts:
+        namespace = self._env.app_namespace
+        labels = self._core.read_namespace(namespace).metadata.labels or {}
         policies = self._net.list_namespaced_network_policy(namespace).items
         quotas = self._core.list_namespaced_resource_quota(namespace).items
         roles = _optional(lambda: self._rbac.list_namespaced_role(namespace).items)
         admin, anonymous = self._argocd_flags()
+        pods = self._pods()
         return ClusterFacts(
             observed_at=observed,
             connected=True,
@@ -190,5 +282,7 @@ class ClusterReader:
             external_secrets=self._external_secrets(namespace),
             resource_quota_namespaces={namespace} if quotas else set(),
             apps=self._apps(),
-            workload_ready=self._workload_ready(),
+            inventory=self._inventory(pods),
+            version=self._version(),
+            nodes=self._nodes(pods),
         )

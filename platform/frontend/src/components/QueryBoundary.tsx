@@ -3,11 +3,24 @@ import { Suspense, type ReactNode } from "react";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { errorMessage } from "../api/client";
 
+/** 로딩은 문장 대신 자리 표시(스켈레톤). message 는 오래 걸리는 이유를 알려야 할 때만 쓴다. */
 export function LoadingNotice({ message }: { message?: string }) {
+  if (message)
+    return (
+      <p className="empty" role="status">
+        {message}
+      </p>
+    );
+  return <Skeleton />;
+}
+
+export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <p className="empty" role="status">
-      {message ?? "불러오는 중이에요…"}
-    </p>
+    <div className="skeleton" role="status" aria-label="불러오는 중">
+      {Array.from({ length: rows }, (_, i) => (
+        <span key={i} />
+      ))}
+    </div>
   );
 }
 

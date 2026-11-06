@@ -6,17 +6,16 @@ DEFAULT_ENVIRONMENTS = {env.id: env for env in DEFAULT_FLEET.environments}
 
 
 def with_default_layout(env: EnvironmentConfig) -> EnvironmentConfig:
-    """설정에 구성 요소가 없으면 같은 id 의 기본 환경 구성(아키텍처 배치)을 쓴다.
-
-    실측 설정 파일은 연결 정보와 보안 사실만 적고, 화면에 그릴 구성 요소·배치는 기본값을 이어 받는다.
-    구성 요소를 직접 적으면 그 값을 그대로 쓴다.
-    """
     preset = DEFAULT_ENVIRONMENTS.get(env.id)
-    if env.components or preset is None:
+    if preset is None:
         return env
-    update = {"components": preset.components}
+    update: dict[str, object] = {}
+    if not env.components:
+        update["components"] = [c for c in preset.components if not (c.workload or c.argo_app)]
     if not env.boundary:
         update["boundary"] = preset.boundary
+    if not env.cluster_path:
+        update["cluster_path"] = preset.cluster_path
     return env.model_copy(update=update)
 
 

@@ -1,15 +1,38 @@
 export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
-  | { view: "environments"; select?: { envId: string; id: string } }
+  | { view: "prepare"; requestId?: string }
+  | {
+      view: "environments";
+      select?: { envId: string; id: string };
+      /** 노드 보기. envId 가 있으면 그 클러스터 패널, node 까지 있으면 노드 패널을 연다. */
+      nodes?: { envId?: string; node?: string };
+    }
   | { view: "security"; control?: string }
+  | { view: "costs"; tab?: string }
   | { view: "team" };
 
 export function readRoute(hash = "#"): Route {
-  const [head, id, extra] = hash.replace(/^#/, "").split("/");
+  const [head, id, extra, more] = hash.replace(/^#/, "").split("/");
+  if (head === "prepare") {
+    if (!id) return { view: "prepare" };
+    try {
+      return { view: "prepare", requestId: decodeURIComponent(id) };
+    } catch {
+      return { view: "prepare", requestId: "invalid-request" };
+    }
+  }
   if (head === "migrations" && id)
     return { view: "migration", id: decodeURIComponent(id) };
   if (head === "environments") {
+    if (id === "nodes")
+      return {
+        view: "environments",
+        nodes: {
+          ...(extra ? { envId: decodeURIComponent(extra) } : {}),
+          ...(extra && more ? { node: decodeURIComponent(more) } : {}),
+        },
+      };
     if (id && extra)
       return {
         view: "environments",
@@ -24,6 +47,10 @@ export function readRoute(hash = "#"): Route {
     return id
       ? { view: "security", control: decodeURIComponent(id) }
       : { view: "security" };
+  if (head === "costs")
+    return id
+      ? { view: "costs", tab: decodeURIComponent(id) }
+      : { view: "costs" };
   if (head === "team") return { view: "team" };
   return { view: "migrations" };
 }
@@ -40,14 +67,27 @@ export function resourceHash(envId: string, componentId: string) {
   return `#environments/${encodeURIComponent(envId)}/${encodeURIComponent(componentId)}`;
 }
 
+/** 노드 보기(클러스터/노드 패널) 주소 */
+export function nodesHash(envId?: string, node?: string) {
+  return [
+    "#environments/nodes",
+    ...(envId ? [encodeURIComponent(envId)] : []),
+    ...(envId && node ? [encodeURIComponent(node)] : []),
+  ].join("/");
+}
+
 export function routeTitle(route: Route, teamName: string) {
   switch (route.view) {
     case "migration":
       return route.id;
+    case "prepare":
+      return "마이그레이션 준비";
     case "environments":
       return "환경";
     case "security":
       return "보안";
+    case "costs":
+      return "비용";
     case "team":
       return `${teamName} 팀`;
     default:

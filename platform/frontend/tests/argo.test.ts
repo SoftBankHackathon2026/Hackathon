@@ -13,7 +13,7 @@ test("appCell says what a coworker would say", () => {
   });
   assert.deepEqual(appCell(app("Unknown", "Unknown")), {
     tone: "idle",
-    label: "상태 미수집",
+    label: "상태 정보 없음",
   });
   assert.deepEqual(appCell(undefined), { tone: "idle", label: "-" });
   assert.deepEqual(appCell(app("OutOfSync", "Healthy")), {
@@ -22,7 +22,7 @@ test("appCell says what a coworker would say", () => {
   });
   assert.deepEqual(appCell(app("Synced", "Degraded")), {
     tone: "bad",
-    label: "문제 있음",
+    label: "실행 오류",
   });
   assert.deepEqual(appCell(app("Synced", "Progressing")), {
     tone: "running",

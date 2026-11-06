@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from controlplane.domain.fleet import EnvironmentSnapshot, Workload
+from controlplane.schemas.migrations import ComponentView
 from controlplane.schemas.security import Category, ControlResult, Severity, Standard
 
 STANDARDS = [
@@ -131,7 +132,7 @@ def _argocd_hardening(snapshot: EnvironmentSnapshot) -> ControlResult:
         return unknown("Argo CD 설정을 읽지 못했어요.")
     if cluster.argocd_admin_enabled or cluster.argocd_anonymous_enabled:
         return failed("Argo CD admin 또는 익명 접근이 켜져 있음")
-    return passed("Argo CD admin·익명 접근 비활성")
+    return passed("Argo CD admin/익명 접근 비활성")
 
 
 def _external_secrets(snapshot: EnvironmentSnapshot) -> ControlResult:
@@ -185,7 +186,7 @@ CONTROLS: tuple[Control, ...] = (
         "network",
         "critical",
         ("ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"),
-        "DB를 사설 서브넷·ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
+        "DB를 사설 서브넷/ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
         _db_private,
     ),
     Control(
@@ -194,7 +195,7 @@ CONTROLS: tuple[Control, ...] = (
         "network",
         "high",
         ("AWS-FSBP ELB.1",),
-        "ALB·Cloud Load Balancing·Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
+        "ALB/Cloud Load Balancing/Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
         _declared("ingress_tls", "외부 진입점이 TLS로 보호됨", "외부 진입점이 평문 HTTP"),
     ),
     Control(
@@ -266,12 +267,12 @@ CONTROLS: tuple[Control, ...] = (
         "identity",
         "high",
         ("CIS-K8S 5.1.3",),
-        "verbs·resources에 *를 쓰는 Role을 필요한 권한으로 줄이세요.",
+        "verbs/resources에 *를 쓰는 Role을 필요한 권한으로 줄이세요.",
         _rbac_wildcards,
     ),
     Control(
         "ID-02",
-        "Argo CD admin·익명 접근 차단",
+        "Argo CD admin/익명 접근 차단",
         "identity",
         "high",
         ("CIS-K8S 5.1.1",),
@@ -284,9 +285,9 @@ CONTROLS: tuple[Control, ...] = (
         "identity",
         "high",
         ("AWS-FSBP IAM.6",),
-        "EKS Pod Identity·GKE Workload Identity 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
+        "EKS Pod Identity/GKE Workload Identity 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
         _declared(
-            "workload_identity", "워크로드 ID로 클라우드 권한 위임", "정적 토큰·키로 권한 부여"
+            "workload_identity", "워크로드 ID로 클라우드 권한 위임", "정적 토큰/키로 권한 부여"
         ),
     ),
     Control(
@@ -322,7 +323,7 @@ CONTROLS: tuple[Control, ...] = (
         "data",
         "medium",
         ("NSA-K8S",),
-        "External Secrets Operator로 Secrets Manager·Secret Manager·Vault에서 동기화하세요.",
+        "External Secrets Operator로 Secrets Manager/Secret Manager/Vault에서 동기화하세요.",
         _external_secrets,
     ),
     Control(
@@ -358,7 +359,7 @@ CONTROLS: tuple[Control, ...] = (
         "detection",
         "low",
         ("AWS-FSBP EC2.6", "CIS-GCP 3.8"),
-        "VPC Flow Logs(AWS·GCP) 또는 CNI 흐름 로그를 켜세요.",
+        "VPC Flow Logs(AWS/GCP) 또는 CNI 흐름 로그를 켜세요.",
         _declared("flow_logs", "흐름 로그 수집", "흐름 로그 없음"),
     ),
     Control(
@@ -376,7 +377,7 @@ CONTROLS: tuple[Control, ...] = (
         "governance",
         "low",
         ("NSA-K8S",),
-        "ResourceQuota·LimitRange로 자원 상한을 두세요.",
+        "ResourceQuota/LimitRange로 자원 상한을 두세요.",
         _resource_quota,
     ),
 )
@@ -425,9 +426,9 @@ CONTROL_TARGETS = {
 }
 
 
-def affected_components(control_id: str, snapshot: EnvironmentSnapshot) -> list[str]:
+def affected_components(control_id: str, components: list[ComponentView]) -> list[str]:
     targets = CONTROL_TARGETS.get(control_id, ())
-    return [c.name for c in snapshot.config.components if c.kind in targets or c.layer in targets]
+    return [c.name for c in components if c.kind in targets or c.layer in targets]
 
 
 def evaluate(snapshot: EnvironmentSnapshot) -> dict[str, ControlResult]:

@@ -23,7 +23,7 @@ function SessionGate() {
         <p className={session.connecting ? "banner" : "empty"}>
           {session.connecting
             ? "플랫폼 서버에 연결하는 중이에요. 잠시 후 자동으로 다시 시도해요."
-            : "불러오는 중이에요…"}
+            : ""}
         </p>
       </div>
     );

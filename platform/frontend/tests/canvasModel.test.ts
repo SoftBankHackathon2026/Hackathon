@@ -159,7 +159,7 @@ test("crossLinks pairs the two link tiles and labels them with the CIDR", () => 
   assert.equal(links.length, 1);
   assert.equal(links[0].from.id, "ts-a");
   assert.equal(links[0].to.id, "ts-b");
-  assert.equal(links[0].label, "Tailscale · 10.0.0.0/16");
+  assert.equal(links[0].label, "Tailscale, 10.0.0.0/16");
   assert.deepEqual(crossLinks([onprem]), []);
 });
 
@@ -169,11 +169,13 @@ test("statusCounts and problemOrdinals", () => {
     component("b", "app", "app", { status: "down" }),
     component("c", "app", "app", { status: "unknown" }),
     component("d", "app", "app", { status: "degraded" }),
+    component("e", "app", "app", { status: "idle" }),
   ];
   assert.deepEqual(statusCounts(list), {
     healthy: 1,
     degraded: 1,
     down: 1,
+    idle: 1,
     unknown: 1,
   });
   assert.deepEqual(
@@ -269,6 +271,8 @@ import {
 import {
   blockPaint,
   containerPaint,
+  LEVEL_COLORS,
+  levelOf,
   UNKNOWN_TOP,
 } from "../src/features/environments/blockStyle.ts";
 import { brandSlug, iconFor } from "../src/features/environments/iconMap.ts";
@@ -339,7 +343,7 @@ test("routes and links are straight segments between tile centers", () => {
   assert.ok(from);
   assert.deepEqual(route.points[0], tileCenter(from));
   assert.equal(layout.links.length, 1);
-  assert.equal(layout.links[0].label, "Tailscale · 10.0.0.0/16");
+  assert.equal(layout.links[0].label, "Tailscale, 10.0.0.0/16");
   assert.deepEqual(
     layout.links[0].labelAt,
     pointAlong(
@@ -414,7 +418,7 @@ test("shade, inkOn and shortLabel helpers", () => {
 
 test("blockPaint colors by kind and mutes unknown tiles", () => {
   const db = component("pg", "data", "postgres");
-  assert.equal(blockPaint(db, false).top, "#0f5c63");
+  assert.equal(blockPaint(db, false).top, "#2784d5");
   assert.equal(blockPaint(db, true).top, UNKNOWN_TOP);
   assert.ok(
     blockPaint(db, false).height >
@@ -422,39 +426,31 @@ test("blockPaint colors by kind and mutes unknown tiles", () => {
   );
 });
 
-test("containerPaint follows AWS group conventions", () => {
+test("containerPaint colors each boundary level once (Cloudcraft group by)", () => {
+  const stroke = (kind: never, label: string) =>
+    containerPaint({ kind, label }).stroke;
+  assert.equal(stroke("account" as never, "AWS 계정 1"), LEVEL_COLORS.account);
   assert.equal(
-    containerPaint({ kind: "account", label: "AWS 계정 1" }).stroke,
-    "#3a3a3a",
+    stroke("account" as never, "사이트 busan"),
+    LEVEL_COLORS.account,
   );
+  assert.equal(stroke("network" as never, "리전 x"), LEVEL_COLORS.region);
+  assert.equal(stroke("network" as never, "VPC 1"), LEVEL_COLORS.vpc);
+  assert.equal(stroke("subnet" as never, "data 서브넷"), LEVEL_COLORS.subnet);
   assert.equal(
-    containerPaint({ kind: "account", label: "사이트 busan" }).stroke,
-    "#8a8a8a",
+    stroke("cluster" as never, "k3s 클러스터"),
+    LEVEL_COLORS.cluster,
   );
   assert.equal(
     containerPaint({ kind: "network", label: "리전 x" }).dash,
-    "7 5",
-  );
-  assert.equal(
-    containerPaint({ kind: "network", label: "VPC 1" }).stroke,
-    "#6a8f7a",
-  );
-  assert.equal(
-    containerPaint({ kind: "subnet", label: "public 서브넷" }).stroke,
-    "#6a8f7a",
-  );
-  assert.equal(
-    containerPaint({ kind: "subnet", label: "data 서브넷" }).stroke,
-    "#4f7f86",
-  );
-  assert.equal(
-    containerPaint({ kind: "cluster", label: "k3s 클러스터" }).stroke,
-    "#6b6b6b",
+    "8 5",
   );
   assert.equal(
     containerPaint({ kind: "namespace", label: "ns a" }).dash,
     "5 4",
   );
+  assert.equal(levelOf("ns hackathon"), "namespace");
+  assert.equal(levelOf("GCP 프로젝트 p"), "account");
 });
 
 test("iconFor prefers brand marks and falls back to line glyphs", () => {
@@ -464,6 +460,7 @@ test("iconFor prefers brand marks and falls back to line glyphs", () => {
   );
   assert.equal(brandSlug({ id: "traefik", kind: "ingress" }), "traefikproxy");
   assert.equal(brandSlug({ id: "argocd", kind: "gitops" }), "argo");
+  assert.equal(brandSlug({ id: "argocd-platform", kind: "gitops" }), "argo");
   assert.equal(brandSlug({ id: "argo-rollouts", kind: "rollout" }), "argo");
   assert.equal(brandSlug({ id: "rds", kind: "postgres" }), "postgresql");
   assert.equal(

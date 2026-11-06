@@ -27,7 +27,7 @@ export function StageLog({ stages }: { stages: StageInfo[] }) {
     return <p className="empty-line">단계 정보가 없어요.</p>;
   return (
     <div className="table-wrap">
-      <table className="dt">
+      <table className="pk-table">
         <thead>
           <tr>
             <th className="toggle-col" />

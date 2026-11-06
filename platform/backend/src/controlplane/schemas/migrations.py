@@ -24,7 +24,36 @@ class DataService(BaseModel):
 
 
 ComponentLayer = Literal["entry", "platform", "app", "migration", "data", "link"]
-ComponentStatus = Literal["healthy", "degraded", "down", "unknown"]
+ComponentStatus = Literal["healthy", "degraded", "down", "idle", "unknown"]
+PodPhase = Literal["Running", "Pending", "Succeeded", "Failed", "Unknown"]
+
+
+class ContainerView(BaseModel):
+    name: str
+    ready: bool
+    restarts: int
+    image: str
+
+
+class PodView(BaseModel):
+    name: str
+    phase: PodPhase
+    ready: bool
+    reason: str | None = None
+    restarts: int
+    node: str | None = None
+    started_at: datetime | None = None
+    containers: list[ContainerView] = Field(default_factory=list)
+
+
+EndpointSource = Literal["ingress", "load_balancer", "node_port", "cluster_ip"]
+
+
+class EndpointView(BaseModel):
+    url: str
+    source: EndpointSource
+    exposure: Literal["public", "private"]
+    label: str | None = None
 
 
 class ComponentView(BaseModel):
@@ -37,12 +66,45 @@ class ComponentView(BaseModel):
     detail: str
     depends_on: list[str] = Field(default_factory=list)
     placement: list[str] = Field(default_factory=list)
+    pods: list[PodView] | None = Field(default=None, exclude_if=lambda pods: pods is None)
+    endpoints: list[EndpointView] = Field(default_factory=list)
 
 
 class EnvironmentIssue(BaseModel):
     severity: Literal["critical", "warning"]
     title: str
     detail: str
+
+
+class ResourcesView(BaseModel):
+    cpu_millicores: int
+    memory_bytes: int
+
+
+class NodeView(BaseModel):
+    name: str
+    ready: bool | None = None
+    unschedulable: bool | None = None
+    roles: list[str] = Field(default_factory=list)
+    kubelet_version: str | None = None
+    os_image: str | None = None
+    arch: str | None = None
+    instance_type: str | None = None
+    zone: str | None = None
+    allocatable: ResourcesView | None = None
+    requests: ResourcesView | None = None
+    usage: ResourcesView | None = None
+    pods: int | None = None
+
+
+class ClusterView(BaseModel):
+    version: str | None = None
+    node_count: int | None = None
+    ready_nodes: int | None = None
+    allocatable: ResourcesView | None = None
+    requests: ResourcesView | None = None
+    usage: ResourcesView | None = None
+    nodes: list[NodeView] = Field(default_factory=list)
 
 
 class EnvironmentView(BaseModel):
@@ -59,6 +121,7 @@ class EnvironmentView(BaseModel):
     components: list[ComponentView] = Field(default_factory=list)
     boundary: list[str] = Field(default_factory=list)
     issues: list[EnvironmentIssue] = Field(default_factory=list)
+    cluster: ClusterView | None = None
 
 
 class WriteCounts(BaseModel):

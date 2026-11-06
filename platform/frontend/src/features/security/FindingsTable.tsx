@@ -1,19 +1,14 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { FleetEnvironment } from "../../api/migrations";
 import type { Posture } from "../../api/security";
-import { resourceHash } from "../../app/routes";
-import {
-  affected,
-  filterFindings,
-  toggle,
-  type ExplorerFilters,
-} from "./explorer";
-import {
-  CATEGORY_LABELS,
-  SEVERITY_LABELS,
-  STATUS_LABELS,
-  standardId,
-} from "./posture";
+import { controlHash } from "../../app/routes";
+import { affected, filterFindings, type ExplorerFilters } from "./explorer";
+import { useSort } from "../../components/SortableTable";
+import { FindingPanel } from "./FindingPanel";
+import { ProviderLogo } from "../../components/ProviderLogo";
+import { CategoryIcon } from "./CategoryIcon";
+import { CATEGORY_LABELS, standardId } from "./posture";
+import { SeverityMeter } from "./SeverityMeter";
 
 export function FindingsTable({
   posture,
@@ -26,42 +21,78 @@ export function FindingsTable({
   filters: ExplorerFilters;
   focus: string | undefined;
 }) {
-  const [open, setOpen] = useState<string[]>(focus ? [focus] : []);
+  const [selected, setSelected] = useState<string | undefined>(focus);
   const rowRef = useRef<HTMLTableRowElement | null>(null);
-  const findings = filterFindings(posture.controls, filters);
+  const filtered = filterFindings(posture.controls, filters);
+  const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 } as const;
+  const { sorted: findings, th } = useSort(filtered, {
+    severity: (c) => SEV_RANK[c.severity],
+    title: (c) => c.title,
+    envs: (c) => affected(c, filters).envs.length,
+    resources: (c) =>
+      c.scope === "environment" ? null : affected(c, filters).resources,
+  });
   useEffect(() => {
-    if (focus)
-      setOpen((prev) => (prev.includes(focus) ? prev : [...prev, focus]));
+    if (focus) setSelected(focus);
   }, [focus]);
   useEffect(() => {
-    rowRef.current?.scrollIntoView({ block: "start" });
-  }, [focus]);
+    rowRef.current?.scrollIntoView({ block: "nearest" });
+    // 열린 문제를 주소에 남겨 링크로 공유할 수 있게 한다(새 기록은 만들지 않음).
+    const hash = selected ? controlHash(selected) : "#security";
+    if (window.location.hash !== hash)
+      window.history.replaceState(null, "", hash);
+  }, [selected]);
+  const index = findings.findIndex((c) => c.id === selected);
+  const current = index >= 0 ? findings[index] : undefined;
+  const ids = findings.map((c) => c.id).join(",");
+  const move = useCallback(
+    (step: 1 | -1) => {
+      const list = ids.split(",");
+      const at = list.indexOf(selected ?? "");
+      const next = list[Math.min(list.length - 1, Math.max(0, at + step))];
+      if (next) setSelected(next);
+    },
+    [ids, selected],
+  );
+  const close = useCallback(() => {
+    const id = selected;
+    setSelected(undefined);
+    if (id) document.getElementById(`finding-${id}`)?.focus();
+  }, [selected]);
+  const provider = (id: string) => fleetEnvs.find((e) => e.id === id)?.provider;
+  const order = (ids: string[]) =>
+    posture.environments.map((e) => e.env_id).filter((id) => ids.includes(id));
+  const envName = (id: string) =>
+    posture.environments.find((e) => e.env_id === id)?.name ?? id;
+  const envLabel =
+    filters.status.length === 1 && filters.status[0] === "fail"
+      ? "실패 환경"
+      : filters.status.length === 1 && filters.status[0] === "unknown"
+        ? "미확인 환경"
+        : "해당 환경";
   if (findings.length === 0)
     return <p className="ux-muted">조건에 맞는 항목이 없어요.</p>;
-  const columns = 4 + posture.environments.length;
   const total = posture.controls.length;
   return (
     <>
       <p className="pk-count">
         {total}개 중 1–{findings.length}
       </p>
-      <table className="pk-table">
+      <table className="pk-table sticky" data-panel-owner>
         <thead>
           <tr>
-            <th className="pk-status-col">심각도</th>
-            <th>통제</th>
-            <th>분류</th>
-            {posture.environments.map((env) => (
-              <th key={env.env_id}>{env.name.split(" ")[0]}</th>
-            ))}
-            <th className="num">영향 리소스</th>
+            {th("title", "통제")}
+            {th("severity", "심각도", "sev-col")}
+            {th("envs", envLabel)}
+            {th("resources", "영향 리소스", "num")}
+            <th>관련 표준</th>
           </tr>
         </thead>
         <tbody>
           {findings.map((control) => {
-            const isOpen = open.includes(control.id);
+            const isOpen = control.id === selected;
             const hit = affected(control, filters);
-            const flip = () => setOpen(toggle(open, control.id));
+            const flip = () => setSelected(isOpen ? undefined : control.id);
             const failing = posture.environments.some(
               (e) => control.results[e.env_id]?.status === "fail",
             );
@@ -69,10 +100,10 @@ export function FindingsTable({
               <Fragment key={control.id}>
                 <tr
                   id={`finding-${control.id}`}
-                  ref={control.id === focus ? rowRef : undefined}
-                  className={`clickable${failing ? "" : " dim"}${isOpen ? " open" : ""}`}
+                  ref={isOpen ? rowRef : undefined}
+                  className={`clickable${failing ? "" : " dim"}${isOpen ? " selected" : ""}`}
                   tabIndex={0}
-                  aria-expanded={isOpen}
+                  aria-selected={isOpen}
                   onClick={flip}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
@@ -81,129 +112,57 @@ export function FindingsTable({
                     }
                   }}
                 >
-                  <td className="pk-status-col">
-                    <span className={`pk-label sev-${control.severity}`}>
-                      {SEVERITY_LABELS[control.severity]}
+                  <td>
+                    <span className="rule-cell">
+                      <CategoryIcon category={control.category} />
+                      <span className="rule-text">
+                        <span className="rule-title">{control.title}</span>
+                        <span className="rule-sub">
+                          {control.id}, {CATEGORY_LABELS[control.category]}
+                        </span>
+                      </span>
                     </span>
                   </td>
                   <td>
-                    {control.title} <span className="ux-id">{control.id}</span>
+                    <SeverityMeter severity={control.severity} />
                   </td>
-                  <td>{CATEGORY_LABELS[control.category]}</td>
-                  {posture.environments.map((env) => {
-                    const status = control.results[env.env_id]?.status;
-                    return (
-                      <td key={env.env_id}>
-                        {status ? (
-                          <span className={`ux-state st-${status}`}>
-                            <i
-                              className={`dot dot-${status === "fail" ? "bad" : status === "pass" ? "ok" : "idle"}`}
-                              aria-hidden="true"
-                            />
-                            {STATUS_LABELS[status]}
-                          </span>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                    );
-                  })}
+                  <td>
+                    <span
+                      className="env-hits"
+                      title={hit.envs.map(envName).join(", ")}
+                    >
+                      {order(hit.envs).map((id) => (
+                        <ProviderLogo key={id} provider={provider(id)} />
+                      ))}
+                      <span className="sub">
+                        {hit.envs.length}/{filters.env.length}
+                      </span>
+                    </span>
+                  </td>
                   <td className="num">
                     {control.scope === "environment" ? "-" : hit.resources}
                   </td>
+                  <td className="sub std-ids">
+                    {[...new Set(control.standard_refs.map(standardId))].join(
+                      ", ",
+                    )}
+                  </td>
                 </tr>
-                {isOpen && (
-                  <tr className="pk-expand">
-                    <td colSpan={columns}>
-                      <dl className="ux-detail">
-                        <div>
-                          <dt>위험</dt>
-                          <dd>
-                            {control.why || control.title}{" "}
-                            <span className="ux-id">
-                              {SEVERITY_LABELS[control.severity]}
-                            </span>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>영향 범위</dt>
-                          <dd>
-                            {posture.environments.map((env) => {
-                              const result = control.results[env.env_id];
-                              const fleetEnv = fleetEnvs.find(
-                                (e) => e.id === env.env_id,
-                              );
-                              const resources = result?.resources ?? [];
-                              return (
-                                <p key={env.env_id}>
-                                  {env.name}{" "}
-                                  <span className="ux-id">
-                                    {result
-                                      ? STATUS_LABELS[result.status]
-                                      : "-"}
-                                  </span>
-                                  {result?.detail ? ` · ${result.detail}` : ""}
-                                  {resources.length > 0 && (
-                                    <>
-                                      {" · "}
-                                      {resources.map((name, i) => {
-                                        const found = fleetEnv?.components.find(
-                                          (c) => c.name === name,
-                                        );
-                                        return (
-                                          <span key={name}>
-                                            {i > 0 && ", "}
-                                            {found ? (
-                                              <a
-                                                className="chip-link"
-                                                href={resourceHash(
-                                                  env.env_id,
-                                                  found.id,
-                                                )}
-                                              >
-                                                {name}
-                                              </a>
-                                            ) : (
-                                              name
-                                            )}
-                                          </span>
-                                        );
-                                      })}
-                                    </>
-                                  )}
-                                </p>
-                              );
-                            })}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>관련 표준</dt>
-                          <dd>
-                            {control.standard_refs.length === 0
-                              ? "연결된 표준이 없어요."
-                              : control.standard_refs
-                                  .map((ref) => {
-                                    const name = posture.standards.find(
-                                      (s) => s.id === standardId(ref),
-                                    )?.name;
-                                    return name ? `${ref} (${name})` : ref;
-                                  })
-                                  .join(", ")}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>조치 방법</dt>
-                          <dd>{control.remediation || "-"}</dd>
-                        </div>
-                      </dl>
-                    </td>
-                  </tr>
-                )}
               </Fragment>
             );
           })}
         </tbody>
       </table>
+      {current && (
+        <FindingPanel
+          control={current}
+          posture={posture}
+          fleetEnvs={fleetEnvs}
+          position={{ index, total: findings.length }}
+          onMove={move}
+          onClose={close}
+        />
+      )}
     </>
   );
 }

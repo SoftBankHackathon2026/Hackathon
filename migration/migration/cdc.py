@@ -172,7 +172,14 @@ class ConnectClient:
             raise
 
     def is_running(self, name: str) -> tuple[bool, dict[str, Any]]:
-        st = self.status(name)
+        """커넥터와 모든 task 가 RUNNING 인지. 등록 직후에는 /status 가 잠시 404 를 돌려주므로
+        그때는 실패가 아니라 '아직 아님'(False) 으로 보고 호출자가 다시 묻게 한다."""
+        try:
+            st = self.status(name)
+        except ConnectError as exc:
+            if exc.status == 404:
+                return False, {"pending": "status not available yet"}
+            raise
         conn_state = (st.get("connector") or {}).get("state")
         tasks = st.get("tasks") or []
         ok = conn_state == "RUNNING" and bool(tasks) and all(t.get("state") == "RUNNING" for t in tasks)
