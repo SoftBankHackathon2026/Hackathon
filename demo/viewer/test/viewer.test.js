@@ -419,12 +419,12 @@ test('every panel with a QR polls the same server the QR opens', () => {
   }
 });
 
-test('--config picks a file beside the viewer; the default is local', () => {
+test('--config picks a file beside the viewer; the default is demo', () => {
   const viewerDir = path.join(__dirname, '..');
-  assert.equal(configFileFrom(['--config', 'config.demo.json'], {}),
-      path.join(viewerDir, 'config.demo.json'));
-  assert.equal(configFileFrom([], {}),
+  assert.equal(configFileFrom(['--config', 'config.local.json'], {}),
       path.join(viewerDir, 'config.local.json'));
+  assert.equal(configFileFrom([], {}),
+      path.join(viewerDir, 'config.demo.json'));
   assert.equal(configFileFrom([], {VIEWER_CONFIG: '/tmp/my.json'}),
       '/tmp/my.json');
 });
@@ -447,16 +447,17 @@ test('the config keeps the public address apart from the polled one',
       assert.equal(environments[0].localTest, false);
     });
 
-test('a panel polling this machine is marked as a local test', async (t) => {
-  const {base} = await startViewer(t, [
-    {id: 'a', name: 'A', url: 'http://localhost:8081'},
-    {id: 'b', name: 'B', url: ''},
-  ]);
-  const {environments} =
-    await (await fetch(`${base}/api/environments`)).json();
-  assert.equal(environments[0].localTest, true);
-  assert.equal(environments[1].localTest, false);
-});
+test('only the setting marks a local test, never a localhost address',
+    async (t) => {
+      const {base} = await startViewer(t, [
+        {id: 'a', name: 'A', url: 'http://localhost:8081', local_test: true},
+        {id: 'b', name: 'B', url: 'http://localhost:8091'},
+      ]);
+      const {environments} =
+        await (await fetch(`${base}/api/environments`)).json();
+      assert.equal(environments[0].localTest, true);
+      assert.equal(environments[1].localTest, false);
+    });
 
 test('the version has its own row so a canary mix is never cut off', () => {
   const page = fs.readFileSync(

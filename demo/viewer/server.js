@@ -1,9 +1,9 @@
 'use strict';
 // 시연용 3환경 동시 보기 뷰어. 외부 의존성 없음 (Node 22 내장 모듈만).
 //   node demo/viewer/server.js                      http://127.0.0.1:5050
-//   node demo/viewer/server.js --config config.demo.json
+//   node demo/viewer/server.js --config config.local.json
 //   PORT=6060 VIEWER_CONFIG=./my.json node demo/viewer/server.js
-// config.demo.json 은 실제 주소, config.local.json(기본값)은 리허설용 로컬 docker 다.
+// config.demo.json(기본값)은 실제 주소, config.local.json 은 리허설용 로컬 docker 다.
 // 시연은 환경마다 DB 가 다르다(온프렘 Postgres → AWS RDS CDC). 같은 DB 를 보면
 // 칸마다 수치가 같아 전환이 숫자로 드러나지 않는다.
 // 설정 파일은 요청마다 다시 읽는다 → 현장에서 주소를 고치면 재시작 없이 반영된다
@@ -14,7 +14,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DEFAULT_CONFIG_FILE = path.join(__dirname, 'config.local.json');
+const DEFAULT_CONFIG_FILE = path.join(__dirname, 'config.demo.json');
 const DEFAULT_POLL_MILLIS = 500;
 // 앱은 DB 를 최대 2초 기다린 뒤 503 으로 답한다. 이보다 짧으면 DB 장애가
 // "응답 없음"으로 잘못 보인다.
@@ -45,11 +45,6 @@ function configFileFrom(args, env) {
   return env.VIEWER_CONFIG || DEFAULT_CONFIG_FILE;
 }
 
-function isLoopback(pageUrl) {
-  return pageUrl !== null &&
-      ['localhost', '127.0.0.1', '[::1]'].includes(new URL(pageUrl).hostname);
-}
-
 function loadConfig(file) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
   return {
@@ -64,7 +59,8 @@ function loadConfig(file) {
       // 로컬 칸은 폰에서 열 수 없으므로 비운다.
       publicUrl: pageUrlOf(environment.public_url),
       localOnly: environment.local_only === true,
-      localTest: isLoopback(pageUrlOf(environment.url)),
+      // 주소로 판단하지 않는다. port-forward 로 붙은 실제 서버도 localhost 다.
+      localTest: environment.local_test === true,
     })),
   };
 }
