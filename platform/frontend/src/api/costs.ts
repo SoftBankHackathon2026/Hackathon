@@ -42,6 +42,17 @@ export type CapacityCheck = {
   free_vcpu: number;
   free_memory_gib: number;
 };
+export type ChangeKind = "added" | "removed" | "replaced" | "moved";
+export type CostChange = {
+  change: ChangeKind;
+  category: string;
+  source: string | null;
+  target: string | null;
+  before: number | null;
+  after: number | null;
+  delta: number | null;
+  note: string | null;
+};
 export type MigrationCost = {
   job_id: string;
   source_env: string;
@@ -55,6 +66,8 @@ export type MigrationCost = {
   monthly_change: number | null;
   capacity: CapacityCheck | null;
   capacity_fits: boolean | null;
+  changes: CostChange[];
+  one_time: CostBreakdown | null;
   dual_run_days: number;
   dual_run_cost: number | null;
   assumptions: string[];

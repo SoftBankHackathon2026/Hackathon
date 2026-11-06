@@ -22,10 +22,19 @@ ServiceKind = Literal[
     "load_balancer",
     "nat_gateway",
     "kubernetes_control_plane",
+    "block_volume",
 ]
+TransferKind = Literal["internet_egress", "inter_zone", "nat_processing", "lb_processing"]
 WorkloadRole = Literal["app", "postgres", "kafka", "object_storage", "self_hosted_data"]
 Category = Literal[
-    "compute", "control_plane", "storage", "database", "messaging", "network", "onprem"
+    "compute",
+    "control_plane",
+    "storage",
+    "database",
+    "messaging",
+    "network",
+    "transfer",
+    "onprem",
 ]
 # list_price: 공식 가격표 단가, owner_input: 운영자가 입력한 값(온프렘 장비비·전기료),
 # measured: 온프렘 측정기가 읽은 값, not_priced: 단가 없음
@@ -73,6 +82,15 @@ class ManagedService(BaseModel):
     memory_gib: float = 0
 
 
+class TransferUsage(BaseModel):
+    """측정한 데이터 전송량을 월 기준으로 환산한 값(지난 7일 합계 × 730/168)."""
+
+    kind: TransferKind
+    name: str
+    gib_per_month: float
+    note: str | None = None
+
+
 class CostInventory(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,6 +103,9 @@ class CostInventory(BaseModel):
     workloads: list[WorkloadDemand] = Field(default_factory=list)
     managed: list[ManagedService] = Field(default_factory=list)
     kubernetes_control_plane: bool = False
+    transfers: list[TransferUsage] = Field(default_factory=list)
+    # 이 서비스가 쓰는 공인 IPv4 주소 수(EIP, ALB, 공인 IP 가 붙은 VM)
+    public_ipv4: int = 0
     # 어디서 읽었는지. 예: "kubernetes", "aws 태그 Project=oneaction"
     sources: list[str] = Field(default_factory=list)
     # 읽지 못한 것과 이유. 예: "관리형 서비스: AWS 읽기 권한 없음"
@@ -156,6 +177,23 @@ class CapacityCheck(BaseModel):
         return self.need_vcpu <= self.free_vcpu and self.need_memory_gib <= self.free_memory_gib
 
 
+ChangeKind = Literal["added", "removed", "replaced", "moved"]
+
+
+class CostChange(BaseModel):
+    """이전으로 바뀌는 자원 하나. 원본(지금) → 대상(이전 뒤)과 월 비용 변화."""
+
+    change: ChangeKind
+    category: Category
+    source: str | None
+    target: str | None
+    # 원본에서 이 자원에 드는 월 비용. 온프렘처럼 따로 셀 수 없으면 None.
+    before: float | None
+    after: float | None
+    delta: float | None
+    note: str | None = None
+
+
 class MigrationCost(BaseModel):
     job_id: str
     source_env: str
@@ -172,6 +210,10 @@ class MigrationCost(BaseModel):
     monthly_change: float | None = None
     capacity: CapacityCheck | None = None
     capacity_fits: bool | None = None
+    # 원본 자원별로 대상에서 무엇이 되는지와 월 비용 변화
+    changes: list[CostChange] = Field(default_factory=list)
+    # 1회성 비용: 데이터 복사·전환 기간 CDC 전송·이중 운영
+    one_time: CostBreakdown | None = None
     # 전환 기간 동안 대상 증가분을 원본과 함께 내는 비용(1회성)
     dual_run_days: int
     dual_run_cost: float | None

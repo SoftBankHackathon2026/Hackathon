@@ -164,6 +164,21 @@ def fetch_aws(region: str) -> dict:
         "load_balancer_capacity_unit": unit(
             "AWSELB", "LCUUsage", productFamily="Load Balancer-Application"
         ),
+        "public_ipv4": unit("AmazonVPC", "PublicIPv4:InUseAddress"),
+    }
+    transfer = {
+        # 인터넷 송신 첫 구간(월 10TB 까지) 단가. 계정 단위 무료 100GB 는 빼지 않는다.
+        "internet_egress": _one(
+            pricing,
+            "AWSDataTransfer",
+            usage="DataTransfer-Out-Bytes",
+            fromRegionCode=region,
+            transferType="AWS Outbound",
+        )[1],
+        "inter_zone": _one(
+            pricing, "AWSDataTransfer", usage="DataTransfer-Regional-Bytes", fromRegionCode=region
+        )[1],
+        "nat_processing": unit("AmazonEC2", "NatGateway-Bytes", productFamily="NAT Gateway"),
     }
     return {
         "provider": "aws",
@@ -185,11 +200,18 @@ def fetch_aws(region: str) -> dict:
             "database": "RDS gp3 스토리지",
             "kafka": "MSK 스토리지",
             "object": "S3 Standard",
+            "public_ipv4": "공인 IPv4 주소",
+            "internet_egress": "인터넷 송신",
+            "inter_zone": "가용 영역 간 전송",
+            "nat_processing": "NAT Gateway 처리",
+            "lb_processing": "ALB 처리량(LCU)",
+            "block_volume": "EBS gp3 (노드·VM 디스크)",
         },
         "compute": compute,
         "managed": managed,
         "storage_gib_month": storage,
         "hourly": fixed,
+        "transfer_gib": transfer,
     }
 
 
@@ -306,6 +328,7 @@ def fetch_gcp(region: str) -> dict:
         "notes": {
             "kafka_broker": "Managed Kafka 는 DCU 단위 과금이라 vCPU·메모리 → DCU 환산을 확인하기 전까지 단가 없음",
             "nat_gateway": "Cloud NAT 는 IP 사용료만. 게이트웨이 VM 당 요금·처리 GB 제외",
+            "transfer": "서울 리전에서 국내로 나가는 송신 SKU 를 확인하지 못해 데이터 전송은 단가 없음",
         },
         "compute": compute,
         "compute_rates": rates,

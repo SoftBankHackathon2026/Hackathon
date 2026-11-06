@@ -7,11 +7,14 @@ from controlplane.cost.estimator import (
     estimate_added,
     free_capacity,
     node_demand,
+    one_time_costs,
+    onprem_changes,
     price_environment,
     released_monthly,
 )
 from controlplane.cost.models import (
     CapacityCheck,
+    CostChange,
     CostInventory,
     CostOverview,
     EnvironmentCost,
@@ -100,6 +103,7 @@ class CostService:
         if sheet is None and target_env.provider != "onprem":
             gaps.append(f"대상 가격표 없음: {target_env.provider} {target_env.region}")
         added = None
+        changes: list[CostChange] = []
         assumptions: list[str] = []
         capacity = None
         namespaces = settings.namespaces or [source_env.app_namespace]
@@ -117,6 +121,7 @@ class CostService:
                 assumptions = capacity_assumptions(
                     need_cpu, need_memory, free_cpu, free_memory, settings.headroom
                 )
+                changes = onprem_changes(source, namespaces, settings)
                 if not capacity.fits:
                     gaps.append(
                         "온프렘 용량 부족: 장비 증설 필요 "
@@ -124,14 +129,30 @@ class CostService:
                         f"메모리 {max(0, need_memory - free_memory):.1f} GiB)"
                     )
             elif sheet is not None:
-                added, assumptions = estimate_added(source, target, sheet, namespaces, settings)
+                added, assumptions, changes = estimate_added(
+                    source, target, sheet, namespaces, settings
+                )
             assumptions = [f"옮길 네임스페이스: {', '.join(namespaces)}", *assumptions]
         if source_cost.current and source_cost.current.unpriced and source_cost.cloud_equivalent:
             gaps.append("원본 온프렘 장비비·전기료 미입력: 원본 비용은 클라우드 동급 환산값")
         released = None
+        source_sheet = self._sheet(source_env)
         if source is not None:
-            released, why = released_monthly(source, self._sheet(source_env), namespaces)
+            released, why = released_monthly(source, source_sheet, namespaces)
             assumptions.append(why)
+            if released:
+                changes.append(
+                    CostChange(
+                        change="removed",
+                        category="compute",
+                        source=f"{source_env.name} 노드·볼륨 중 옮기는 몫",
+                        target=None,
+                        before=released,
+                        after=0.0,
+                        delta=-released,
+                        note=why,
+                    )
+                )
         increase = added.monthly if added else (0.0 if target_env.provider == "onprem" else None)
         after = round((target_now or 0) + increase, 2) if increase is not None else None
         change = (
@@ -140,6 +161,13 @@ class CostService:
         dual_run = (
             round(increase * settings.dual_run_days / 30, 2) if increase is not None else None
         )
+        one_time = None
+        if source is not None:
+            one_time, one_time_why = one_time_costs(
+                source, target_env.provider, source_sheet, namespaces, settings, increase
+            )
+            assumptions += one_time_why
+        changes.sort(key=lambda c: -abs(c.delta or 0))
         return MigrationCost(
             job_id=job.job_id,
             source_env=source_env.id,
@@ -152,6 +180,8 @@ class CostService:
             monthly_change=change,
             capacity=capacity,
             capacity_fits=capacity.fits if capacity else None,
+            changes=changes,
+            one_time=one_time,
             dual_run_days=settings.dual_run_days,
             dual_run_cost=dual_run,
             assumptions=assumptions or [],

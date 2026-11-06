@@ -257,7 +257,7 @@ def test_migration_to_existing_cluster_grows_same_node_type_and_maps_data_to_man
             for i in range(3)
         ],
     )
-    added, assumptions = estimate_added(
+    added, assumptions, changes = estimate_added(
         SOURCE, target, SHEET, ["hackathon"], MigrationCostConfig(headroom=0.0)
     )
     items = {line.item: line for line in added.lines}
@@ -271,10 +271,17 @@ def test_migration_to_existing_cluster_grows_same_node_type_and_maps_data_to_man
     assert kafka.quantity == 3
     assert items["object · hackathon/object-storage"].quantity == 3
     assert any("관리형" in a for a in assumptions)
+    # 변화 행: 데이터 서비스는 관리형으로 바뀌고, 합계는 늘어나는 비용과 같다
+    kinds = {c.change for c in changes}
+    assert {"moved", "replaced"} <= kinds
+    replaced = [c for c in changes if c.change == "replaced"]
+    assert any(c.source.startswith("postgres (자가 운영 PostgreSQL") for c in replaced)
+    assert any(c.target.startswith("kafka_broker kafka.t3.small × 3") for c in replaced)
+    assert round(sum(c.delta for c in changes), 2) == added.monthly
 
 
 def test_migration_to_new_cluster_adds_control_plane_and_minimum_nodes():
-    added, _ = estimate_added(
+    added, _, _ = estimate_added(
         SOURCE,
         None,
         SHEET,
@@ -628,3 +635,47 @@ def test_gcp_inventory_needs_project_and_kafka_without_rate_stays_unpriced():
     )
     assert cost.lines[0].monthly is None
     assert "DCU" in cost.lines[0].note
+
+
+def test_transfer_public_ip_and_root_volumes_are_priced():
+    sheet = SHEET.model_copy(
+        update={
+            "transfer_gib": {"internet_egress": 0.1, "nat_processing": 0.05},
+            "hourly": {**SHEET.hourly, "public_ipv4": 0.005, "load_balancer_capacity_unit": 0.008},
+        }
+    )
+    from controlplane.cost.models import TransferUsage
+
+    inv = inventory(
+        public_ipv4=3,
+        managed=[ManagedService(kind="block_volume", name="node", storage_gib=20)],
+        transfers=[
+            TransferUsage(kind="nat_processing", name="nat", gib_per_month=10),
+            TransferUsage(kind="internet_egress", name="router", gib_per_month=5),
+            TransferUsage(kind="lb_processing", name="alb", gib_per_month=2),
+            TransferUsage(kind="inter_zone", name="x", gib_per_month=1),
+        ],
+    )
+    lines = {line.item: line for line in price_cloud(inv, sheet).lines}
+    assert lines["block_volume · node"].monthly == 2.0
+    assert lines["public_ipv4"].monthly == round(3 * 0.005 * 730, 2)
+    assert lines["nat_processing · nat"].monthly == 0.5
+    assert lines["internet_egress · router"].monthly == 0.5
+    assert lines["lb_processing · alb"].monthly == 0.02
+    assert lines["inter_zone · x"].monthly is None
+
+
+def test_one_time_costs_follow_transfer_direction():
+    from controlplane.cost.estimator import one_time_costs
+
+    config = MigrationCostConfig(dual_run_days=10, cdc_gib_per_day=2)
+    inbound, _ = one_time_costs(SOURCE, "aws", None, ["hackathon"], config, 30.0)
+    items = {line.item: line for line in inbound.lines}
+    assert items["데이터 첫 복사"].quantity == 5 + 15 + 3
+    assert items["데이터 첫 복사"].monthly == 0
+    assert items["전환 기간 변경분(CDC) 10일"].quantity == 20
+    assert items["이중 운영 10일"].monthly == 10.0
+    cloud = inventory(workloads=[WorkloadDemand(namespace="platform", name="db", storage_gib=10)])
+    egress_sheet = SHEET.model_copy(update={"transfer_gib": {"internet_egress": 0.1}})
+    outbound, _ = one_time_costs(cloud, "onprem", egress_sheet, ["platform"], config, 0.0)
+    assert {line.item: line.monthly for line in outbound.lines}["데이터 첫 복사"] == 1.0

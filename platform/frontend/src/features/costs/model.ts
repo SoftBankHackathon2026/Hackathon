@@ -1,4 +1,4 @@
-import type { CostBasis, CostLine } from "../../api/costs";
+import type { ChangeKind, CostBasis, CostLine } from "../../api/costs";
 
 const USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -34,8 +34,30 @@ export const CATEGORY_LABELS: Record<string, string> = {
   database: "데이터베이스",
   messaging: "메시징",
   network: "네트워크",
+  transfer: "데이터 전송",
   onprem: "온프렘",
 };
+
+export const CHANGE_LABELS: Record<ChangeKind, string> = {
+  added: "신규",
+  removed: "감소",
+  replaced: "관리형 전환",
+  moved: "이동",
+};
+
+export function percent(part: number | null, whole: number | null) {
+  if (part === null || whole === null || whole <= 0) return null;
+  return Math.round((part / whole) * 100);
+}
+
+export type CategoryShare = { category: string; monthly: number };
+
+export function topLines(lines: CostLine[], count: number) {
+  return [...lines]
+    .filter((line) => (line.monthly ?? 0) > 0)
+    .sort((a, b) => (b.monthly ?? 0) - (a.monthly ?? 0))
+    .slice(0, count);
+}
 
 export const BASIS_LABELS: Record<CostBasis, string> = {
   list_price: "공식 단가",

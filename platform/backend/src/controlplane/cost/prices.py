@@ -55,6 +55,8 @@ class PriceSheet(BaseModel):
     managed: dict[str, dict[str, InstancePrice]] = Field(default_factory=dict)
     storage_gib_month: dict[str, float] = Field(default_factory=dict)
     hourly: dict[str, float] = Field(default_factory=dict)
+    # GB 당 데이터 전송 단가: internet_egress(인터넷 송신), inter_zone(가용 영역 간), nat_processing(NAT 처리)
+    transfer_gib: dict[str, float] = Field(default_factory=dict)
     # 계열별 vCPU·메모리 단가(GCP). compute 에 없는 사용자 지정·표준 머신 이름을 이 값으로 계산한다.
     compute_rates: dict[str, UnitRates] = Field(default_factory=dict)
     # 관리형 서비스의 vCPU·메모리 단가(예: Cloud SQL db-custom-*).

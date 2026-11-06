@@ -67,6 +67,8 @@ class MigrationCostConfig(BaseModel):
     min_nodes: int = Field(default=2, ge=1)
     instance_families: list[str] = Field(default_factory=lambda: list(DEFAULT_FAMILIES))
     dual_run_days: int = Field(default=14, ge=0, le=365)
+    # 전환 기간 동안 CDC 로 넘기는 하루 변경분(GB). 측정값이 없어 가정값이다.
+    cdc_gib_per_day: float = Field(default=1.0, ge=0)
 
 
 class CostConfig(BaseModel):

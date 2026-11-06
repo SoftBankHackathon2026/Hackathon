@@ -14,11 +14,14 @@ from typing import Any
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
+from pydantic import BaseModel, Field
 
 from controlplane.cost.models import (
+    HOURS_PER_MONTH,
     CostInventory,
     ManagedService,
     Node,
+    TransferUsage,
     Volume,
     WorkloadDemand,
     WorkloadRole,
@@ -185,10 +188,39 @@ def _tag_filters(tags: dict[str, str]) -> list[dict[str, Any]]:
     return [{"Key": key, "Values": [value]} for key, value in tags.items()]
 
 
-def read_aws_managed(
-    region: str, tags: dict[str, str], session: Any = None
-) -> list[ManagedService]:
-    """태그 범위 안의 AWS 관리형 서비스. boto3 가 필요하다(aws 추가 의존성)."""
+class ManagedScan(BaseModel):
+    """클라우드 API 로 읽은 클러스터 밖 자원."""
+
+    managed: list[ManagedService] = Field(default_factory=list)
+    transfers: list[TransferUsage] = Field(default_factory=list)
+    public_ipv4: int = 0
+
+
+# 지난 7일 합계를 월(730시간)로 환산한다.
+TRANSFER_DAYS = 7
+MONTH_FACTOR = HOURS_PER_MONTH / (TRANSFER_DAYS * 24)
+
+
+def _week_sum(cloudwatch: Any, namespace: str, metric: str, dimensions: list[dict]) -> float:
+    now = datetime.now(UTC)
+    points = cloudwatch.get_metric_statistics(
+        Namespace=namespace,
+        MetricName=metric,
+        Dimensions=dimensions,
+        StartTime=now - timedelta(days=TRANSFER_DAYS),
+        EndTime=now,
+        Period=86400,
+        Statistics=["Sum"],
+    )["Datapoints"]
+    return sum(p["Sum"] for p in points)
+
+
+def _monthly_gib(total_bytes: float) -> float:
+    return round(total_bytes / GIB * MONTH_FACTOR, 3)
+
+
+def read_aws_managed(region: str, tags: dict[str, str], session: Any = None) -> ManagedScan:
+    """태그 범위 안의 AWS 자원과 지난 7일 데이터 전송량. boto3 가 필요하다(aws 추가 의존성)."""
     import boto3
 
     session = session or boto3.session.Session(region_name=region)
@@ -198,6 +230,12 @@ def read_aws_managed(
     for page in paginator.paginate(TagFilters=_tag_filters(tags)):
         arns.update(item["ResourceARN"] for item in page["ResourceTagMappingList"])
     services: list[ManagedService] = []
+    transfers: list[TransferUsage] = []
+    cloudwatch = session.client("cloudwatch", region_name=region)
+
+    def scoped(tag_list: list[dict] | None) -> bool:
+        tagged = {t["Key"]: t["Value"] for t in tag_list or []}
+        return all(tagged.get(k) == v for k, v in tags.items())
 
     rds = session.client("rds", region_name=region)
     for db in rds.describe_db_instances()["DBInstances"]:
@@ -229,7 +267,9 @@ def read_aws_managed(
             )
         )
     ec2 = session.client("ec2", region_name=region)
-    # 클러스터 노드가 아닌 VM(예: Tailscale 라우터). 노드는 Kubernetes 쪽에서 센다.
+    names: dict[str, str] = {}
+    public_ips: set[str] = set()
+    # 클러스터 노드가 아닌 VM(예: Tailscale 라우터). 노드 비용은 Kubernetes 쪽에서 센다.
     for reservation in ec2.describe_instances(
         Filters=[
             {"Name": "instance-state-name", "Values": ["running"]},
@@ -238,26 +278,102 @@ def read_aws_managed(
     )["Reservations"]:
         for instance in reservation["Instances"]:
             tagged = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
+            name = tagged.get("Name") or instance["InstanceId"]
+            names[instance["InstanceId"]] = name
+            if instance.get("PublicIpAddress"):
+                public_ips.add(instance["PublicIpAddress"])
             if "eks:nodegroup-name" in tagged or "aws:eks:cluster-name" in tagged:
                 continue
             services.append(
-                ManagedService(
-                    kind="virtual_machine",
-                    name=tagged.get("Name") or instance["InstanceId"],
-                    size=instance["InstanceType"],
+                ManagedService(kind="virtual_machine", name=name, size=instance["InstanceType"])
+            )
+            sent = _week_sum(
+                cloudwatch,
+                "AWS/EC2",
+                "NetworkOut",
+                [{"Name": "InstanceId", "Value": instance["InstanceId"]}],
+            )
+            transfers.append(
+                TransferUsage(
+                    kind="internet_egress",
+                    name=name,
+                    gib_per_month=_monthly_gib(sent),
+                    note="VM 송신 전체(상한). VPC 안으로 돌려주는 트래픽도 섞여 있음",
                 )
             )
+    # 노드·VM 디스크. PVC 로 만든 볼륨은 Kubernetes 쪽에서 센다.
+    for volume in ec2.describe_volumes(
+        Filters=[{"Name": f"tag:{k}", "Values": [v]} for k, v in tags.items()]
+    )["Volumes"]:
+        tagged = {t["Key"]: t["Value"] for t in volume.get("Tags", [])}
+        if "kubernetes.io/created-for/pvc/name" in tagged:
+            continue
+        attached = [a["InstanceId"] for a in volume.get("Attachments", [])]
+        services.append(
+            ManagedService(
+                kind="block_volume",
+                name=names.get(attached[0], attached[0]) if attached else volume["VolumeId"],
+                storage_gib=float(volume["Size"]),
+            )
+        )
     elb = session.client("elbv2", region_name=region)
+    lb_names = set()
     for lb in elb.describe_load_balancers()["LoadBalancers"]:
-        if lb["LoadBalancerArn"] in arns and lb.get("Type") == "application":
-            services.append(ManagedService(kind="load_balancer", name=lb["LoadBalancerName"]))
+        if lb["LoadBalancerArn"] not in arns or lb.get("Type") != "application":
+            continue
+        lb_names.add(lb["LoadBalancerName"])
+        services.append(ManagedService(kind="load_balancer", name=lb["LoadBalancerName"]))
+        processed = _week_sum(
+            cloudwatch,
+            "AWS/ApplicationELB",
+            "ProcessedBytes",
+            [
+                {
+                    "Name": "LoadBalancer",
+                    "Value": lb["LoadBalancerArn"].split(":loadbalancer/", 1)[1],
+                }
+            ],
+        )
+        transfers.append(
+            TransferUsage(
+                kind="lb_processing",
+                name=lb["LoadBalancerName"],
+                gib_per_month=_monthly_gib(processed),
+                note="처리 GB 를 LCU-시간으로 봄(연결·규칙 차원 제외)",
+            )
+        )
     for nat in ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])[
         "NatGateways"
     ]:
-        tagged = {t["Key"]: t["Value"] for t in nat.get("Tags", [])}
-        if all(tagged.get(k) == v for k, v in tags.items()):
-            services.append(ManagedService(kind="nat_gateway", name=nat["NatGatewayId"]))
-    cloudwatch = session.client("cloudwatch", region_name=region)
+        if not scoped(nat.get("Tags")):
+            continue
+        nat_id = nat["NatGatewayId"]
+        services.append(ManagedService(kind="nat_gateway", name=nat_id))
+        dims = [{"Name": "NatGatewayId", "Value": nat_id}]
+        processed = _week_sum(cloudwatch, "AWS/NATGateway", "BytesInFromSource", dims) + _week_sum(
+            cloudwatch, "AWS/NATGateway", "BytesInFromDestination", dims
+        )
+        egress = _week_sum(cloudwatch, "AWS/NATGateway", "BytesOutToDestination", dims)
+        transfers.append(
+            TransferUsage(kind="nat_processing", name=nat_id, gib_per_month=_monthly_gib(processed))
+        )
+        transfers.append(
+            TransferUsage(
+                kind="internet_egress",
+                name=f"{nat_id} 경유",
+                gib_per_month=_monthly_gib(egress),
+                note="NAT 를 거쳐 밖으로 나간 양",
+            )
+        )
+    for address in ec2.describe_addresses()["Addresses"]:
+        eni = address.get("NetworkInterfaceId")
+        description = ""
+        if eni and not scoped(address.get("Tags")):
+            interfaces = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni])
+            description = (interfaces["NetworkInterfaces"] or [{}])[0].get("Description", "")
+        lb_owned = any(description.startswith(f"ELB app/{name}/") for name in lb_names)
+        if scoped(address.get("Tags")) or lb_owned:
+            public_ips.add(address["PublicIp"])
     now = datetime.now(UTC)
     for arn in sorted(a for a in arns if a.startswith("arn:aws:s3:::")):
         bucket = arn.removeprefix("arn:aws:s3:::")
@@ -281,7 +397,7 @@ def read_aws_managed(
                 storage_gib=round((latest["Average"] if latest else 0) / GIB, 3),
             )
         )
-    return services
+    return ManagedScan(managed=services, transfers=transfers, public_ipv4=len(public_ips))
 
 
 GCP_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
@@ -414,6 +530,10 @@ def read_gcp_managed(
     return services
 
 
+def _scan(result: ManagedScan | list[ManagedService]) -> ManagedScan:
+    return result if isinstance(result, ManagedScan) else ManagedScan(managed=result)
+
+
 def collect_inventory(
     env: EnvironmentConfig,
     tags: dict[str, str],
@@ -421,8 +541,10 @@ def collect_inventory(
     kube: Callable[
         [EnvironmentConfig], tuple[list[Node], list[Volume], list[WorkloadDemand]]
     ] = read_kubernetes,
-    aws: Callable[[str, dict[str, str]], list[ManagedService]] = read_aws_managed,
-    gcp: Callable[[str, str, dict[str, str]], list[ManagedService]] = read_gcp_managed,
+    aws: Callable[[str, dict[str, str]], ManagedScan | list[ManagedService]] = read_aws_managed,
+    gcp: Callable[
+        [str, str, dict[str, str]], ManagedScan | list[ManagedService]
+    ] = read_gcp_managed,
     meter: OnPremMeter | None = None,
     project: str | None = None,
 ) -> CostInventory:
@@ -435,14 +557,14 @@ def collect_inventory(
         sources.append("kubernetes")
     except (ApiException, ConfigException, OSError) as exc:
         gaps.append(f"클러스터 자원: 읽지 못함 ({type(exc).__name__})")
-    managed: list[ManagedService] = []
+    scan = ManagedScan()
     if env.provider == "aws":
         if not tags:
             gaps.append("관리형 서비스: 비용 설정에 태그 범위가 없음")
         else:
             scope = ", ".join(f"{k}={v}" for k, v in tags.items())
             try:
-                managed = aws(env.region, tags)
+                scan = _scan(aws(env.region, tags))
                 sources.append(f"AWS 태그 {scope}")
             except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
                 gaps.append(f"관리형 서비스: AWS 읽기 실패 ({type(exc).__name__})")
@@ -451,7 +573,7 @@ def collect_inventory(
             gaps.append("관리형 서비스: 비용 설정에 GCP 프로젝트가 없음")
         else:
             try:
-                managed = gcp(project, env.region, tags)
+                scan = _scan(gcp(project, env.region, tags))
                 scope = ", ".join(f"{k}={v}" for k, v in tags.items())
                 sources.append("GCP 프로젝트" + (f" 라벨 {scope}" if scope else ""))
             except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
@@ -472,7 +594,9 @@ def collect_inventory(
         nodes=nodes,
         volumes=volumes,
         workloads=workloads,
-        managed=managed,
+        managed=scan.managed,
+        transfers=scan.transfers,
+        public_ipv4=scan.public_ipv4,
         kubernetes_control_plane=env.provider in ("aws", "gcp") and bool(nodes),
         sources=sources,
         gaps=gaps,

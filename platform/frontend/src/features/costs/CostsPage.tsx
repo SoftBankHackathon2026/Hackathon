@@ -2,23 +2,21 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type {
   CostBreakdown,
+  CostChange,
   CostOverview,
   EnvironmentCost,
   MigrationCost,
 } from "../../api/costs";
 import { PageActions } from "../../components/PageSlots";
-import {
-  FilterSelect,
-  PageHeader,
-  ScopeFilterRow,
-  Section,
-  SummaryCard,
-} from "../../components/PageKit";
+import { PageHeader, Section } from "../../components/PageKit";
+import { Segmented } from "../../components/Segmented";
 import { formatAgo } from "../../lib/format";
 import {
   BASIS_LABELS,
   byCategory,
   CATEGORY_LABELS,
+  CHANGE_LABELS,
+  percent,
   quantityText,
   signedUsd,
   unitUsd,
@@ -26,112 +24,239 @@ import {
 } from "./model";
 import { costsQueryOptions } from "./queries";
 
+const VISIBLE_LINES = 6;
+
 function scrollTo(id: string) {
   document
     .getElementById(id)
     ?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function EnvironmentCard({ env }: { env: EnvironmentCost }) {
-  const current = env.current;
-  const incomplete = current !== null && current.unpriced > 0;
-  const headline =
-    env.provider === "onprem" && incomplete && env.cloud_equivalent
-      ? env.cloud_equivalent
-      : current;
-  const lines = [
-    headline && headline !== current
-      ? `${headline.label} (장비비·전기료 미입력)`
-      : current?.label,
-    env.cloud_equivalent && headline !== env.cloud_equivalent
-      ? `${env.cloud_equivalent.label} ${usd(env.cloud_equivalent.monthly)}`
-      : null,
-    env.observed_at ? `수집 ${formatAgo(env.observed_at)}` : null,
-    ...env.gaps,
-  ].filter((line): line is string => Boolean(line));
+function categoryName(category: string) {
+  return CATEGORY_LABELS[category] ?? category;
+}
+
+function deltaClass(value: number | null) {
+  if (value === null || value === 0) return "";
+  return value > 0 ? "up" : "down";
+}
+
+type Names = {
+  name: (id: string) => string;
+  estimated: (id: string) => boolean;
+};
+
+/** 월 변화 하나와 그 근거가 되는 숫자들. */
+function Summary({ migration, name }: { migration: MigrationCost } & Names) {
+  const increase =
+    migration.target_monthly_after !== null &&
+    migration.target_monthly_now !== null
+      ? migration.target_monthly_after - migration.target_monthly_now
+      : null;
+  const pct = percent(increase, migration.target_monthly_now);
+  const capacity = migration.capacity;
+  const facts: [string, string][] = [
+    [
+      name(migration.target_env),
+      `${usd(migration.target_monthly_now)} → ${usd(migration.target_monthly_after)}${pct !== null ? ` (${increase !== null && increase >= 0 ? "+" : ""}${pct}%)` : ""}`,
+    ],
+    [
+      name(migration.source_env),
+      migration.source_released
+        ? `${signedUsd(-migration.source_released)} (옮기는 워크로드 몫)`
+        : "변화 없음",
+    ],
+    ["1회성", usd(migration.one_time?.monthly ?? null)],
+    [
+      "대상 용량",
+      capacity === null
+        ? "-"
+        : `${migration.capacity_fits ? "충분" : "부족"} · vCPU ${capacity.need_vcpu}/${capacity.free_vcpu} · 메모리 ${capacity.need_memory_gib}/${capacity.free_memory_gib} GiB`,
+    ],
+  ];
   return (
-    <SummaryCard
-      title={env.name}
-      label={
-        headline === null
-          ? { tone: "idle", text: env.observed_at ? "읽지 못함" : "수집 전" }
-          : headline === env.cloud_equivalent
-            ? { tone: "warn", text: "동급 환산" }
-            : headline.unpriced > 0
-              ? { tone: "warn", text: `단가 없음 ${headline.unpriced}` }
-              : { tone: "ok", text: "공식 단가" }
-      }
-      value={headline ? usd(headline.monthly) : "-"}
-      unit={headline ? "/월" : ""}
-      lines={lines}
-    />
+    <div className="cost-summary">
+      <p className="cost-total">
+        <span className={deltaClass(migration.monthly_change)}>
+          {migration.monthly_change === null
+            ? "계산 불가"
+            : signedUsd(migration.monthly_change)}
+        </span>
+        {migration.monthly_change !== null && <small>/월</small>}
+      </p>
+      <dl className="cost-facts">
+        {facts.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
-function MigrationCard({
+function BeforeAfter({
   migration,
   name,
-}: {
-  migration: MigrationCost;
-  name: (id: string) => string;
-}) {
-  const change = migration.monthly_change;
+  estimated,
+}: { migration: MigrationCost } & Names) {
+  const sourceBefore = migration.source_monthly;
+  const sourceAfter =
+    sourceBefore !== null && migration.source_released !== null
+      ? sourceBefore - migration.source_released
+      : null;
+  const rows = [
+    {
+      id: migration.source_env,
+      role: "원본",
+      before: sourceBefore,
+      after: sourceAfter,
+    },
+    {
+      id: migration.target_env,
+      role: "대상",
+      before: migration.target_monthly_now,
+      after: migration.target_monthly_after,
+    },
+  ];
+  const max = Math.max(
+    1,
+    ...rows.flatMap((r) => [r.before ?? 0, r.after ?? 0]),
+  );
   return (
-    <SummaryCard
-      title={`${migration.job_id} · ${name(migration.source_env)} → ${name(migration.target_env)}`}
-      label={
-        change === null
-          ? { tone: "idle", text: "추산 불가" }
-          : change > 0
-            ? { tone: "warn", text: "월 비용 증가" }
-            : { tone: "ok", text: change < 0 ? "월 비용 절감" : "변화 없음" }
-      }
-      value={signedUsd(change)}
-      unit="/월"
-      lines={[
-        `대상 ${usd(migration.target_monthly_now)} → ${usd(migration.target_monthly_after)}`,
-        `원본에서 줄어드는 비용 ${usd(migration.source_released)}`,
-        `전환 기간 ${migration.dual_run_days}일 이중 운영 ${usd(migration.dual_run_cost)}`,
-        migration.capacity
-          ? `대상 남는 용량 ${migration.capacity_fits ? "안에 들어감" : "부족"} · 필요 vCPU ${migration.capacity.need_vcpu} · 메모리 ${migration.capacity.need_memory_gib} GiB`
-          : "원본 자원 목록 없음",
-        ...migration.gaps,
-      ]}
-    />
+    <table className="cost-ba">
+      <caption>이전 전후 월 비용</caption>
+      <tbody>
+        {rows.map((row) =>
+          (["before", "after"] as const).map((when) => (
+            <tr key={`${row.id}-${when}`} className={when}>
+              {when === "before" && (
+                <th rowSpan={2} scope="rowgroup">
+                  {name(row.id)}
+                  <span>
+                    {row.role}
+                    {estimated(row.id) ? " · AWS 환산" : ""}
+                  </span>
+                </th>
+              )}
+              <td className="cost-ba-when">
+                {when === "before" ? "전" : "후"}
+              </td>
+              <td className="cost-ba-track">
+                <span style={{ width: `${((row[when] ?? 0) / max) * 100}%` }} />
+              </td>
+              <td className="num">{usd(row[when])}</td>
+            </tr>
+          )),
+        )}
+      </tbody>
+    </table>
   );
 }
 
-function LinesTable({ breakdown }: { breakdown: CostBreakdown }) {
+const CHANGE_MARKS = { added: "+", removed: "−", replaced: "~", moved: "→" };
+
+function ChangeRow({ change }: { change: CostChange }) {
+  return (
+    <tr>
+      <td className={`cost-mark change-${change.change}`} aria-hidden="true">
+        {CHANGE_MARKS[change.change]}
+      </td>
+      <td className="cost-wrap">
+        {change.source ?? <span className="muted">-</span>}
+        <div className="sub">
+          {CHANGE_LABELS[change.change]} · {categoryName(change.category)}
+          {change.before !== null && ` · 지금 ${usd(change.before)}/월`}
+        </div>
+      </td>
+      <td className="cost-wrap">
+        {change.target ?? <span className="muted">-</span>}
+        {change.note && <div className="sub">{change.note}</div>}
+      </td>
+      <td className={`num cost-delta ${deltaClass(change.delta)}`}>
+        {change.delta === null ? "단가 없음" : signedUsd(change.delta)}
+      </td>
+    </tr>
+  );
+}
+
+function ChangesTable({ migration }: { migration: MigrationCost }) {
+  if (migration.changes.length === 0)
+    return <p className="pk-empty">바뀌는 자원 없음</p>;
+  return (
+    <div className="table-wrap">
+      <table className="pk-table cost-table cost-changes">
+        <thead>
+          <tr>
+            <th aria-label="변화" />
+            <th>원본</th>
+            <th>대상</th>
+            <th className="num">월 변화</th>
+          </tr>
+        </thead>
+        <tbody>
+          {migration.changes.map((change, i) => (
+            <ChangeRow key={`${change.change}-${i}`} change={change} />
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td />
+            <td colSpan={2}>합계</td>
+            <td
+              className={`num cost-delta ${deltaClass(migration.monthly_change)}`}
+            >
+              {signedUsd(migration.monthly_change)}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function LinesTable({
+  breakdown,
+  limit,
+}: {
+  breakdown: CostBreakdown;
+  limit?: number;
+}) {
+  const [all, setAll] = useState(false);
   if (breakdown.lines.length === 0)
-    return <p className="pk-empty">비용 항목이 없어요.</p>;
+    return <p className="pk-empty">항목 없음</p>;
+  const sorted = [...breakdown.lines].sort(
+    (a, b) => (b.monthly ?? -1) - (a.monthly ?? -1),
+  );
+  const shown = limit && !all ? sorted.slice(0, limit) : sorted;
+  const hidden = sorted.length - shown.length;
   return (
     <div className="table-wrap">
       <table className="pk-table cost-table">
         <thead>
           <tr>
-            <th>분류</th>
             <th>항목</th>
+            <th>분류</th>
             <th className="num">수량</th>
-            <th className="num">단가/월</th>
-            <th className="num">월 비용</th>
+            <th className="num">단가</th>
+            <th className="num">월</th>
             <th>근거</th>
           </tr>
         </thead>
         <tbody>
-          {breakdown.lines.map((line, i) => (
+          {shown.map((line, i) => (
             <tr key={`${line.item}-${i}`}>
-              <td>{CATEGORY_LABELS[line.category] ?? line.category}</td>
-              <td>
+              <td className="cost-wrap">
                 {line.item}
                 {line.note && <div className="sub">{line.note}</div>}
               </td>
+              <td>{categoryName(line.category)}</td>
               <td className="num">{quantityText(line)}</td>
               <td className="num">{unitUsd(line.unit_price)}</td>
               <td className="num">{usd(line.monthly)}</td>
-              <td>
-                <span className={`cost-basis basis-${line.basis}`}>
-                  {BASIS_LABELS[line.basis]}
-                </span>
+              <td className={`cost-basis basis-${line.basis}`}>
+                {BASIS_LABELS[line.basis]}
               </td>
             </tr>
           ))}
@@ -139,11 +264,21 @@ function LinesTable({ breakdown }: { breakdown: CostBreakdown }) {
         <tfoot>
           <tr>
             <td colSpan={4}>
-              합계
+              {hidden > 0 ? (
+                <button
+                  type="button"
+                  className="cost-more"
+                  onClick={() => setAll(true)}
+                >
+                  나머지 {hidden}개
+                </button>
+              ) : (
+                "합계"
+              )}
               {breakdown.unpriced > 0 && (
                 <span className="sub">
                   {" "}
-                  · 단가 없는 {breakdown.unpriced}줄 제외
+                  · 단가 없음 {breakdown.unpriced}개 제외
                 </span>
               )}
             </td>
@@ -156,94 +291,112 @@ function LinesTable({ breakdown }: { breakdown: CostBreakdown }) {
   );
 }
 
+function MigrationView(props: { migration: MigrationCost } & Names) {
+  const { migration } = props;
+  return (
+    <div className="cost-migration">
+      <Summary {...props} />
+      <BeforeAfter {...props} />
+      <h3 className="cost-subtitle">변경 내역</h3>
+      <ChangesTable migration={migration} />
+      {migration.one_time && (
+        <>
+          <h3 className="cost-subtitle">
+            1회성 <span>{usd(migration.one_time.monthly)}</span>
+          </h3>
+          <LinesTable breakdown={migration.one_time} />
+        </>
+      )}
+      {(migration.assumptions.length > 0 || migration.gaps.length > 0) && (
+        <details className="cost-assumptions">
+          <summary>
+            가정 {migration.assumptions.length + migration.gaps.length}개
+          </summary>
+          <ul>
+            {migration.gaps.map((text) => (
+              <li key={text} className="gap">
+                {text}
+              </li>
+            ))}
+            {migration.assumptions.map((text) => (
+              <li key={text}>{text}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function CategoryBar({ breakdown }: { breakdown: CostBreakdown }) {
   const parts = byCategory(breakdown.lines).filter((p) => p.monthly > 0);
   if (breakdown.monthly <= 0 || parts.length === 0) return null;
   return (
-    <div
-      className="cost-bar"
-      role="img"
-      aria-label={`${breakdown.label} 분류별 비중`}
-    >
-      {parts.map((part) => (
-        <span
-          key={part.category}
-          className={`cost-seg seg-${part.category}`}
-          style={{ flexGrow: part.monthly }}
-          title={`${CATEGORY_LABELS[part.category] ?? part.category} ${usd(part.monthly)}`}
-        >
-          {part.monthly / breakdown.monthly >= 0.12 &&
-            `${CATEGORY_LABELS[part.category] ?? part.category} ${usd(part.monthly)}`}
-        </span>
-      ))}
-    </div>
+    <>
+      <div
+        className="cost-bar"
+        role="img"
+        aria-label={`분류별 비중: ${parts.map((p) => `${categoryName(p.category)} ${usd(p.monthly)}`).join(", ")}`}
+      >
+        {parts.map((part) => (
+          <span
+            key={part.category}
+            className={`cost-seg seg-${part.category}`}
+            style={{ flexGrow: part.monthly }}
+          />
+        ))}
+      </div>
+      <ul className="cost-legend">
+        {parts.map((part) => (
+          <li key={part.category}>
+            <span className={`cost-dot seg-${part.category}`} />
+            {categoryName(part.category)}
+            <span className="num">{usd(part.monthly)}</span>
+            <span className="num muted">
+              {percent(part.monthly, breakdown.monthly)}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
-function EnvironmentDetail({ env }: { env: EnvironmentCost }) {
-  const parts = [env.current, env.cloud_equivalent].filter(
-    (b): b is CostBreakdown => b !== null,
-  );
+function EnvironmentRow({ env }: { env: EnvironmentCost }) {
+  const missingInput =
+    env.provider === "onprem" &&
+    env.current !== null &&
+    env.current.unpriced > 0;
+  const main = missingInput ? env.cloud_equivalent : env.current;
   return (
-    <div className="cost-detail">
-      <h3>{env.name}</h3>
-      {parts.length === 0 && (
-        <p className="pk-empty">
-          {env.gaps.join(" · ") || "비용 정보가 없어요."}
+    <section className="cost-env" aria-label={env.name}>
+      <div className="cost-env-side">
+        <h3>{env.name}</h3>
+        <p className="cost-env-total">
+          {main ? usd(main.monthly) : "-"}
+          <small>/월</small>
         </p>
-      )}
-      {parts.map((breakdown) => (
-        <div key={breakdown.label} className="cost-block">
-          <div className="cost-block-head">
-            <strong>{breakdown.label}</strong>
-            <span>{usd(breakdown.monthly)}/월</span>
-          </div>
-          <CategoryBar breakdown={breakdown} />
-          <LinesTable breakdown={breakdown} />
-        </div>
-      ))}
-      {env.sources.length > 0 && (
-        <p className="cost-note">읽은 곳: {env.sources.join(" · ")}</p>
-      )}
-    </div>
-  );
-}
-
-function MigrationDetail({
-  migration,
-  name,
-}: {
-  migration: MigrationCost;
-  name: (id: string) => string;
-}) {
-  return (
-    <div className="cost-detail">
-      <h3>
-        {migration.job_id} · {name(migration.source_env)} →{" "}
-        {name(migration.target_env)}
-      </h3>
-      {migration.added ? (
-        <div className="cost-block">
-          <div className="cost-block-head">
-            <strong>{migration.added.label}</strong>
-            <span>{usd(migration.added.monthly)}/월</span>
-          </div>
-          <CategoryBar breakdown={migration.added} />
-          <LinesTable breakdown={migration.added} />
-        </div>
-      ) : (
-        <p className="pk-empty">
-          대상이 온프렘이라 단가 대신 남는 용량으로 판단해요.
+        <p className="cost-env-meta">
+          {[
+            missingInput ? "장비비·전기료 미입력, AWS 동급 환산" : null,
+            env.observed_at ? `수집 ${formatAgo(env.observed_at)}` : "수집 전",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
-      )}
-      {migration.assumptions.length > 0 && (
-        <ul className="cost-assumptions">
-          {migration.assumptions.map((text) => (
-            <li key={text}>{text}</li>
-          ))}
-        </ul>
-      )}
-    </div>
+        {main && <CategoryBar breakdown={main} />}
+        {env.gaps.length > 0 && (
+          <p className="cost-note">빠진 것: {env.gaps.join(" · ")}</p>
+        )}
+      </div>
+      <div className="cost-env-main">
+        {main ? (
+          <LinesTable breakdown={main} limit={VISIBLE_LINES} />
+        ) : (
+          <p className="pk-empty">비용 정보 없음</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -253,25 +406,29 @@ function priceSources(overview: CostOverview) {
     if (env.prices)
       seen.set(
         `${env.prices.provider}-${env.prices.region}`,
-        `${env.prices.provider.toUpperCase()} ${env.prices.region} · ${env.prices.source} · ${env.prices.fetched_at.slice(0, 10)} 기준`,
+        `${env.prices.provider.toUpperCase()} ${env.prices.region}: ${env.prices.source}, ${env.prices.fetched_at.slice(0, 10)}`,
       );
   return [...seen.values()];
 }
 
 export function CostsPage() {
   const { data: overview } = useSuspenseQuery(costsQueryOptions());
-  const [envChoice, setEnvChoice] = useState("all");
+  const [jobId, setJobId] = useState(overview.migrations[0]?.job_id ?? "");
   const name = (id: string) =>
     overview.environments.find((e) => e.env_id === id)?.name ?? id;
-  const envs = overview.environments.filter(
-    (e) => envChoice === "all" || e.env_id === envChoice,
-  );
-  const migrations = overview.migrations.filter(
-    (m) =>
-      envChoice === "all" ||
-      m.source_env === envChoice ||
-      m.target_env === envChoice,
-  );
+  // 온프렘 장비비·전기료가 없어 클라우드 동급 환산값을 쓰는 환경
+  const estimated = (id: string) => {
+    const env = overview.environments.find((e) => e.env_id === id);
+    return (
+      env?.provider === "onprem" &&
+      (env.current?.unpriced ?? 0) > 0 &&
+      env.cloud_equivalent !== null
+    );
+  };
+  const migration = overview.migrations.find((m) => m.job_id === jobId);
+  const cloudTotal = overview.environments
+    .filter((env) => env.provider !== "onprem")
+    .reduce((sum, env) => sum + (env.current?.monthly ?? 0), 0);
   return (
     <div className="pk-page">
       <PageActions>
@@ -282,72 +439,67 @@ export function CostsPage() {
       <PageHeader
         title="비용"
         tabs={[
+          { id: "migration", label: "이전 영향" },
           { id: "environments", label: "환경별" },
-          { id: "migrations", label: "이전 추산" },
-          { id: "details", label: "상세" },
+          { id: "basis", label: "계산 기준" },
         ]}
-        active="environments"
+        active="migration"
         onTab={scrollTo}
       />
-      <ScopeFilterRow>
-        <FilterSelect
-          label="환경"
-          value={envChoice}
-          onChange={setEnvChoice}
-          options={[
-            { value: "all", label: "전체" },
-            ...overview.environments.map((e) => ({
-              value: e.env_id,
-              label: e.name,
-            })),
-          ]}
-        />
-      </ScopeFilterRow>
+      <Section
+        id="migration"
+        title="이전 영향"
+        description="원본 워크로드를 대상에 다시 배치한 추산, USD"
+      >
+        {overview.migrations.length > 0 ? (
+          <>
+            <Segmented
+              label="이전 작업"
+              value={jobId}
+              options={overview.migrations.map((m) => ({
+                value: m.job_id,
+                label: `${name(m.source_env)} → ${name(m.target_env)}`,
+              }))}
+              onChange={setJobId}
+            />
+            {migration && (
+              <MigrationView
+                migration={migration}
+                name={name}
+                estimated={estimated}
+              />
+            )}
+          </>
+        ) : (
+          <p className="pk-empty">등록된 이전 작업 없음</p>
+        )}
+      </Section>
       <Section
         id="environments"
         title="환경별 월 비용"
-        description="지금 떠 있는 자원 × 공식 온디맨드 단가 (USD)"
+        description={`클라우드 합계 ${usd(cloudTotal)}`}
       >
-        <div className="pk-cards">
-          {envs.map((env) => (
-            <EnvironmentCard key={env.env_id} env={env} />
+        <div className="cost-envs">
+          {overview.environments.map((env) => (
+            <EnvironmentRow key={env.env_id} env={env} />
           ))}
         </div>
       </Section>
-      <Section
-        id="migrations"
-        title="이전 비용 추산"
-        description="원본 워크로드를 대상에 다시 배치했을 때 월 증감"
-        action={{ label: "상세 보기", onClick: () => scrollTo("details") }}
-      >
-        <div className="pk-cards">
-          {migrations.map((migration) => (
-            <MigrationCard
-              key={migration.job_id}
-              migration={migration}
-              name={name}
-            />
-          ))}
-        </div>
-      </Section>
-      <Section id="details" title="상세" description="항목별 수량·단가·근거">
-        {envs.map((env) => (
-          <EnvironmentDetail key={env.env_id} env={env} />
-        ))}
-        {migrations.map((migration) => (
-          <MigrationDetail
-            key={migration.job_id}
-            migration={migration}
-            name={name}
-          />
-        ))}
+      <Section id="basis" title="계산 기준">
         <ul className="cost-sources">
           {priceSources(overview).map((text) => (
-            <li key={text}>가격표: {text}</li>
+            <li key={text}>가격표 {text}</li>
           ))}
           <li>
-            약정 할인·크레딧·세금·데이터 전송·요청 단위 요금(LCU, NAT 처리 GB)은
-            넣지 않았어요.
+            떠 있는 자원 × 온디맨드 단가. 월 730시간, 약정 할인·크레딧·세금
+            제외.
+          </li>
+          <li>
+            데이터 전송: 지난 7일 CloudWatch 측정값을 월로 환산. AWS만, 가용
+            영역 간 전송 제외.
+          </li>
+          <li>
+            온프렘: 장비비·전기료 입력 또는 측정기 연결 전에는 AWS 동급 환산.
           </li>
         </ul>
       </Section>

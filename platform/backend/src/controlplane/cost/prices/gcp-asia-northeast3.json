@@ -3,7 +3,7 @@
   "region": "asia-northeast3",
   "currency": "USD",
   "source": "GCP Cloud Billing Catalog API (services.skus.list), On-Demand",
-  "fetched_at": "2026-11-06T01:31:55+00:00",
+  "fetched_at": "2026-11-06T01:48:18+00:00",
   "hours_per_month": 730,
   "labels": {
     "compute": "Compute Engine",
@@ -19,7 +19,8 @@
   },
   "notes": {
     "kafka_broker": "Managed Kafka 는 DCU 단위 과금이라 vCPU·메모리 → DCU 환산을 확인하기 전까지 단가 없음",
-    "nat_gateway": "Cloud NAT 는 IP 사용료만. 게이트웨이 VM 당 요금·처리 GB 제외"
+    "nat_gateway": "Cloud NAT 는 IP 사용료만. 게이트웨이 VM 당 요금·처리 GB 제외",
+    "transfer": "서울 리전에서 국내로 나가는 송신 SKU 를 확인하지 못해 데이터 전송은 단가 없음"
   },
   "compute": {
     "e2-standard-2": {

@@ -3,7 +3,7 @@
   "region": "ap-northeast-2",
   "currency": "USD",
   "source": "AWS Price List Query API (pricing:GetProducts), On-Demand, Linux, Shared tenancy",
-  "fetched_at": "2026-11-06T00:01:55+00:00",
+  "fetched_at": "2026-11-06T01:47:38+00:00",
   "hours_per_month": 730,
   "labels": {
     "compute": "EC2 (온디맨드)",
@@ -16,7 +16,13 @@
     "block": "EBS gp3",
     "database": "RDS gp3 스토리지",
     "kafka": "MSK 스토리지",
-    "object": "S3 Standard"
+    "object": "S3 Standard",
+    "public_ipv4": "공인 IPv4 주소",
+    "internet_egress": "인터넷 송신",
+    "inter_zone": "가용 영역 간 전송",
+    "nat_processing": "NAT Gateway 처리",
+    "lb_processing": "ALB 처리량(LCU)",
+    "block_volume": "EBS gp3 (노드·VM 디스크)"
   },
   "compute": {
     "t3.micro": {
@@ -195,6 +201,12 @@
     "kubernetes_control_plane": 0.1,
     "load_balancer": 0.0225,
     "nat_gateway": 0.059,
-    "load_balancer_capacity_unit": 0.008
+    "load_balancer_capacity_unit": 0.008,
+    "public_ipv4": 0.005
+  },
+  "transfer_gib": {
+    "internet_egress": 0.126,
+    "inter_zone": 0.01,
+    "nat_processing": 0.059
   }
 }
