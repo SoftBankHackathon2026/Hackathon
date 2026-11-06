@@ -92,7 +92,10 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 - 선택: 비용 설정 `{"environments": {"onprem": {"meter": {"name": "이름", "options": {...}}}}}`.
 - 실패: 등록되지 않은 이름, 생성 오류, `read()` 예외는 수집기를 멈추지 않고 "온프렘 측정기: 읽기 실패"로 남는다.
   `None` 을 돌려주면 설정값만 쓴다.
-- 예: 스마트 플러그 API, node-exporter RAPL(CPU 전력만이라 실제보다 낮음)을 Prometheus 에서 읽는 측정기.
+- 기본 제공: `cost-exporter`. 온프렘 노드마다 DaemonSet 이 전력을 구해 ConfigMap `oneport-cost/cost-reading-<노드>` 에 남기고,
+  측정기가 온프렘 읽기 계정으로 그 값을 모아 `power_watts` 로 쓴다. 노드가 VM 이면 CPU 사용률 기반 추정, 물리 서버에서 RAPL 을 읽을 수 있으면 측정.
+  배포 설정 `deploy/aws/cost.json` 이 이 측정기를 고른다. 자세한 것은 `infra/install/onprem-k8s/admin/cost-exporter/README.md`.
+- 다른 예: 스마트 플러그 API 를 읽는 측정기.
 - 테스트 예: `tests/test_costs.py` 의 `test_registered_meter_is_created_and_read_by_collector`.
 
 ## 수집과 권한
