@@ -10,22 +10,25 @@ from controlplane.domain.fleet import (
     ClusterFacts,
     EnvironmentConfig,
     InventoryItem,
-    PodFact,
+    NodeFact,
     Workload,
 )
 from controlplane.integrations.kube_inventory import (
     ClusterObjects,
     ConfigValue,
     IngressSpec,
+    KubeObject,
     ServiceSpec,
     WorkloadSpec,
     build_inventory,
     pods_by_workload,
 )
+from controlplane.integrations.kube_nodes import node_facts
 from controlplane.schemas.migrations import AppState
 
 ARGOPROJ = ("argoproj.io", "v1alpha1")
 EXTERNAL_SECRETS = ("external-secrets.io", "v1beta1")
+METRICS = ("metrics.k8s.io", "v1beta1")
 APP_HEALTH = {"Healthy", "Progressing", "Degraded", "Suspended", "Missing"}
 APP_SYNC = {"Synced", "OutOfSync"}
 REQUEST_TIMEOUT = (3.0, 10.0)
@@ -132,6 +135,7 @@ class ClusterReader:
     def __init__(self, env: EnvironmentConfig) -> None:
         self._env = env
         api = api_client(env)
+        self._api = api
         self._serialize = api.sanitize_for_serialization
         self._core = client.CoreV1Api(api)
         self._net = client.NetworkingV1Api(api)
@@ -214,13 +218,23 @@ class ClusterReader:
                 found[(namespace, name)] = values
         return found
 
-    def _pods(self) -> dict[str, list[PodFact]] | None:
-        listed = _optional(lambda: self._core.list_pod_for_all_namespaces().items)
-        if listed is None:
-            return None
-        return pods_by_workload([self._serialize(pod) for pod in listed])
+    def _listed(self, read: Callable[[], list[Any]]) -> list[KubeObject] | None:
+        listed = _optional(read)
+        return None if listed is None else [self._serialize(obj) for obj in listed]
 
-    def _inventory(self) -> list[InventoryItem] | None:
+    def _pods(self) -> list[KubeObject] | None:
+        return self._listed(lambda: self._core.list_pod_for_all_namespaces().items)
+
+    def _version(self) -> str | None:
+        version = _optional(lambda: client.VersionApi(self._api).get_code())
+        return version.git_version if version else None
+
+    def _nodes(self, pods: list[KubeObject] | None) -> list[NodeFact] | None:
+        nodes = self._listed(lambda: self._core.list_node().items)
+        metrics = _optional(lambda: self._custom.list_cluster_custom_object(*METRICS, "nodes"))
+        return node_facts(nodes, pods, None if metrics is None else metrics.get("items", []))
+
+    def _inventory(self, pods: list[KubeObject] | None) -> list[InventoryItem] | None:
         workloads = self._workload_specs()
         if workloads is None:
             return None
@@ -231,7 +245,7 @@ class ClusterReader:
             services=[ServiceSpec.from_k8s(self._serialize(s)) for s in services],
             ingresses=[IngressSpec.from_k8s(self._serialize(i)) for i in ingresses],
             configmaps=self._configmap_values(workloads),
-            pods=self._pods(),
+            pods=None if pods is None else pods_by_workload(pods),
         )
         hints = {c.id: c.endpoint_hints for c in self._env.components if c.endpoint_hints}
         return build_inventory(objects, hints)
@@ -252,6 +266,7 @@ class ClusterReader:
         quotas = self._core.list_namespaced_resource_quota(namespace).items
         roles = _optional(lambda: self._rbac.list_namespaced_role(namespace).items)
         admin, anonymous = self._argocd_flags()
+        pods = self._pods()
         return ClusterFacts(
             observed_at=observed,
             connected=True,
@@ -267,5 +282,7 @@ class ClusterReader:
             external_secrets=self._external_secrets(namespace),
             resource_quota_namespaces={namespace} if quotas else set(),
             apps=self._apps(),
-            inventory=self._inventory(),
+            inventory=self._inventory(pods),
+            version=self._version(),
+            nodes=self._nodes(pods),
         )

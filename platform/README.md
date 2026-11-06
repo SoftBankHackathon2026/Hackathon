@@ -84,6 +84,7 @@ npm run dev
 | 준비물 | 방법 |
 |---|---|
 | 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://172.30.1.10:6443` |
+| 노드 정보 | `hackathon-user`는 노드 목록을 못 읽어서 클러스터 정보의 노드별 할당 가능량·상태가 비어요. 노드 이름·사용량·요청량은 metrics 와 파드 목록으로 채워요. 채우려면 `hackathon-user`에 `nodes` list 를 더해요 |
 | 워커·Connect 상태 | gitops `apps/platform-status-proxy` (`SoftBankHackathon2026/gitops#19`). nginx 프록시가 `GET /worker/status`, `GET /connect/connectors/<job>-(source\|sink)/status`만 넘겨요. 워커 제어 API(`/pause`, `/target` 등)와 Kafka Connect REST는 열지 않아요. NodePort `30880`, NetworkPolicy는 LAN(노드 IP 제외)만 허용 |
 | 보고기 | 마이그레이션 담당 작업이에요. 보고기가 닿을 플랫폼 주소(내부 Ingress 등)를 정한 뒤 `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
 | AWS VPC 경로 | k3s 노드가 Tailscale `--accept-routes`로 `10.0.0.0/16`을 받아요 (설정 완료). LAN 우회 규칙 `tailscale-lan-bypass.service`가 노드 간 통신을 지켜요 |

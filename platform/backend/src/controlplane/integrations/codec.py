@@ -7,7 +7,9 @@ from controlplane.domain.fleet import (
     ContainerFact,
     EndpointFact,
     InventoryItem,
+    NodeFact,
     PodFact,
+    Resources,
     WorkerSample,
     Workload,
 )
@@ -144,6 +146,15 @@ def _item_from_json(payload: Row) -> InventoryItem:
     )
 
 
+def _resources(payload: Row | None) -> Resources | None:
+    return None if payload is None else Resources(**payload)
+
+
+def _node_from_json(payload: Row) -> NodeFact:
+    sized = {key: _resources(payload.get(key)) for key in ("allocatable", "requests", "usage")}
+    return NodeFact(**{**payload, **sized})
+
+
 def facts_to_json(facts: ClusterFacts) -> Row:
     payload = asdict(facts)
     payload["observed_at"] = facts.observed_at.isoformat() if facts.observed_at else None
@@ -176,4 +187,8 @@ def facts_from_json(payload: Row) -> ClusterFacts:
         inventory=None
         if payload.get("inventory") is None
         else [_item_from_json(item) for item in payload["inventory"]],
+        version=payload.get("version"),
+        nodes=None
+        if payload.get("nodes") is None
+        else [_node_from_json(node) for node in payload["nodes"]],
     )

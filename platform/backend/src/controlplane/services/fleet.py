@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from controlplane.domain.cluster import cluster_view
 from controlplane.domain.fleet import EnvironmentSnapshot
 from controlplane.domain.topology import environment_components
 from controlplane.integrations.base import FleetSource
@@ -89,6 +90,7 @@ def environment_view(snapshot: EnvironmentSnapshot) -> EnvironmentView:
         components=components,
         boundary=config.boundary,
         issues=environment_issues(snapshot, components),
+        cluster=cluster_view(cluster),
     )
 
 

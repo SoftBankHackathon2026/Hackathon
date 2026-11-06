@@ -76,6 +76,37 @@ class EnvironmentIssue(BaseModel):
     detail: str
 
 
+class ResourcesView(BaseModel):
+    cpu_millicores: int
+    memory_bytes: int
+
+
+class NodeView(BaseModel):
+    name: str
+    ready: bool | None = None
+    unschedulable: bool | None = None
+    roles: list[str] = Field(default_factory=list)
+    kubelet_version: str | None = None
+    os_image: str | None = None
+    arch: str | None = None
+    instance_type: str | None = None
+    zone: str | None = None
+    allocatable: ResourcesView | None = None
+    requests: ResourcesView | None = None
+    usage: ResourcesView | None = None
+    pods: int | None = None
+
+
+class ClusterView(BaseModel):
+    version: str | None = None
+    node_count: int | None = None
+    ready_nodes: int | None = None
+    allocatable: ResourcesView | None = None
+    requests: ResourcesView | None = None
+    usage: ResourcesView | None = None
+    nodes: list[NodeView] = Field(default_factory=list)
+
+
 class EnvironmentView(BaseModel):
     id: str
     name: str
@@ -90,6 +121,7 @@ class EnvironmentView(BaseModel):
     components: list[ComponentView] = Field(default_factory=list)
     boundary: list[str] = Field(default_factory=list)
     issues: list[EnvironmentIssue] = Field(default_factory=list)
+    cluster: ClusterView | None = None
 
 
 class WriteCounts(BaseModel):

@@ -206,6 +206,29 @@ class InventoryItem:
 
 
 @dataclass(frozen=True)
+class Resources:
+    cpu_millicores: int
+    memory_bytes: int
+
+
+@dataclass(frozen=True)
+class NodeFact:
+    name: str
+    ready: bool | None = None
+    unschedulable: bool | None = None
+    roles: list[str] = field(default_factory=list)
+    kubelet_version: str | None = None
+    os_image: str | None = None
+    arch: str | None = None
+    instance_type: str | None = None
+    zone: str | None = None
+    allocatable: Resources | None = None
+    requests: Resources | None = None
+    usage: Resources | None = None
+    pods: int | None = None
+
+
+@dataclass(frozen=True)
 class ClusterFacts:
     observed_at: datetime | None
     connected: bool
@@ -222,6 +245,8 @@ class ClusterFacts:
     workload_ready: dict[str, tuple[int, int]] = field(default_factory=dict)
     inventory: list[InventoryItem] | None = None
     read_status: int | None = None
+    version: str | None = None
+    nodes: list[NodeFact] | None = None
 
 
 @dataclass(frozen=True)
