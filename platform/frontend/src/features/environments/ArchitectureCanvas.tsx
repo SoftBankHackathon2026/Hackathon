@@ -64,10 +64,6 @@ export function ArchitectureCanvas({
   const [mode, setMode] = useState<ViewMode>("iso");
   const [showPods, setShowPods] = useState(false);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<TileRef | null>(select ?? null);
-  const [node, setNode] = useState<NodeRef | null>(
-    nodes?.envId ? { envId: nodes.envId, node: nodes.node ?? null } : null,
-  );
   const [jobId, setJobId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Severity[]>([]);
   const [secGroup, setSecGroup] = useState<OverlayGroup | null>(null);
@@ -88,63 +84,36 @@ export function ArchitectureCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 주소가 바뀌면(뒤로 가기, 링크, 주소 입력) 패널과 보기도 따라간다.
-  const routeKey = select
-    ? `c:${select.envId}/${select.id}`
-    : nodes
-      ? `n:${nodes.envId ?? ""}/${nodes.node ?? ""}`
-      : "";
+  // 열린 패널은 주소(#environments/<환경>/<구성 요소>, #environments/nodes/<환경>/<노드>)가 정한다.
+  // 상태를 따로 들고 주소와 서로 맞추면 반영이 한 박자 어긋날 때 둘이 서로를 되돌리며 끝없이 바뀐다.
+  // 그래서 패널은 주소에서 읽기만 하고, 고르거나 닫을 때는 주소만 바꾼다.
+  const selected: TileRef | null = select ?? null;
+  const node: NodeRef | null = nodes?.envId
+    ? { envId: nodes.envId, node: nodes.node ?? null }
+    : null;
+  // 보기(그룹 기준)는 화면 상태. 노드 주소로 오면 노드 보기, 아무것도 고르지 않은 주소로 오면 노드 보기를 벗어난다.
+  const nodeRoute = nodes !== undefined;
+  const plainRoute = !select && !nodes;
   useEffect(() => {
-    if (select) {
-      setNode(null);
-      setSelected(select);
-    } else if (nodes) {
-      setGrouping("node");
-      setSelected(null);
-      setNode(
-        nodes.envId ? { envId: nodes.envId, node: nodes.node ?? null } : null,
-      );
-    } else {
-      setSelected(null);
-      setNode(null);
-      setGrouping((g) => (g === "node" ? "boundary" : g));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeKey]);
-
-  // 열린 패널과 보기를 주소에 남긴다(새 기록은 만들지 않음). 링크로 공유할 수 있다.
-  useEffect(() => {
-    replaceHash(
-      selected
-        ? resourceHash(selected.envId, selected.id)
-        : node
-          ? nodesHash(node.envId, node.node ?? undefined)
-          : grouping === "node"
-            ? nodesHash()
-            : "#environments",
-    );
-  }, [selected?.envId, selected?.id, node?.envId, node?.node, grouping]);
+    if (nodeRoute) setGrouping("node");
+    else if (plainRoute) setGrouping((g) => (g === "node" ? "boundary" : g));
+  }, [nodeRoute, plainRoute]);
+  const baseHash = grouping === "node" ? nodesHash() : "#environments";
+  const clearPanels = () => replaceHash(baseHash);
+  // 패널은 하나만: 구성 요소를 고르면 노드 패널이 닫히고, 노드를 고르면 구성 요소 패널이 닫힌다(주소가 하나라서).
+  const selectComponent = (ref: TileRef | null) =>
+    replaceHash(ref ? resourceHash(ref.envId, ref.id) : baseHash);
+  const selectNode = (ref: NodeRef | null) =>
+    replaceHash(ref ? nodesHash(ref.envId, ref.node ?? undefined) : baseHash);
 
   useEffect(() => {
     if (!selected && !node) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelected(null);
-        setNode(null);
-      }
+      if (event.key === "Escape") clearPanels();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selected, node]);
-  // 패널은 하나만: 구성 요소를 고르면 노드 패널을 닫고, 노드를 고르면 구성 요소 패널을 닫는다.
-  const selectComponent = (ref: TileRef | null) => {
-    setNode(null);
-    setSelected(ref);
-  };
-  const selectNode = (ref: NodeRef | null) => {
-    setSelected(null);
-    setNode(ref);
-  };
+  });
   const nodeEnv = node
     ? environments.find((e) => e.id === node.envId)
     : undefined;
@@ -231,7 +200,9 @@ export function ArchitectureCanvas({
               ]}
               onChange={(next) => {
                 setGrouping(next);
-                setNode(null);
+                // 노드 패널은 노드 보기에서만 연다. 구성 요소 패널은 보기를 바꿔도 그대로 둔다.
+                if (!selected)
+                  replaceHash(next === "node" ? nodesHash() : "#environments");
               }}
             />
           </span>
@@ -273,10 +244,7 @@ export function ArchitectureCanvas({
             selectedNode={node}
             onSelectComponent={selectComponent}
             onSelectNode={selectNode}
-            onClear={() => {
-              setSelected(null);
-              setNode(null);
-            }}
+            onClear={clearPanels}
             height={height}
           />
           {nodeEnv && node && (
@@ -289,14 +257,14 @@ export function ArchitectureCanvas({
               onSelectComponent={(id) =>
                 selectComponent({ envId: nodeEnv.id, id })
               }
-              onClose={() => setNode(null)}
+              onClose={clearPanels}
             />
           )}
           {selectedEnv && selectedComponent && (
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
+              onClose={clearPanels}
               onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
@@ -311,14 +279,14 @@ export function ArchitectureCanvas({
           <ResourceTree
             environments={environments}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectComponent}
           />
           {selectedEnv && selectedComponent && (
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
-              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
+              onClose={clearPanels}
+              onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
         </div>
@@ -332,7 +300,7 @@ export function ArchitectureCanvas({
             overlay={overlay}
             query={query}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectComponent}
             markers={markers}
             path={path}
             height={height}
@@ -365,8 +333,8 @@ export function ArchitectureCanvas({
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
-              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
+              onClose={clearPanels}
+              onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
         </div>
