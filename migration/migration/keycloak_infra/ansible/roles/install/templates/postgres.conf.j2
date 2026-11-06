@@ -1,0 +1,11 @@
+data_directory = '/var/lib/oneport-keycloak-postgres'
+hba_file = '/etc/postgresql/18/oneport-keycloak/pg_hba.conf'
+listen_addresses = '127.0.0.1'
+port = {{ kc.install.db_port }}
+unix_socket_directories = '/run/oneport-keycloak-postgres'
+unix_socket_permissions = 0700
+password_encryption = 'scram-sha-256'
+max_connections = 100
+shared_buffers = '128MB'
+logging_collector = off
+log_statement = 'none'

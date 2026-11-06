@@ -1,0 +1,25 @@
+ui = true
+disable_mlock = true
+api_addr = {{ ob.endpoint.url | to_json }}
+cluster_addr = "https://127.0.0.1:8201"
+listener "tcp" {
+  address = {{ ((('[' ~ ob.target.bind_address ~ ']') if ':' in ob.target.bind_address else ob.target.bind_address) ~ ':' ~ (ob.target.port | string)) | to_json }}
+  cluster_address = "127.0.0.1:8201"
+  tls_cert_file = "/etc/openbao/server.crt"
+  tls_key_file = "/etc/openbao/server.key"
+  tls_min_version = "tls12"
+}
+storage "raft" {
+  path = "/var/lib/openbao"
+  node_id = {{ ob.target.installation_id | to_json }}
+}
+seal "static" {
+  current_key_id = {{ ob.target.installation_id | to_json }}
+  current_key = "file:///etc/openbao/keys/static.key"
+}
+audit "file" {{ ('oi-' ~ ob.target.installation_id) | to_json }} {
+  description = "Managed OpenBao infrastructure audit"
+  options {
+    file_path = "/var/log/openbao/audit.json"
+  }
+}

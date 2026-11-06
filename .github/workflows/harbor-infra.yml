@@ -21,6 +21,8 @@ jobs:
           python-version: '3.12'
       - name: Install controller and validation dependencies
         run: python -m pip install '.[harbor-infra,dev]' build wheel 'setuptools>=69' ruff==0.17.4 jsonschema
+      - name: Install collections for merged Keycloak regression tests
+        run: ansible-galaxy collection install -r migration/keycloak_infra/ansible/requirements.yml
       - name: Static and format checks
         run: |
           ruff check --config harbor-infra.ruff.toml migration/harbor_infra tests/harbor_infra
