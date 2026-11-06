@@ -74,9 +74,27 @@
   .unit { color: var(--muted); font-size: .45em; font-weight: 600; }
   .chart-head { display: flex; justify-content: space-between; }
   .chart { display: block; width: 100%; height: 11vh; }
-  /* 환경 선택자보다 우선순위가 낮아야 막대가 그 시점 환경 색이 된다. */
-  rect { --environment: #9aa7b4; fill: var(--environment); }
-  .chart line {
+  /* 환경 선택자보다 우선순위가 낮아야 구간이 그 시점 환경 색이 된다. */
+  g { --environment: #9aa7b4; }
+  .chart-area { fill: var(--environment); fill-opacity: .18; }
+  .chart-line {
+    fill: none; stroke: var(--environment); stroke-width: 2;
+    stroke-linejoin: round; vector-effect: non-scaling-stroke;
+  }
+  .version-mark {
+    stroke-width: 2; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke;
+  }
+  .version-row { display: flex; align-items: center; gap: .6em; font-size: 1.2vw; }
+  .version { display: inline-flex; flex-wrap: wrap; gap: .4em; }
+  .version-chip {
+    padding: 0 .4em; border-radius: 4px; color: #0b0f14; font-weight: 800;
+  }
+  .version.changed { outline: .15em solid var(--text); border-radius: 6px; }
+  .version-notice {
+    padding: .15em .5em; border: 1px solid var(--text); border-radius: 6px;
+    font-size: 1.2vw; font-weight: 800; text-align: center;
+  }
+  .chart-baseline {
     stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke;
   }
   .qr {
@@ -90,7 +108,7 @@
   }
   .panel.unset .qr, .panel.unset .local-note { visibility: hidden; }
   .list {
-    flex: 1; min-height: 0; overflow: hidden; display: none;
+    flex: 1; min-height: 0; overflow: hidden;
     border: 1px solid var(--line); border-radius: 8px; padding: .4vh .6vw;
   }
   .list table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -103,8 +121,6 @@
     white-space: nowrap;
   }
   .list th:nth-child(1), .list th:nth-child(4) { width: 24%; }
-  body.list-view .list { display: block; }
-  body.list-view .frame-part { display: none; }
   .frame-head {
     display: flex; justify-content: space-between; color: var(--muted);
     font-size: .9vw;
@@ -115,6 +131,7 @@
     background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
   }
   /* 클릭으로 키보드 포커스를 뺏기면 단축키가 먹지 않는다. */
+  body:not(.frame-view) .frame-part, body.frame-view .list { display: none; }
   .frame-box iframe {
     position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0;
     pointer-events: none;
@@ -160,7 +177,7 @@
   <div id="top"><span id="top-ko"></span><span id="top-ja" lang="ja"></span></div>
   <div id="grid"></div>
   <div id="foot"><span id="paused" role="status" hidden>일시정지</span>
-    <span>P 일시정지 · F 전체화면 · W 화면/목록</span></div>
+    <span>P 일시정지 · F 전체화면 · W 실제 화면 보기</span></div>
   <template id="panel-template">
     <section class="panel">
       <div class="head">
@@ -176,11 +193,15 @@
             aria-label="이 환경의 실제 서비스 주소 QR 코드"></svg>
         <div class="local-note" data-part="local-note">이 노트북에서만 접속<br>
           <span lang="ja">このPCからのみ接続</span></div>
+        <div class="local-note" data-part="no-public-url">공개 주소 미설정 ·
+          <span lang="ja">公開URL未設定</span></div>
       </div>
       <div class="meta">응답 환경 <b data-part="responder">—</b>
         · 리전 <b data-part="region">—</b>
-        · 버전 <b data-part="version">—</b>
         · DB <b data-part="database">—</b></div>
+      <div class="version-row"><span class="label">버전</span>
+        <span class="version" data-part="version">—</span></div>
+      <div class="version-notice" role="status" data-part="version-notice" hidden></div>
       <div class="banner" role="status" data-part="banner" hidden>⚠ 전환 중 · 쓰기 일시 정지</div>
       <div class="counters">
         <div><div class="label">총 행 수</div>
@@ -196,9 +217,9 @@
         <div class="chart-head"><span class="label">최근 60초 유입</span>
           <span class="label" data-part="peak"></span></div>
         <svg class="chart" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
-            aria-label="최근 60초 초당 유입량. 막대 색은 그 시점의 환경, 끊긴 구간은 빈칸">
-          <line x1="0" y1="120" x2="600" y2="120"/>
-          <g data-part="bars"></g>
+            aria-label="최근 60초 초당 유입량. 색은 그 시점의 환경, 끊긴 구간은 빈칸, 세로선은 버전 변경">
+          <line class="chart-baseline" x1="0" y1="120" x2="600" y2="120"/>
+          <g data-part="segments"></g><g data-part="marks"></g>
         </svg>
       </div>
       <div class="list"><table><thead><tr><th>요청 ID</th><th>run_id</th>

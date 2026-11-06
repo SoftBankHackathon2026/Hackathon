@@ -1,16 +1,15 @@
 'use strict';
-/* global createIngestTracker, classifyPoll, noResponseDetail, qrcode */
+/* global classifyPoll, createIngestTracker, createVersionTracker */
+/* global noResponseDetail, qrcode, splitChartSegments, versionColor */
 
 const RENDER_MILLIS = 250;
 const RATE_WINDOW_SECONDS = 10;
 const CHART_SECONDS = 60;
 // Samples arrive up to two seconds late; keep them off the chart's edge.
 const CHART_LAG_SECONDS = 2;
+const CHART_WIDTH = 600;
 const CHART_HEIGHT = 120;
-const BAR_STEP = 10;
-const BAR_WIDTH = 8;
-// An observed zero keeps a sliver, so it never reads as an unobserved gap.
-const MIN_BAR_HEIGHT = 3;
+const CHART_TOP_MARGIN = 4;
 const FULL_COMMIT_LENGTH = 40;
 const SHORT_COMMIT_LENGTH = 7;
 // The page inside the frame is laid out at this width, then scaled to fit.
@@ -56,27 +55,61 @@ function createRow(row) {
   return tableRow;
 }
 
+const shortVersion = (version) => (
+  version.length === FULL_COMMIT_LENGTH ?
+  version.slice(0, SHORT_COMMIT_LENGTH) : version);
+
+function createVersionChip({version, percent}) {
+  const chip = document.createElement('span');
+  chip.className = 'version-chip';
+  chip.style.background = versionColor(version);
+  chip.textContent = percent === 100 ? shortVersion(version) :
+      `${shortVersion(version)} ${percent}%`;
+  return chip;
+}
+
+function createChartPath(className, path) {
+  const shape = document.createElementNS(SVG_NAMESPACE, 'path');
+  shape.setAttribute('class', className);
+  shape.setAttribute('d', path);
+  return shape;
+}
+
+/** Draws one environment's run as a line over a filled area. */
+function createChartSegment({environment, firstIndex, rates}, largest) {
+  const step = CHART_WIDTH / (CHART_SECONDS - 1);
+  const xAt = (offset) => (firstIndex + offset) * step;
+  const yAt = (rate) => CHART_HEIGHT -
+      rate / largest * (CHART_HEIGHT - CHART_TOP_MARGIN);
+  let line = rates.map((rate, offset) =>
+    `${offset === 0 ? 'M' : 'L'}${xAt(offset)} ${yAt(rate)}`).join('');
+  // A lone observed second still needs width to be visible.
+  if (rates.length === 1) line += `h${step}`;
+  const endX = xAt(Math.max(1, rates.length - 1));
+  const area = `${line}L${endX} ${CHART_HEIGHT}L${xAt(0)} ${CHART_HEIGHT}Z`;
+  const group = document.createElementNS(SVG_NAMESPACE, 'g');
+  group.setAttribute('data-environment', environment);
+  group.append(createChartPath('chart-area', area),
+      createChartPath('chart-line', line));
+  return group;
+}
+
 function createPanel(environment, pollMillis, timeoutMillis) {
   const root = document.getElementById('panel-template').content
       .firstElementChild.cloneNode(true);
   const part = (name) => root.querySelector(`[data-part="${name}"]`);
   const tracker = createIngestTracker();
+  const versions = createVersionTracker();
   const lastAnswerMs = {app: Date.now(), database: Date.now()};
   let state = null;
   let shownEnvironment = null;
   let serverClockOffsetMs = -Infinity;
   let detail = '';
+  let writesPaused = false;
+  let shownShares = '';
 
   part('name').textContent = environment.name;
   part('name-ja').textContent = environment.nameJa;
-  const bars = Array.from({length: CHART_SECONDS}, (unused, index) => {
-    const bar = document.createElementNS(SVG_NAMESPACE, 'rect');
-    bar.setAttribute('x', index * BAR_STEP);
-    bar.setAttribute('width', BAR_WIDTH);
-    part('bars').append(bar);
-    return bar;
-  });
-
   function loadFrame() {
     const frame = part('frame');
     if (frame.src) return;
@@ -97,9 +130,9 @@ function createPanel(environment, pollMillis, timeoutMillis) {
     root.dataset.environment = live.environment;
     part('responder').textContent = live.environment;
     part('region').textContent = live.region;
-    part('version').textContent =
-        live.version.length === FULL_COMMIT_LENGTH ?
-        live.version.slice(0, SHORT_COMMIT_LENGTH) : live.version;
+    if (live.environment !== shownEnvironment) versions.reset();
+    versions.record(live.version, Date.now());
+    writesPaused = live.writes_paused;
     part('banner').hidden = !live.writes_paused;
     shownEnvironment = live.environment;
   }
@@ -173,21 +206,54 @@ function createPanel(environment, pollMillis, timeoutMillis) {
     setTimeout(poll, Math.max(0, pollMillis - (Date.now() - startedMs)));
   }
 
-  function renderChart(endSecond) {
+  /** Draws a vertical line at each version change still on the chart. */
+  function renderVersionMarks(endSecond, offsetMs) {
+    const step = CHART_WIDTH / (CHART_SECONDS - 1);
+    const lines = [];
+    for (const {version, atMs} of versions.marks()) {
+      const second = Math.floor((atMs + offsetMs) / 1000);
+      const index = second - (endSecond - CHART_SECONDS + 1);
+      if (index < 0 || index >= CHART_SECONDS) continue;
+      const line = document.createElementNS(SVG_NAMESPACE, 'line');
+      line.setAttribute('class', 'version-mark');
+      line.setAttribute('x1', index * step);
+      line.setAttribute('x2', index * step);
+      line.setAttribute('y1', 0);
+      line.setAttribute('y2', CHART_HEIGHT);
+      line.setAttribute('stroke', versionColor(version));
+      lines.push(line);
+    }
+    part('marks').replaceChildren(...lines);
+  }
+
+  function renderChart(endSecond, offsetMs) {
     const shown = tracker.bars(endSecond, CHART_SECONDS);
     const rates = shown.filter(Boolean).map((bar) => bar.rate);
-    // The axis fits every bar shown; its floor keeps a trickle from filling it.
+    // The axis fits all it shows; its floor keeps a trickle from filling it.
     const largest = Math.max(1, ...rates);
-    shown.forEach((bar, index) => {
-      const height = bar ? Math.max(MIN_BAR_HEIGHT,
-          bar.rate / largest * (CHART_HEIGHT - MIN_BAR_HEIGHT)) : 0;
-      bars[index].setAttribute('height', height);
-      bars[index].setAttribute('y', CHART_HEIGHT - height);
-      if (bar) bars[index].setAttribute('data-environment', bar.environment);
-    });
+    part('segments').replaceChildren(
+        ...splitChartSegments(shown).map((segment) =>
+          createChartSegment(segment, largest)));
+    renderVersionMarks(endSecond, offsetMs);
     const peak = tracker.peakRate(endSecond, CHART_SECONDS);
     part('peak').textContent = peak === null ? '' :
         `최대 ${peak.toFixed(peak < 10 ? 1 : 0)}/초`;
+  }
+
+  function renderVersion() {
+    const shares = versions.shares();
+    const key = JSON.stringify(shares);
+    if (shares.length > 0 && key !== shownShares) {
+      shownShares = key;
+      part('version').replaceChildren(...shares.map(createVersionChip));
+    }
+    const change = versions.recentChange(Date.now());
+    part('version').classList.toggle('changed', change !== null);
+    part('version-notice').hidden = change === null;
+    if (change) {
+      part('version-notice').textContent =
+          `버전 변경 ${shortVersion(change.from)} → ${shortVersion(change.to)}`;
+    }
   }
 
   function renderStatus() {
@@ -210,26 +276,35 @@ function createPanel(environment, pollMillis, timeoutMillis) {
   }
 
   function render() {
-    const nowMs = Date.now() +
-        (serverClockOffsetMs === -Infinity ? 0 : serverClockOffsetMs);
+    const offsetMs =
+        serverClockOffsetMs === -Infinity ? 0 : serverClockOffsetMs;
+    const nowMs = Date.now() + offsetMs;
     const nowSecond = Math.floor(nowMs / 1000);
-    // Nothing is being measured during an outage, so no rate is claimed.
-    const rate = state === 'live' ?
-        tracker.averageRate(nowSecond, RATE_WINDOW_SECONDS) : null;
-    part('rate').textContent = rate === null ? '—' : rate.toFixed(1);
+    if (state !== 'no-response' && writesPaused) {
+      // The banner says writes stopped; a fading average would contradict it.
+      part('rate').textContent = '0.0';
+    } else {
+      // Nothing is being measured during an outage, so no rate is claimed.
+      const rate = state === 'live' ?
+          tracker.averageRate(nowSecond, RATE_WINDOW_SECONDS) : null;
+      part('rate').textContent = rate === null ? '—' : rate.toFixed(1);
+    }
     const lastWrite = tracker.lastWriteMs();
     part('last-write').textContent = lastWrite === null ? '—' :
         String(Math.max(0, Math.floor((nowMs - lastWrite) / 1000)));
-    renderChart(nowSecond - CHART_LAG_SECONDS);
+    renderChart(nowSecond - CHART_LAG_SECONDS, offsetMs);
+    renderVersion();
     renderStatus();
   }
 
   if (environment.publicUrl) {
     drawQrCode(part('qr'), `${environment.publicUrl}/`);
-    part('local-note').hidden = true;
   } else {
     part('qr').setAttribute('hidden', '');
   }
+  const hasQr = Boolean(environment.publicUrl);
+  part('local-note').hidden = hasQr || !environment.localOnly;
+  part('no-public-url').hidden = hasQr || environment.localOnly;
   if (environment.pageUrl) {
     part('open').href = `${environment.pageUrl}/`;
     new ResizeObserver(fitFrame).observe(part('frame-box'));
@@ -250,7 +325,7 @@ document.addEventListener('keydown', (event) => {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   // event.code ignores the input language: a Korean IME turns P into ㅔ.
   if (event.code === 'KeyP') setPaused(!paused);
-  if (event.code === 'KeyW') document.body.classList.toggle('list-view');
+  if (event.code === 'KeyW') document.body.classList.toggle('frame-view');
   if (event.code === 'KeyF') {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
