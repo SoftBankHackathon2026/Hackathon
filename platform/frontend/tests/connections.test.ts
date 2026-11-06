@@ -9,6 +9,7 @@ import {
 import {
   canApproveDevice,
   canRegister,
+  codeValid,
   connectionStatus,
   emptyTarget,
   remainingSeconds,
@@ -205,6 +206,17 @@ test("revocation distinguishes server block from unconfirmed remote cleanup", as
     local: false,
   });
   assert.notEqual(connectionStatus(gateway.list()[0]).tone, "ok");
+  assert.equal(
+    connectionStatus(gateway.list()[0]).label,
+    "권한 철회됨 · 정리 확인 중",
+  );
+  assert.equal(
+    connectionStatus({
+      ...gateway.list()[0],
+      cleanup: { server: true, gateway: true, resources: false, local: true },
+    }).label,
+    "연결 해제됨",
+  );
 });
 test("AWS and GCP are inferred from selected collected records and not freely relabeled", async () => {
   for (const source of ["aws-seoul", "gcp-seoul"]) {
@@ -284,4 +296,73 @@ test("request deep links contain public ids and tolerate malformed encoding", ()
     view: "prepare",
     requestId: "invalid-request",
   });
+});
+
+test("connection labels distinguish cancelled, expired and actual collection work", async () => {
+  const { gateway } = await request();
+  const initial = gateway.list()[0];
+  assert.equal(connectionStatus(initial).label, "명령 실행 대기");
+  assert.equal(
+    connectionStatus({ ...initial, registration: "CANCELLED" }).label,
+    "연결 요청 취소됨",
+  );
+  assert.equal(
+    connectionStatus({ ...initial, registration: "EXPIRED" }).label,
+    "명령 기한 종료",
+  );
+  const connected = {
+    ...initial,
+    registration: "CONSUMED" as const,
+    device: "APPROVED" as const,
+    tunnel: "READY" as const,
+  };
+  assert.equal(connectionStatus(connected).label, "수집 대상 선택 대기");
+  assert.equal(
+    connectionStatus({ ...connected, collectionPending: true }).label,
+    "환경정보 수집 중",
+  );
+});
+
+test("confirmation input accepts the server RFC4648 Base32 alphabet", () => {
+  assert.equal(codeValid("IOAB2347"), true);
+  assert.equal(codeValid("ioab-2347"), true);
+  for (const code of ["ABCD0189", "ABCDEFG8", "ABCDEFG9", "ABCDEFG"]) {
+    assert.equal(codeValid(code), false);
+  }
+});
+
+test("enrollment command accepts the published HTTPS bootstrap filename", () => {
+  const command = enrollmentCommand(
+    "https://control.test/releases/live-e2e-1/bootstrap.sh",
+    "a".repeat(22),
+    new Uint8Array(32),
+  );
+  assert.match(
+    command,
+    /https:\/\/control\.test\/releases\/live-e2e-1\/bootstrap\.sh/,
+  );
+  assert.ok(command.length <= 256);
+  assert.throws(() =>
+    enrollmentCommand(
+      "https://control.test/bootstrap.sh;id",
+      "a".repeat(22),
+      new Uint8Array(32),
+    ),
+  );
+});
+
+test("enrollment command rejects raw and encoded dot path segments", () => {
+  for (const path of [
+    "/v1/../bootstrap.sh",
+    "/v1/./bootstrap.sh",
+    "/v1/%2e%2e/bootstrap.sh",
+  ]) {
+    assert.throws(() =>
+      enrollmentCommand(
+        "https://control.test" + path,
+        "a".repeat(22),
+        new Uint8Array(32),
+      ),
+    );
+  }
 });

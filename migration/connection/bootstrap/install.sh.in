@@ -42,10 +42,9 @@ case "$(uname -m)" in
   aarch64) _migration_arch=linux-arm64; _migration_hash=$_migration_arm64 ;;
   *) _migration_fail '지원하지 않는 프로세서입니다.' ;;
 esac
-for _migration_command in curl sha384sum mktemp systemctl python3 kubectl; do
+for _migration_command in curl sha384sum mktemp python3 kubectl; do
   command -v "$_migration_command" >/dev/null 2>&1 || _migration_fail '필수 단말 도구가 준비되지 않았습니다.'
 done
-[[ -d /run/systemd/system ]] || _migration_fail 'systemd 실행 환경이 필요합니다.'
 [[ -x /usr/local/libexec/migration-net-helper ]] || _migration_fail '관리자가 네트워크 보조 프로그램과 정책을 먼저 설치해야 합니다.'
 [[ -n "${HOME-}" && -d "$HOME" ]] || _migration_fail '사용자 상태 디렉터리를 확인할 수 없습니다.'
 _migration_state="$HOME/.local/state/migration-connector"

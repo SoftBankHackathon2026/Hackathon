@@ -45,6 +45,8 @@ OpenSSL·Redis·배포 설정뿐 아니라 브로커의 **최근 60초 준비 �
 | POST `/{id}/reconnect` | 빈 객체 | 새 연결 요청 |
 | POST `/{id}/revoke` | 빈 객체 | 서버 권한 철회, 별도 정리 상태 |
 
+Snapshot의 `collectionPending`은 유효한 수집 작업이 있고 승인·터널 READY 상태일 때만 true입니다. 요청 접수와 완료를 구분하며 만료·키 세대 변경·철회·수집 완료 시 false로 표시합니다. 작업 서명·내부 payload는 브라우저 응답에 포함하지 않습니다.
+
 `target`은 organization/project/name/kind/role/region입니다. 종류는 kubernetes만 허용하며 조직·리전·수집 대상은 서버 자료와 일치해야 합니다. 현재 플랫폼에는 별도 프로젝트 권한 엔티티가 없으므로 project는 **조직 권한 아래의 분류 이름**입니다. 독립 프로젝트 접근권한을 검증했다고 표시하지 않습니다.
 
 환경등록은 고객 자원 생성·설치·데이터 이관 권한을 부여하지 않습니다. 기존 환경 조회 API에 연결된 환경을 `executable:false`로 추가하며, Provider 실행 등록과 분리합니다. 터널이 끊기거나 단말이 폐기되어도 등록 기록을 삭제하지 않습니다.

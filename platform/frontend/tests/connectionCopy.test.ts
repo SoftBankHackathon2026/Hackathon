@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   copyEnrollmentCommand,
   CopyFailure,
+  COPY_TIMEOUT_MS,
 } from "../src/features/prepare/copyEnrollmentCommand.ts";
 import { emptyTarget } from "../src/features/prepare/model.ts";
 import { createPreviewGateway } from "../src/features/prepare/previewGateway.ts";
@@ -159,4 +160,137 @@ test("live copy uses release URL and keeps seed out of the request snapshot", as
   assert.ok(seed);
   assert.ok(!JSON.stringify(result).includes(seed));
   assert.ok(!JSON.stringify(gateway.list()).includes(seed));
+});
+
+test("preparation failure is not mislabeled as clipboard permission denial", async (t) => {
+  const gateway = createPreviewGateway();
+  gateway.mode = "live";
+  const original = gateway.create;
+  gateway.create = async (...args) => ({
+    ...(await original(...args)),
+    deployment: {
+      bootstrapUrl: "http://invalid.example/i",
+      releaseVersion: "v1",
+    },
+  });
+  clipboard(t, async (items) => {
+    await items[0].getType("text/plain");
+  });
+  await assert.rejects(
+    () => copyEnrollmentCommand(gateway, target),
+    (error) => {
+      assert.ok(error instanceof CopyFailure);
+      assert.match(error.message, /등록 명령을 준비하지 못/);
+      assert.doesNotMatch(error.message, /클립보드 권한/);
+      return true;
+    },
+  );
+  assert.equal(gateway.list().length, 0);
+});
+
+test("a clipboard operation that never completes times out and cancels issuance", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const gateway = createPreviewGateway();
+  let prepared!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    prepared = resolve;
+  });
+  let finishClipboard!: () => void;
+  clipboard(t, async (items) => {
+    await items[0].getType("text/plain");
+    prepared();
+    await new Promise<void>((resolve) => {
+      finishClipboard = resolve;
+    });
+  });
+  const result = copyEnrollmentCommand(gateway, target);
+  const rejected = assert.rejects(result, /기한 안에 확인하지 못/);
+  await ready;
+  t.mock.timers.tick(COPY_TIMEOUT_MS);
+  await rejected;
+  assert.equal(gateway.list().length, 0);
+  finishClipboard();
+  await Promise.resolve();
+  assert.equal(gateway.list().length, 0);
+});
+
+test("late creation after timeout is cancelled without resolving a clipboard value", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const gateway = createPreviewGateway();
+  const original = gateway.create;
+  const originalCancel = gateway.cancel;
+  let creating!: () => void;
+  let release!: () => void;
+  let cancelled!: () => void;
+  const started = new Promise<void>((resolve) => {
+    creating = resolve;
+  });
+  const late = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const cleanup = new Promise<void>((resolve) => {
+    cancelled = resolve;
+  });
+  gateway.create = async (...args) => {
+    const result = await original(...args);
+    creating();
+    await late;
+    return result;
+  };
+  gateway.cancel = async (id) => {
+    await originalCancel(id);
+    cancelled();
+  };
+  let clipboardResolved = false;
+  clipboard(t, async (items) => {
+    await items[0].getType("text/plain");
+    clipboardResolved = true;
+  });
+  const rejected = assert.rejects(
+    copyEnrollmentCommand(gateway, target),
+    /기한 안에 확인하지 못/,
+  );
+  await started;
+  t.mock.timers.tick(COPY_TIMEOUT_MS);
+  await rejected;
+  release();
+  await cleanup;
+  assert.equal(gateway.list().length, 0);
+  assert.equal(clipboardResolved, false);
+});
+
+test("a cancellation that never confirms exposes public request state within a bound", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const gateway = createPreviewGateway();
+  let prepared!: () => void;
+  let cancelling!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    prepared = resolve;
+  });
+  const cancellationStarted = new Promise<void>((resolve) => {
+    cancelling = resolve;
+  });
+  gateway.cancel = async () => {
+    cancelling();
+    await new Promise<void>(() => {});
+  };
+  clipboard(t, async (items) => {
+    await items[0].getType("text/plain");
+    prepared();
+    await new Promise<void>(() => {});
+  });
+  const rejected = assert.rejects(
+    copyEnrollmentCommand(gateway, target),
+    (error) => {
+      assert.ok(error instanceof CopyFailure);
+      assert.equal(error.request?.id, gateway.list()[0].id);
+      assert.match(error.message, /취소도 확인하지 못/);
+      return true;
+    },
+  );
+  await ready;
+  t.mock.timers.tick(COPY_TIMEOUT_MS);
+  await cancellationStarted;
+  t.mock.timers.tick(5_000);
+  await rejected;
 });

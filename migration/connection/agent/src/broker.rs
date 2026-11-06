@@ -138,6 +138,7 @@ impl Broker {
             self.auth_failure(source);
             return Err("device authorization rejected".into());
         }
+        eprintln!("TUNNEL_TLS_VERIFIED protocol=TLSv1.3 group=X25519MLKEM768 peer_auth=MLDSA65 approved_device=true");
         let epoch = auth["epoch"].as_u64().ok_or("epoch missing")? + 1;
         if epoch == 1 && auth["wireguard_public_key"] != bind.client_wireguard_public_key {
             self.auth_failure(source);
@@ -176,6 +177,7 @@ impl Broker {
         };
         let nonce = crypto::b64(&crypto::random::<32>()?);
         let psk = transport::exporter(&tls, &session.binding)?;
+        eprintln!("TUNNEL_PSK_DERIVED source=TLS-exporter context=SHA384 bytes=32");
         protocol::send(
             &mut tls,
             &json!({"type":"PREPARE","binding":session.binding,"nonce":nonce}),
@@ -224,6 +226,9 @@ impl Broker {
             }
             self.authorize(&session.request_id)?;
             self.status(&session, "READY")?;
+            eprintln!(
+                "TUNNEL_READY epoch={epoch} bidirectional_checks=2 wireguard_handshake=fresh"
+            );
             *self.current.lock().map_err(|_| "state lock")? = Some(session.clone());
             protocol::send(
                 &mut tls,

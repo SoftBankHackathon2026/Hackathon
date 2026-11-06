@@ -265,7 +265,7 @@ export function PreparePage({
                         onNavigate("#prepare/" + encodeURIComponent(s.id))
                       }
                     >
-                      <strong>{s.target?.name ?? "수집 중인 환경"}</strong>
+                      <strong>{s.target?.name ?? "환경 연결 요청"}</strong>
                       <span>
                         {s.target
                           ? s.target.role === "source"
@@ -413,7 +413,7 @@ export function PreparePage({
                       onCollect={(sourceId) =>
                         run(
                           () => gateway.collect(snapshot.id, sourceId),
-                          "환경정보를 수집했어요.",
+                          "환경정보 수집을 요청했어요. 단말의 결과를 기다려 주세요.",
                         )
                       }
                     />
@@ -477,7 +477,7 @@ export function PreparePage({
                             onClick={() =>
                               run(
                                 () => gateway.revoke(snapshot.id),
-                                "연결을 해제했어요.",
+                                "서버 권한을 철회했어요. 터널과 단말 정리 결과를 확인해요.",
                               )
                             }
                           >

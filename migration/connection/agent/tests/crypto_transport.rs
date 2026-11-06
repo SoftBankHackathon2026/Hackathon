@@ -147,3 +147,27 @@ fn classical_only_client_is_rejected() {
     assert!(server.join().unwrap());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn api_https_sends_a_tls_client_hello() {
+    use std::io::Read;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let peer = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut record = [0u8; 3];
+        stream.read_exact(&mut record).unwrap();
+        assert_eq!(record[0], 22, "TLS handshake record required");
+        assert_eq!(record[1], 3, "TLS record version required");
+    });
+    // The server intentionally closes after the ClientHello. Certificate checks remain enabled.
+    assert!(migration_connector::api::http()
+        .unwrap()
+        .get(&format!("https://localhost:{}", addr.port()))
+        .call()
+        .is_err());
+    peer.join().unwrap();
+}

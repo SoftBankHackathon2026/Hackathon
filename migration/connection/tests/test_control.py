@@ -484,3 +484,43 @@ def test_rejected_candidate_can_only_recover_status_and_report_cleanup(svc, expi
         request_id, envelope(svc, request_id, "cleanup", {"local": True}), IP
     )["accepted"]
     assert svc.get(request_id, OWNER)["cleanup"]["local"]
+
+
+def test_rekey_ready_binds_expiry_to_new_epoch_but_heartbeat_cannot_extend_it(svc):
+    request_id = ready(svc)
+    first_expiry = svc.store.get(request_id)["key_expires_at"]
+    svc.test_now[0] += 1000
+    svc.tunnel(
+        request_id,
+        {
+            "epoch": 2,
+            "connection_id": "second_connection_1234",
+            "state": "REKEYING",
+        },
+    )
+    second_expiry = svc.clock() + 1800000
+    assert second_expiry != first_expiry
+    state = {
+        "epoch": 2,
+        "connection_id": "second_connection_1234",
+        "state": "READY",
+        "checks": 2,
+        "key_expires_at_ms": second_expiry,
+        "lease_expires_at_ms": svc.clock() + 60000,
+    }
+    svc.tunnel(request_id, state)
+    assert svc.get(request_id, OWNER)["tunnel"] == "READY"
+    svc.test_now[0] += 1000
+    svc.tunnel(request_id, {**state, "lease_expires_at_ms": svc.clock() + 60000})
+    with pytest.raises(ConnectionError, match="KEY_LIFETIME_CHANGED"):
+        svc.tunnel(request_id, {**state, "key_expires_at_ms": second_expiry + 1000})
+    svc.tunnel(
+        request_id,
+        {
+            "epoch": 2,
+            "connection_id": "second_connection_1234",
+            "state": "REKEYING",
+        },
+    )
+    with pytest.raises(ConnectionError, match="KEY_LIFETIME_CHANGED"):
+        svc.tunnel(request_id, {**state, "key_expires_at_ms": second_expiry + 1000})

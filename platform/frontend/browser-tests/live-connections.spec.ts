@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import type { ConnectionSnapshot } from "../src/features/prepare/connectionTypes";
 
-// This verifies the live HTTP/UI boundary with a controlled server substitute;
-// it does not claim a terminal or WireGuard end-to-end test.
-test("live HTTP flow copies a command, confirms, collects, registers and restores", async ({
+// Mocked API contract regression: route.fulfill supplies API responses and the
+// clipboard is replaced with a test double. This is not evidence of a real
+// backend, terminal, WireGuard tunnel, or Kubernetes end-to-end connection.
+test("mocked API contract copies a command, confirms, collects, registers and restores", async ({
   page,
 }) => {
   const id = "a".repeat(22);
@@ -16,6 +17,7 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
     context: "test-context",
   };
   let state: ConnectionSnapshot | undefined;
+  let collectionReadyAt = 0;
   const mutations: { action: string; body: any }[] = [];
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -29,6 +31,34 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
       },
     });
   });
+  // Catch every API request so this contract test can never contact a real backend.
+  await page.route("**/api/v1/**", (route) =>
+    route.fulfill({
+      status: 501,
+      json: { detail: "No fixture for this API contract" },
+    }),
+  );
+  await page.route("**/api/v1/access-pin", (route) =>
+    route.fulfill({ json: { required: false, unlocked: true } }),
+  );
+  await page.route("**/api/v1/security/posture", (route) =>
+    route.fulfill({
+      json: {
+        source: "live",
+        evaluated_at: new Date().toISOString(),
+        standards: [],
+        environments: [],
+        controls: [],
+        parities: [],
+        parity: {
+          source_env: "",
+          target_env: "",
+          regressions: [],
+          improvements: [],
+        },
+      },
+    }),
+  );
   await page.route("**/api/v1/access", (route) =>
     route.fulfill({
       json: {
@@ -53,12 +83,24 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
       path = new URL(request.url()).pathname;
     if (path.endsWith("capabilities"))
       return route.fulfill({ json: { available: true } });
-    if (request.method() === "GET")
+    if (request.method() === "GET") {
+      if (state?.collectionPending && Date.now() >= collectionReadyAt) {
+        state = {
+          ...state,
+          revision: state.revision + 1,
+          collection: "COLLECTED",
+          collectionPending: false,
+          collected: [{ ...source, facts: [{ label: "노드", value: "1" }] }],
+          inventoryDigest: "sha384:test",
+          collectedAt: Date.now(),
+        };
+      }
       return route.fulfill({
         json: state
           ? [{ ...state, serverNow: Date.now(), observedAt: Date.now() }]
           : [],
       });
+    }
     const body = request.postDataJSON();
     const action = path.split("/").at(-1)!;
     mutations.push({ action, body });
@@ -87,7 +129,7 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
         epoch: 0,
         events: [],
         deployment: {
-          bootstrapUrl: "https://connect.example.com/i",
+          bootstrapUrl: "https://connect.example.com/releases/live-e2e-1/bootstrap.sh",
           releaseVersion: "test-v1",
         },
       };
@@ -118,10 +160,8 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
       state.tunnelChecks = 4;
       state.discovered = [source];
     } else if (action === "collect") {
-      state.collection = "COLLECTED";
-      state.collected = [{ ...source, facts: [{ label: "노드", value: "1" }] }];
-      state.inventoryDigest = "sha384:test";
-      state.collectedAt = Date.now();
+      state.collectionPending = true;
+      collectionReadyAt = Date.now() + 2000;
     } else if (action === "register") {
       state.target = body.target;
       state.environmentId = "registered-environment";
@@ -156,6 +196,12 @@ test("live HTTP flow copies a command, confirms, collects, registers and restore
     .click();
   await page.getByRole("radio", { name: /시험 클러스터/ }).check();
   await page.getByRole("button", { name: "선택한 환경정보 수집" }).click();
+  await expect(
+    page.getByRole("button", { name: "환경정보 수집 중…" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("환경정보를 수집했어요.", { exact: true }),
+  ).toHaveCount(0);
   await page.getByLabel("프로젝트", { exact: true }).fill("시험 프로젝트");
   await page.getByRole("button", { name: "환경 등록", exact: true }).click();
   await expect(

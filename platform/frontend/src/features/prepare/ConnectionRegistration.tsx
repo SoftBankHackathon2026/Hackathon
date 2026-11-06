@@ -34,7 +34,7 @@ export function CollectionSource({
               name="collection-source"
               checked={selected === source.id}
               onChange={() => setSelected(source.id)}
-              disabled={busy}
+              disabled={busy || s.collectionPending}
             />
             <span>
               <strong>{source.name}</strong>
@@ -53,12 +53,18 @@ export function CollectionSource({
       <div className="connection-actions">
         <button
           className="primary"
-          disabled={busy || !selected}
+          disabled={busy || s.collectionPending || !selected}
           onClick={() => onCollect(selected)}
         >
-          선택한 환경정보 수집
+          {s.collectionPending ? "환경정보 수집 중…" : "선택한 환경정보 수집"}
         </button>
       </div>
+      {s.collectionPending && (
+        <p role="status" className="connection-note">
+          단말에서 선택한 환경을 조회하고 있어요. 결과가 도착하면 등록 단계로
+          이어져요.
+        </p>
+      )}
     </section>
   );
 }
@@ -140,7 +146,11 @@ export function CleanupResult({
   return (
     <section>
       <header className="connection-title">
-        <h2>연결을 해제했어요</h2>
+        <h2>
+          {s.cleanup.server && s.cleanup.gateway && s.cleanup.local
+            ? "연결을 해제했어요"
+            : "연결 해제를 확인하고 있어요"}
+        </h2>
         <p>서버 차단과 단말 정리 결과를 구분해요.</p>
       </header>
       <dl className="connection-facts">

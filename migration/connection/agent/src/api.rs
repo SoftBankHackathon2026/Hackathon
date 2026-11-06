@@ -2,11 +2,12 @@ use crate::{crypto, protocol, Result};
 use openssl::pkey::{PKeyRef, Private};
 use serde_json::{json, Value};
 use std::{io::Read, time::Duration};
-pub fn http() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+pub fn http() -> Result<ureq::Agent> {
+    Ok(ureq::AgentBuilder::new()
+        .tls_connector(std::sync::Arc::new(native_tls::TlsConnector::new()?))
         .redirects(0)
         .timeout(Duration::from_secs(15))
-        .build()
+        .build())
 }
 pub fn parse(response: ureq::Response) -> Result<Value> {
     let mut b = Vec::new();
@@ -17,7 +18,7 @@ pub fn parse(response: ureq::Response) -> Result<Value> {
     Ok(serde_json::from_slice(&b)?)
 }
 pub fn post(url: &str, body: &Value, token: Option<&str>) -> Result<Value> {
-    let request = http().post(url);
+    let request = http()?.post(url);
     let request = if let Some(t) = token {
         request.set("Authorization", &format!("Bearer {t}"))
     } else {
@@ -27,7 +28,7 @@ pub fn post(url: &str, body: &Value, token: Option<&str>) -> Result<Value> {
 }
 pub fn get(url: &str, token: &str) -> Result<Value> {
     parse(
-        http()
+        http()?
             .get(url)
             .set("Authorization", &format!("Bearer {token}"))
             .call()?,

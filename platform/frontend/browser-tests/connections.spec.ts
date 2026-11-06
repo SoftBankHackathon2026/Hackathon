@@ -1,4 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
+// Preview tests must never reach a live platform API.
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/v1/**", (route) =>
+    route.fulfill({
+      status: 501,
+      json: { detail: "No fixture for preview API" },
+    }),
+  );
+  await page.route("**/api/v1/access-pin", (route) =>
+    route.fulfill({ json: { required: false, unlocked: true } }),
+  );
+});
 async function setup(page: Page) {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -40,7 +52,7 @@ test("only two stages; collection precedes environment metadata and registration
   await expect(progress.locator('[aria-current="step"]')).toContainText(
     "환경정보 수집",
   );
-  await page.getByLabel("터미널 확인 코드", { exact: true }).fill("ZZZZ9999");
+  await page.getByLabel("터미널 확인 코드", { exact: true }).fill("ZZZZ7777");
   await page
     .getByLabel("제가 실행한 단말이며, 환경정보 수집을 승인해요.")
     .check();
@@ -142,7 +154,7 @@ test("revocation retains separate cleanup statuses", async ({ page }) => {
   await page.getByRole("button", { name: "연결 해제", exact: true }).click();
   await page.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(
-    page.getByRole("heading", { name: "연결을 해제했어요" }),
+    page.getByRole("heading", { name: "연결 해제를 확인하고 있어요" }),
   ).toBeVisible();
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
 });

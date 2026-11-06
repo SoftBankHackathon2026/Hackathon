@@ -179,6 +179,14 @@ class ConnectionService:
         self._access(row, actor)
         row = deepcopy(row)
         self._expire(row)
+        task = row.get("task")
+        collection_pending = bool(
+            task
+            and task["payload"]["expires_at_ms"] > self.clock()
+            and task["payload"]["epoch"] == row["epoch"]
+            and row["device"] == "APPROVED"
+            and row["tunnel"] == "READY"
+        )
         result = {
             "id": row["id"],
             "revision": row["revision"],
@@ -191,6 +199,7 @@ class ConnectionService:
             "device": row["device"],
             "tunnel": row["tunnel"],
             "collection": row["collection"],
+            "collectionPending": collection_pending,
             "discovered": row["discovered"],
             "collected": row["collected"],
             "permissions": {
@@ -797,6 +806,11 @@ class ConnectionService:
                 row.pop("issue", None)
             else:
                 row["lease_expires_at"] = 0
+                if epoch != row["epoch"]:
+                    # The first READY in a new generation establishes its own
+                    # lifetime. Same-generation REKEYING must retain the bound.
+                    row["key_expires_at"] = 0
+                    row["tunnel_checks"] = 0
             changed = row["tunnel"] != state or row["epoch"] != epoch
             row["epoch"], row["connection_id"], row["tunnel"] = (
                 epoch,

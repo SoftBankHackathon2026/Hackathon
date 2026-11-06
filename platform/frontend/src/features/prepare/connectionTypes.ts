@@ -31,6 +31,7 @@ export type ConnectionSnapshot = {
   device: "NONE" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "REVOKED";
   tunnel: "NONE" | "CONNECTING" | "READY" | "REKEYING" | "DEGRADED";
   collection: "WAITING" | "COLLECTED";
+  collectionPending?: boolean;
   discovered: DiscoveredEnvironment[];
   collected: CollectedEnvironment[];
   collectedAt?: number;

@@ -9,7 +9,7 @@ from controlplane.core.config import AuthMode
 from controlplane.schemas.accounts import Identity
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from test_control import DEVICE, OWNER, PUBLIC, approved
+from test_control import DEVICE, IP, OWNER, PUBLIC, approved, envelope, ready, report
 from test_control import svc as control_service_fixture
 
 svc = control_service_fixture
@@ -191,3 +191,56 @@ def test_malformed_recovery_is_client_error(client, svc, payload):
         ).status_code
         == 422
     )
+
+
+@pytest.mark.parametrize(
+    "finish", ["expired", "rekey", "revoke", "complete", "lease_expired"]
+)
+def test_collection_pending_snapshot_does_not_expose_signed_task(client, svc, finish):
+    request_id = ready(svc)
+    path = f"/api/v1/connections/{request_id}"
+    assert client.get(path).json()["collectionPending"] is False
+    task, value = report(svc, request_id)
+    pending = client.get(path).json()
+    assert pending["collectionPending"] is True
+    assert "task" not in pending and "signature" not in pending
+    assert task["job_id"] not in str(pending)
+    if finish == "expired":
+        svc.test_now[0] += 120000
+        svc.tunnel(
+            request_id,
+            {
+                "epoch": 1,
+                "connection_id": "connection_1234567890",
+                "state": "READY",
+                "checks": 2,
+                "key_expires_at_ms": svc.store.get(request_id)["key_expires_at"],
+                "lease_expires_at_ms": svc.clock() + 60000,
+            },
+        )
+    elif finish == "lease_expired":
+        svc.test_now[0] += 60000
+    elif finish == "rekey":
+        svc.tunnel(
+            request_id,
+            {
+                "epoch": 2,
+                "connection_id": "rekey_connection_1234",
+                "state": "REKEYING",
+            },
+        )
+    elif finish == "revoke":
+        assert client.post(path + "/revoke", json={}).status_code == 200
+    else:
+        svc.device(
+            request_id,
+            envelope(
+                svc,
+                request_id,
+                "inventory",
+                {"job_id": task["job_id"], "report": value},
+            ),
+            IP,
+            through_tunnel=True,
+        )
+    assert client.get(path).json()["collectionPending"] is False

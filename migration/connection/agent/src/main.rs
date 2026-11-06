@@ -233,6 +233,7 @@ fn establish(
     let mut tls = client.connect(&c.broker_host, stream)?;
     transport::enforce(tls.ssl())?;
     transport::peer_public(&tls)?;
+    eprintln!("TUNNEL_TLS_VERIFIED protocol=TLSv1.3 group=X25519MLKEM768 peer_auth=MLDSA65");
     if s.epoch > 0 {
         let (private, public) = crypto::wg_key()?;
         s.wireguard_private = private.to_string();
@@ -266,6 +267,7 @@ fn establish(
         return Err("network policy mismatch".into());
     }
     let psk = transport::exporter(&tls, &binding)?;
+    eprintln!("TUNNEL_PSK_DERIVED source=TLS-exporter context=SHA384 bytes=32");
     protocol::send(&mut tls, &json!({"type":"PREPARE","epoch":binding.epoch}))?;
     let commit: Value = protocol::recv(&mut tls)?;
     if commit["type"] != "COMMIT" || commit["epoch"] != binding.epoch {
@@ -303,6 +305,10 @@ fn establish(
     if ready["type"] != "STATUS" || ready["ready"] != true {
         return Err("broker not ready".into());
     }
+    eprintln!(
+        "TUNNEL_READY epoch={} bidirectional_checks=2 wireguard_handshake=fresh",
+        binding.epoch
+    );
     Ok(binding)
 }
 fn cleanup(c: &Config, dir: &Path, s: &Local, key: &PKey<Private>) -> Result<()> {

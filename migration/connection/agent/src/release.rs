@@ -298,6 +298,7 @@ pub fn install_release(base: &str, bundle: &Path) -> Result<Manifest> {
     }
     let base = base_url(base)?;
     let agent = ureq::AgentBuilder::new()
+        .tls_connector(std::sync::Arc::new(native_tls::TlsConnector::new()?))
         .redirects(0)
         .timeout(Duration::from_secs(20))
         .build();

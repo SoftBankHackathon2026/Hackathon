@@ -1,0 +1,91 @@
+name: mc-live-e2e-control
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mc-live-e2e-postgres
+    environment:
+      POSTGRES_DB: live_e2e
+      POSTGRES_USER: live_e2e
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    volumes:
+      - ${LIVE_E2E_DIR:?}/postgres-password:/run/secrets/postgres-password:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U live_e2e -d live_e2e']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      live:
+        ipv4_address: 172.30.87.12
+  redis:
+    image: redis:7-alpine
+    container_name: mc-live-e2e-redis
+    command: [redis-server, --save, '', --appendonly, 'no']
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      live:
+        ipv4_address: 172.30.87.13
+  backend:
+    build:
+      context: ../../../..
+      dockerfile: migration/connection/tests/e2e/Control.Dockerfile
+    image: mc-live-e2e-control:local
+    container_name: mc-live-e2e-backend
+    environment:
+      ONEPORT_AUTH_MODE: login
+      ONEPORT_FLEET_CONFIG: /run/config/empty-live-fleet.json
+      ONEPORT_DATABASE_URL_FILE: /run/secrets/database-url
+      ONEPORT_ALLOWED_HOSTS: localhost,127.0.0.1,control.test
+      ONEPORT_ALLOWED_ORIGINS: http://localhost:4327,http://127.0.0.1:4327,https://control.test
+      ONEPORT_CONNECTION_ENABLED: 'true'
+      ONEPORT_CONNECTION_REDIS_URL: redis://redis:6379/0
+      ONEPORT_CONNECTION_OPENSSL: /usr/bin/openssl
+      ONEPORT_CONNECTION_JOB_SIGNING_KEY: /run/secrets/job-signing-key.pem
+      ONEPORT_CONNECTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-token
+      ONEPORT_CONNECTION_BOOTSTRAP_URL: https://control.test/releases/live-e2e-1/bootstrap.sh
+      ONEPORT_CONNECTION_RELEASE_VERSION: live-e2e-1
+      ONEPORT_CONNECTION_BOOTSTRAP_SHA384: ${BOOTSTRAP_SHA384:-}
+      ONEPORT_CONNECTION_RUNTIME_TENANT_ID: live-e2e-team
+      ONEPORT_CONNECTION_RUNTIME_GATEWAY_ID: live-e2e-gateway
+    volumes:
+      - ./empty-live-fleet.json:/run/config/empty-live-fleet.json:ro
+      - ${LIVE_E2E_DIR:?}/database-url:/run/secrets/database-url:ro
+      - ${LIVE_E2E_DIR:?}/job-signing-key.pem:/run/secrets/job-signing-key.pem:ro
+      - ${LIVE_E2E_DIR:?}/runtime-token:/run/secrets/runtime-token:ro
+    ports:
+      - 127.0.0.1:18320:8320
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      live:
+        ipv4_address: 172.30.87.10
+  https:
+    image: nginx:1.27-alpine
+    container_name: mc-live-e2e-https
+    volumes:
+      - ./control.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${LIVE_E2E_DIR:?}/control.crt:/run/tls/control.crt:ro
+      - ${LIVE_E2E_DIR:?}/control.key:/run/tls/control.key:ro
+      - ${LIVE_E2E_DIR:?}/release:/srv/release:ro
+    ports:
+      - 127.0.0.1:18443:443
+    depends_on:
+      - backend
+    networks:
+      live:
+        ipv4_address: 172.30.87.11
+        aliases: [control.test]
+networks:
+  live:
+    external: true
+    name: mc-live-e2e
+volumes:
+  postgres-data:
