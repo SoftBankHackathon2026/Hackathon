@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { nodesHash, replaceHash, resourceHash } from "../../app/routes";
 import type { FleetEnvironment, MigrationSummary } from "../../api/migrations";
 import type { Severity } from "../../api/security";
 import { Segmented } from "../../components/Segmented";
@@ -44,30 +45,28 @@ const TABS: { id: Overlay; label: string }[] = [
 export function ArchitectureCanvas({
   environments,
   migrations,
-  initialSelect,
-  initialNodes,
+  select,
+  nodes,
   height = 860,
 }: {
   environments: FleetEnvironment[];
   migrations: MigrationSummary[];
-  initialSelect?: TileRef;
-  initialNodes?: { envId?: string; node?: string };
+  /** 주소의 구성 요소(#environments/<환경>/<구성 요소>) */
+  select?: TileRef;
+  /** 주소의 노드 보기(#environments/nodes/<환경>/<노드>) */
+  nodes?: { envId?: string; node?: string };
   height?: number;
 }) {
   const [overlay, setOverlay] = useState<Overlay>("infra");
   const [grouping, setGrouping] = useState<Grouping>(
-    initialNodes ? "node" : "boundary",
+    nodes ? "node" : "boundary",
   );
   const [mode, setMode] = useState<ViewMode>("iso");
   const [showPods, setShowPods] = useState(false);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<TileRef | null>(
-    initialSelect ?? null,
-  );
+  const [selected, setSelected] = useState<TileRef | null>(select ?? null);
   const [node, setNode] = useState<NodeRef | null>(
-    initialNodes?.envId
-      ? { envId: initialNodes.envId, node: initialNodes.node ?? null }
-      : null,
+    nodes?.envId ? { envId: nodes.envId, node: nodes.node ?? null } : null,
   );
   const [jobId, setJobId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Severity[]>([]);
@@ -80,12 +79,51 @@ export function ArchitectureCanvas({
     enabled: overlay === "path" && job !== null,
   }).data;
 
+  // 주소로 들어왔을 때만 다이어그램으로 내려간다(같은 화면에서 고를 때는 스크롤하지 않는다).
   useEffect(() => {
-    if (initialSelect || initialNodes)
+    if (select || nodes)
       document
         .querySelector(".canvas-block")
         ?.scrollIntoView({ block: "start" });
-  }, [initialSelect, initialNodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 주소가 바뀌면(뒤로 가기, 링크, 주소 입력) 패널과 보기도 따라간다.
+  const routeKey = select
+    ? `c:${select.envId}/${select.id}`
+    : nodes
+      ? `n:${nodes.envId ?? ""}/${nodes.node ?? ""}`
+      : "";
+  useEffect(() => {
+    if (select) {
+      setNode(null);
+      setSelected(select);
+    } else if (nodes) {
+      setGrouping("node");
+      setSelected(null);
+      setNode(
+        nodes.envId ? { envId: nodes.envId, node: nodes.node ?? null } : null,
+      );
+    } else {
+      setSelected(null);
+      setNode(null);
+      setGrouping((g) => (g === "node" ? "boundary" : g));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey]);
+
+  // 열린 패널과 보기를 주소에 남긴다(새 기록은 만들지 않음). 링크로 공유할 수 있다.
+  useEffect(() => {
+    replaceHash(
+      selected
+        ? resourceHash(selected.envId, selected.id)
+        : node
+          ? nodesHash(node.envId, node.node ?? undefined)
+          : grouping === "node"
+            ? nodesHash()
+            : "#environments",
+    );
+  }, [selected?.envId, selected?.id, node?.envId, node?.node, grouping]);
 
   useEffect(() => {
     if (!selected && !node) return;
