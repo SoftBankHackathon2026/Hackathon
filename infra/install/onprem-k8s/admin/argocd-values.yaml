@@ -7,6 +7,11 @@ global:
 configs:
   cm:
     url: https://argo.yubin.dev  # Traefik 이 Let's Encrypt 인증서로 종단, argocd-server 까지는 HTTP (server.insecure=true)
+    timeout.reconciliation: 300s   # 기본 120s. 마스터 4GiB 라 전체 재비교 주기를 늘린다 (2026-11-06 OOM)
+  params:
+    controller.status.processors: "5"     # 기본 20. 앱 12개라 5면 충분하고 동시 처리 메모리가 준다
+    controller.operation.processors: "2"  # 기본 10
+    controller.kubectl.parallelism.limit: "4"
 notifications:
   enabled: true
   secret:
@@ -21,6 +26,9 @@ notifications:
 controller:
   metrics:
     enabled: true
+  env:
+    - name: GOMEMLIMIT     # 한도(512Mi) 전에 GC 가 먼저 돌게 해서 재동기화 때 cgroup OOM 반복을 막는다
+      value: 400MiB
 server:
   metrics:
     enabled: true
