@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Keycloak infrastructure result v1",
+  "type": "object",
+  "required": ["schema_version", "operation", "status", "reason_codes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string"},
+    "operation": {"enum": ["discover", "inspect", "preflight", "install", "verify"]},
+    "status": {"enum": ["complete", "partial", "blocked", "failed"]},
+    "reason_codes": {"type": "array", "items": {"type": "string"}},
+    "candidates": {"type": "array", "items": {
+      "type": "object",
+      "required": ["candidate_id", "deployment_type", "nodes", "evidence"],
+      "properties": {
+        "candidate_id": {"type": "string"},
+        "deployment_type": {"enum": ["kubernetes", "host_service", "host_process"]},
+        "nodes": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    }},
+    "coverage": {"type": "array", "items": {
+      "type": "object", "required": ["status"],
+      "properties": {"status": {"enum": ["complete", "unknown"]}}
+    }},
+    "checks": {"type": "array", "items": {
+      "type": "object", "required": ["name", "status"],
+      "properties": {"name": {"type": "string"}, "status": {"enum": ["pass", "fail", "unknown", "skipped"]}}
+    }},
+    "nodes": {"type": "array"},
+    "planned_changes": {"type": "array", "items": {"type": "string"}},
+    "changes": {"type": "array", "items": {"type": "object", "required": ["host", "task", "action"]}},
+    "events": {"type": "array", "items": {"type": "object", "required": ["host", "reason_code"]}},
+    "connection": {"type": ["object", "null"]},
+    "next_actions": {"type": "array", "items": {"type": "string"}},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "scope": {"const": "infrastructure_only"},
+    "message": {"type": "string"},
+    "admin_handoff": {"type": ["string", "null"]},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "ansible_returncode": {"type": "integer"}
+  },
+  "additionalProperties": false
+}

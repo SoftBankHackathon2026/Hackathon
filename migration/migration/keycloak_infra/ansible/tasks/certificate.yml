@@ -1,0 +1,19 @@
+- name: Check supplied certificate and private key before host changes
+  keycloak_certificate_info:
+    certificate_file: "{{ kc.install.certificate_file }}"
+    private_key_file: "{{ kc.install.private_key_file }}"
+    ca_file: "{{ kc.install.ca_file }}"
+    base_url: "{{ kc.install.base_url }}"
+  register: kc_certificate
+  no_log: true
+
+- name: Save certificate checks
+  ansible.builtin.copy:
+    content: "{{ kc_certificate.report | to_json }}"
+    dest: "{{ kc_report_dir }}/certificate.json"
+    mode: '0600'
+
+- name: Require valid supplied certificate
+  ansible.builtin.assert:
+    that: kc_certificate.report.checks | rejectattr('status', 'equalto', 'pass') | list | length == 0
+    fail_msg: CERTIFICATE_CHECK_FAILED

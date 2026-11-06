@@ -3,6 +3,11 @@
 `업무-아젠다/01-DB-이전-계획.md` 의 "구성과 INSERT 워커", "온프렘에서 AWS로", "전환과 복구", "데이터 검증" 절을 그대로 코드로 옮긴 것이다.
 INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을 한 디렉터리에 모았다.
 
+Keycloak 인증 기반의 탐색·점검·호스트 설치는 독립 명령
+`python -m migration.keycloak_infra`로 제공한다.
+[사용법과 플랫폼 입출력 규약](keycloak-infra/README.md)을 참고한다.
+이 명령은 계정·IAM 정책 이관이나 기존 데이터베이스 전환을 실행하지 않는다.
+
 > **주의: 이 코드는 아직 실제 클러스터(온프렘 k3s, 기존 Postgres, RDS, Kafka Connect)에서 실행·검증하지 않았다.**
 > 로컬에서는 pytest 단위 테스트와 `docker run postgres:16-alpine` 통합 테스트만 통과했다. Debezium/Kafka Connect 와의 결합은 미검증이다.
 
