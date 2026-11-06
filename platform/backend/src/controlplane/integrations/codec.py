@@ -128,6 +128,7 @@ def facts_from_json(payload: Row) -> ClusterFacts:
         workload_ready={
             k: (int(v[0]), int(v[1])) for k, v in (payload.get("workload_ready") or {}).items()
         },
+        read_status=payload.get("read_status"),
         inventory=None
         if payload.get("inventory") is None
         else [InventoryItem(**item) for item in payload["inventory"]],

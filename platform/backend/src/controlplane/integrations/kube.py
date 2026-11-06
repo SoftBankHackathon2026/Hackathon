@@ -215,7 +215,9 @@ class ClusterReader:
         observed = datetime.now(UTC)
         try:
             return self._read(observed)
-        except (ApiException, HTTPError, OSError):
+        except ApiException as exc:
+            return ClusterFacts(observed_at=observed, connected=False, read_status=exc.status)
+        except (HTTPError, OSError):
             return ClusterFacts(observed_at=observed, connected=False)
 
     def _read(self, observed: datetime) -> ClusterFacts:

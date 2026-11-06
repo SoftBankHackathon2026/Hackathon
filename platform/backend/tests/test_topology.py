@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
 from urllib3.exceptions import MaxRetryError
 
@@ -163,3 +164,18 @@ def test_reader_without_kubeconfig_does_not_fall_back_to_the_default_one(monkeyp
     monkeypatch.setattr(kube.config, "new_client_from_config", lambda **kw: kube.client.ApiClient())
     with pytest.raises(ConfigException):
         kube.api_client(ONPREM.model_copy(update={"kubeconfig": None, "in_cluster": False}))
+
+
+def test_permission_errors_are_not_reported_as_an_unreachable_cluster(monkeypatch):
+    monkeypatch.setattr(kube, "api_client", lambda env: kube.client.ApiClient())
+    reader = kube.ClusterReader(AWS)
+
+    def forbidden(namespace):
+        raise ApiException(status=403)
+
+    reader._core = SimpleNamespace(read_namespace=forbidden)
+    facts = reader.read()
+    view = environment_view(EnvironmentSnapshot(AWS, facts))
+    assert (facts.connected, facts.read_status) == (False, 403)
+    assert [i.title for i in view.issues] == ["클러스터를 읽을 권한이 없어요"]
+    assert facts_from_json(facts_to_json(facts)).read_status == 403

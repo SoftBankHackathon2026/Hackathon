@@ -18,6 +18,27 @@ READ_ACCESS_HINT = {
 }
 
 
+UNREAD_TITLES = {
+    401: "클러스터 인증에 실패했어요",
+    403: "클러스터를 읽을 권한이 없어요",
+    404: "읽을 네임스페이스가 없어요",
+}
+
+
+def _unread_issue(snapshot: EnvironmentSnapshot) -> EnvironmentIssue:
+    status = snapshot.cluster.read_status
+    detail = snapshot.config.name
+    if status == 404:
+        detail = f"{detail} · ns {snapshot.config.app_namespace}"
+    elif status in (401, 403):
+        detail = READ_ACCESS_HINT.get(snapshot.config.provider, READ_ACCESS_HINT["onprem"])
+    return EnvironmentIssue(
+        severity="critical",
+        title=UNREAD_TITLES.get(status, "클러스터에 연결하지 못했어요"),
+        detail=detail,
+    )
+
+
 def _nothing_read_from_cluster(
     snapshot: EnvironmentSnapshot, components: list[ComponentView]
 ) -> bool:
@@ -30,13 +51,7 @@ def environment_issues(
     snapshot: EnvironmentSnapshot, components: list[ComponentView]
 ) -> list[EnvironmentIssue]:
     if not snapshot.cluster.connected:
-        return [
-            EnvironmentIssue(
-                severity="critical",
-                title="클러스터에 연결하지 못했어요",
-                detail=snapshot.config.name,
-            )
-        ]
+        return [_unread_issue(snapshot)]
     issues = [
         EnvironmentIssue(
             severity="critical" if c.status == "down" else "warning",

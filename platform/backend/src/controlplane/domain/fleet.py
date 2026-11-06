@@ -187,6 +187,7 @@ class ClusterFacts:
     apps: list[AppState] = field(default_factory=list)
     workload_ready: dict[str, tuple[int, int]] = field(default_factory=dict)
     inventory: list[InventoryItem] | None = None
+    read_status: int | None = None
 
 
 @dataclass(frozen=True)
