@@ -422,3 +422,74 @@ def test_cost_store_round_trip(store):
     costs.put(saved)
     costs.put(saved.model_copy(update={"gaps": ["x"]}))
     assert costs.get("aws") == saved.model_copy(update={"gaps": ["x"]})
+
+
+def test_meter_reading_overrides_owner_input_per_field():
+    from controlplane.cost.onprem import OnPremReading
+
+    spec = OnPremSpec(hardware_usd=720, power_watts=100, electricity_usd_per_kwh=0.1)
+    reading = OnPremReading(source="plug", power_watts=40)
+    cost = price_onprem(spec, reading)
+    power = next(line for line in cost.lines if line.item == "전기")
+    assert power.basis == "measured"
+    assert power.quantity == 40
+    assert power.monthly == round(40 / 1000 * 730 * 0.1, 2)
+    assert power.note == "측정: plug"
+    hardware = next(line for line in cost.lines if line.item.startswith("장비"))
+    assert hardware.basis == "owner_input" and hardware.monthly == 20
+    assert cost.label == "지금 월 비용 (측정값 포함)"
+    # 측정값만 있고 전기 단가가 없으면 전기 줄은 여전히 입력 필요
+    only_watts = price_onprem(OnPremSpec(), reading)
+    assert next(line for line in only_watts.lines if line.item == "전기").monthly is None
+
+
+def test_registered_meter_is_created_and_read_by_collector():
+    from controlplane.cost.onprem import OnPremReading, create_meter, register_meter
+
+    @register_meter("test-fixed")
+    class FixedMeter:
+        def __init__(self, options):
+            self.watts = options["watts"]
+
+        def read(self, env):
+            return OnPremReading(source="test-fixed", power_watts=self.watts)
+
+    meter = create_meter("test-fixed", {"watts": 55})
+    inv = collect_inventory(ONPREM, {}, kube=lambda env: ([], [], []), meter=meter)
+    assert inv.onprem_reading.power_watts == 55
+    assert "온프렘 측정기 test-fixed" in inv.sources
+    with pytest.raises(KeyError):
+        create_meter("nope", {})
+
+    class Failing:
+        def read(self, env):
+            raise TimeoutError
+
+    failed = collect_inventory(ONPREM, {}, kube=lambda env: ([], [], []), meter=Failing())
+    assert failed.onprem_reading is None
+    assert failed.gaps == ["온프렘 측정기: 읽기 실패 (TimeoutError)"]
+
+
+def test_collector_keeps_running_with_unknown_meter():
+    from controlplane.cost.config import EnvironmentCostConfig, MeterConfig
+    from controlplane.execution.fleet_collector import FleetCollector
+
+    saved = []
+
+    class Store:
+        def put(self, inventory):
+            saved.append(inventory)
+
+    collector = FleetCollector(
+        FleetConfig(mode="live", environments=[ONPREM], migrations=[]),
+        journal=None,
+        costs=Store(),
+        cost_config=CostConfig(
+            environments={"onprem": EnvironmentCostConfig(meter=MeterConfig(name="missing"))}
+        ),
+        cost_reader=lambda env, tags, meter: collect_inventory(
+            env, tags, kube=lambda e: ([], [], []), meter=meter
+        ),
+    )
+    collector.collect_costs(ONPREM)
+    assert saved[0].gaps == ["온프렘 측정기: 읽기 실패 (KeyError)"]

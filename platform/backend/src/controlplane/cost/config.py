@@ -7,7 +7,7 @@
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,11 +33,21 @@ class OnPremSpec(BaseModel):
     other_monthly_usd: float = Field(default=0, ge=0, description="회선·공간 등 기타 월 비용")
 
 
+class MeterConfig(BaseModel):
+    """온프렘 측정기 선택. name 은 register_meter 로 등록한 이름이다(controlplane.cost.onprem)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 class EnvironmentCostConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tags: dict[str, str] = Field(default_factory=dict)
     onprem: OnPremSpec = Field(default_factory=OnPremSpec)
+    meter: MeterConfig | None = None
     # 온프렘 스펙을 환산할 가격표. 클라우드 환경은 자기 provider·region 가격표를 쓴다.
     equivalent: PriceBasis = Field(
         default_factory=lambda: PriceBasis(provider="aws", region="ap-northeast-2")

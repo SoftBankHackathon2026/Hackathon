@@ -16,6 +16,7 @@ from controlplane.cost.models import (
     ManagedService,
     WorkloadDemand,
 )
+from controlplane.cost.onprem import OnPremReading
 from controlplane.cost.prices import InstancePrice, PriceSheet
 
 # 노드 자원 중 kubelet·시스템 데몬 몫을 빼고 파드에 줄 수 있다고 보는 비율
@@ -179,42 +180,54 @@ def price_cloud(inventory: CostInventory, sheet: PriceSheet) -> CostBreakdown:
     return CostBreakdown.of("지금 월 비용", lines)
 
 
-def price_onprem(spec: OnPremSpec) -> CostBreakdown:
-    """온프렘 실제 비용(TCO): 장비 감가상각 + 전기 + 기타. 입력이 없는 줄은 '입력 필요'."""
-    hardware = (
-        spec.hardware_usd / spec.amortization_months if spec.hardware_usd is not None else None
-    )
-    power = (
-        spec.power_watts / 1000 * HOURS_PER_MONTH * spec.electricity_usd_per_kwh
-        if spec.power_watts is not None and spec.electricity_usd_per_kwh is not None
-        else None
-    )
+def _pick(field: str, spec: OnPremSpec, reading: OnPremReading | None) -> tuple[object, str]:
+    """측정값이 있으면 측정값, 없으면 운영자 입력값. (값, 근거)."""
+    measured = getattr(reading, field) if reading is not None else None
+    if measured is not None:
+        return measured, "measured"
+    return getattr(spec, field), "owner_input"
+
+
+def price_onprem(spec: OnPremSpec, reading: OnPremReading | None = None) -> CostBreakdown:
+    """온프렘 실제 비용(TCO): 장비 감가상각 + 전기 + 기타. 값이 없는 줄은 '입력 필요'.
+
+    측정기(controlplane.cost.onprem)가 읽은 값이 있으면 그 필드만 설정값 대신 쓴다.
+    """
+    hardware_usd, hardware_basis = _pick("hardware_usd", spec, reading)
+    months, months_basis = _pick("amortization_months", spec, reading)
+    watts, watts_basis = _pick("power_watts", spec, reading)
+    rate, rate_basis = _pick("electricity_usd_per_kwh", spec, reading)
+    other, other_basis = _pick("other_monthly_usd", spec, reading)
+    hardware = hardware_usd / months if hardware_usd is not None else None
+    power_unit = HOURS_PER_MONTH / 1000 * rate if watts is not None and rate is not None else None
     missing = "입력 필요"
+    measured = "measured" in (watts_basis, rate_basis)
     lines = [
         _priced(
             "onprem",
-            f"장비 감가상각 ({spec.amortization_months}개월)",
+            f"장비 감가상각 ({months}개월)",
             1,
             "월",
             hardware,
             None if hardware is not None else missing,
-            "owner_input",
+            "measured" if "measured" in (hardware_basis, months_basis) else "owner_input",
         ),
         _priced(
             "onprem",
             "전기",
-            spec.power_watts or 0,
+            watts or 0,
             "W 평균",
-            None if power is None else power / (spec.power_watts or 1),
-            None if power is not None else missing,
-            "owner_input",
+            power_unit,
+            (f"측정: {reading.source}" if measured and reading else None)
+            if power_unit is not None
+            else missing,
+            "measured" if measured else "owner_input",
         ),
     ]
-    if spec.other_monthly_usd:
-        lines.append(
-            _priced("onprem", "회선·공간 등", 1, "월", spec.other_monthly_usd, None, "owner_input")
-        )
-    return CostBreakdown.of("지금 월 비용 (운영자 입력)", lines)
+    if other:
+        lines.append(_priced("onprem", "회선·공간 등", 1, "월", other, None, other_basis))
+    label = "지금 월 비용 (측정값 포함)" if reading is not None else "지금 월 비용 (운영자 입력)"
+    return CostBreakdown.of(label, lines)
 
 
 def price_equivalent(
@@ -249,7 +262,7 @@ def price_environment(
         equivalent = (
             price_equivalent(inventory, sheet, DEFAULT_FAMILIES_FOR_EQUIVALENT) if sheet else None
         )
-        return price_onprem(config.onprem), equivalent
+        return price_onprem(config.onprem, inventory.onprem_reading), equivalent
     return (price_cloud(inventory, sheet) if sheet else None), None
 
 

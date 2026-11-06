@@ -40,6 +40,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 export const BASIS_LABELS: Record<CostBasis, string> = {
   list_price: "공식 단가",
   owner_input: "운영자 입력",
+  measured: "측정값",
   not_priced: "단가 없음",
 };
 

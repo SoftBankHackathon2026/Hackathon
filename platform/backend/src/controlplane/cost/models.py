@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from controlplane.cost.onprem import OnPremReading
+
 HOURS_PER_MONTH = 730
 
 ServiceKind = Literal[
@@ -25,8 +27,9 @@ WorkloadRole = Literal["app", "postgres", "kafka", "object_storage", "self_hoste
 Category = Literal[
     "compute", "control_plane", "storage", "database", "messaging", "network", "onprem"
 ]
-# list_price: 공식 가격표 단가, owner_input: 운영자가 입력한 값(온프렘 장비비·전기료), not_priced: 단가 없음
-Basis = Literal["list_price", "owner_input", "not_priced"]
+# list_price: 공식 가격표 단가, owner_input: 운영자가 입력한 값(온프렘 장비비·전기료),
+# measured: 온프렘 측정기가 읽은 값, not_priced: 단가 없음
+Basis = Literal["list_price", "owner_input", "measured", "not_priced"]
 
 
 class Node(BaseModel):
@@ -83,6 +86,8 @@ class CostInventory(BaseModel):
     sources: list[str] = Field(default_factory=list)
     # 읽지 못한 것과 이유. 예: "관리형 서비스: AWS 읽기 권한 없음"
     gaps: list[str] = Field(default_factory=list)
+    # 온프렘 측정기가 읽은 값(전력 등). 측정기가 없으면 None.
+    onprem_reading: OnPremReading | None = None
 
 
 class CostLine(BaseModel):

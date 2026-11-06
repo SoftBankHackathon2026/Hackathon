@@ -23,6 +23,7 @@ from controlplane.cost.models import (
     WorkloadDemand,
     WorkloadRole,
 )
+from controlplane.cost.onprem import OnPremMeter
 from controlplane.domain.fleet import EnvironmentConfig
 from controlplane.integrations.kube import api_client
 
@@ -291,6 +292,7 @@ def collect_inventory(
         [EnvironmentConfig], tuple[list[Node], list[Volume], list[WorkloadDemand]]
     ] = read_kubernetes,
     aws: Callable[[str, dict[str, str]], list[ManagedService]] = read_aws_managed,
+    meter: OnPremMeter | None = None,
 ) -> CostInventory:
     sources, gaps = [], []
     nodes: list[Node] = []
@@ -314,6 +316,14 @@ def collect_inventory(
                 gaps.append(f"관리형 서비스: AWS 읽기 실패 ({type(exc).__name__})")
     elif env.provider == "gcp":
         gaps.append("관리형 서비스: GCP 수집기는 아직 없음")
+    reading = None
+    if meter is not None:
+        try:
+            reading = meter.read(env)
+            if reading is not None:
+                sources.append(f"온프렘 측정기 {reading.source}")
+        except Exception as exc:  # noqa: BLE001 - 측정기 오류는 수집 공백으로 남기고 설정값을 쓴다
+            gaps.append(f"온프렘 측정기: 읽기 실패 ({type(exc).__name__})")
     return CostInventory(
         env_id=env.id,
         provider=env.provider,
@@ -326,4 +336,5 @@ def collect_inventory(
         kubernetes_control_plane=env.provider in ("aws", "gcp") and bool(nodes),
         sources=sources,
         gaps=gaps,
+        onprem_reading=reading,
     )

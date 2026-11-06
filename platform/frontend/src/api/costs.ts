@@ -1,6 +1,7 @@
 import { request } from "./client";
 
-export type CostBasis = "list_price" | "owner_input" | "not_priced";
+export type CostBasis =
+  "list_price" | "owner_input" | "measured" | "not_priced";
 export type CostLine = {
   category: string;
   item: string;

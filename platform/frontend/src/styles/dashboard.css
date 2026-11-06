@@ -2926,6 +2926,7 @@ body {
 .cost-basis.basis-not_priced {
   color: var(--warning-contrast);
 }
+.cost-basis.basis-measured,
 .cost-basis.basis-owner_input {
   color: var(--accent-contrast);
 }

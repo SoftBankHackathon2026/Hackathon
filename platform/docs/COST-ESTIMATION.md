@@ -66,6 +66,22 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 
 `namespaces` 를 비우면 원본 환경의 `app_namespace` 하나를 옮긴다고 본다.
 
+## 온프렘 측정기 붙이기
+
+온프렘에는 청구서도 가격 API 도 없다. 장비비·전기 단가는 설정(`onprem`)에 적고, 측정할 수 있는 값은
+측정기가 읽어 그 필드만 덮어쓴다. 화면에는 근거가 "측정값"으로 표시된다.
+
+- 인터페이스: `controlplane/cost/onprem.py` 의 `OnPremMeter.read(env) -> OnPremReading | None`.
+  `OnPremReading` 은 `power_watts`·`hardware_usd`·`amortization_months`·`electricity_usd_per_kwh`·`other_monthly_usd` 중
+  읽은 것만 채운다(나머지는 설정값).
+- 등록: `@register_meter("이름")` 을 붙인 클래스(생성자는 설정의 `options` dict 하나)를
+  `controlplane/cost/meters/` 아래 모듈에 둔다. 이 패키지의 모듈은 자동으로 불러온다.
+- 선택: 비용 설정 `{"environments": {"onprem": {"meter": {"name": "이름", "options": {...}}}}}`.
+- 실패: 등록되지 않은 이름, 생성 오류, `read()` 예외는 수집기를 멈추지 않고 "온프렘 측정기: 읽기 실패"로 남는다.
+  `None` 을 돌려주면 설정값만 쓴다.
+- 예: 스마트 플러그 API, node-exporter RAPL(CPU 전력만이라 실제보다 낮음)을 Prometheus 에서 읽는 측정기.
+- 테스트 예: `tests/test_costs.py` 의 `test_registered_meter_is_created_and_read_by_collector`.
+
 ## 수집과 권한
 
 수집기(`fleet_collector`)가 약 5분마다 환경별 자원 목록을 `cost_inventory` 테이블에 덮어쓴다.
