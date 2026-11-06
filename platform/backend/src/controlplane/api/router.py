@@ -28,7 +28,6 @@ for module in (
     migrations,
     monitoring,
     releases,
-    migrations,
     costs,
 ):
     api_router.include_router(module.router)
