@@ -19,6 +19,7 @@ from controlplane.integrations.kube_inventory import (
     WorkloadSpec,
     build_inventory,
 )
+from controlplane.services import security
 from controlplane.services.fleet import environment_view
 
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
@@ -213,3 +214,26 @@ def test_ingress_links_survive_a_product_running_in_two_namespaces():
     found = live_components(ONPREM, build_inventory(objects, {}))
     assert {"ingress-nginx-shop", "ingress-nginx-edge"} <= found.keys()
     assert found["api"].depends_on == ["traefik"]
+
+
+def test_security_posture_builds_each_environment_topology_once(monkeypatch):
+    calls = []
+
+    def counted(snapshot):
+        calls.append(snapshot.config.id)
+        return environment_components(snapshot)
+
+    monkeypatch.setattr(security, "environment_components", counted)
+    inventory = build_inventory(SHOP, {})
+    snapshots = [
+        EnvironmentSnapshot(
+            with_default_layout(env.model_copy(update={"components": []})),
+            ClusterFacts(observed_at=NOW, connected=True, inventory=inventory),
+        )
+        for env in (ONPREM, AWS)
+    ]
+    fleet = SimpleNamespace(mode="live", list_environments=lambda: snapshots)
+    posture = security.SecurityService(fleet).get_posture()
+    assert calls == ["onprem", "aws"]
+    wl01 = next(c for c in posture.controls if c.id == "WL-01")
+    assert "api" in wl01.results["onprem"].resources

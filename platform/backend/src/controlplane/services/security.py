@@ -9,6 +9,7 @@ from controlplane.domain.security_controls import (
     affected_components,
     evaluate,
 )
+from controlplane.domain.topology import environment_components
 from controlplane.integrations.base import FleetSource
 from controlplane.schemas.security import (
     ControlResult,
@@ -86,8 +87,9 @@ class SecurityService:
         snapshots = self._source.list_environments()
         results = {s.config.id: evaluate(s) for s in snapshots}
         for snapshot in snapshots:
+            components = environment_components(snapshot)
             for control_id, result in results[snapshot.config.id].items():
-                result.resources = affected_components(control_id, snapshot)
+                result.resources = affected_components(control_id, components)
         parities = [parity_of(results, source, target) for source, target in self._pairs(snapshots)]
         return SecurityPosture(
             evaluated_at=datetime.now(UTC),
