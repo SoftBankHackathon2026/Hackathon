@@ -1,0 +1,117 @@
+# main 에 플랫폼 변경이 들어오면 이미지 2개를 팀 계정 ECR 에 올리고, EC2(oneport-platform) 에 SSM 으로 배포한다.
+#
+# 준비 (platform/deploy/ec2/README.md)
+#   - 저장소 변수 ONEPORT_DEPLOY_ROLE_ARN : GitHub OIDC 로 맡는 배포 역할. 계정 번호가 들어가므로 코드에 적지 않는다
+#   - EC2 는 태그 Name=oneport-platform, project=oneport 로 찾는다
+name: platform-ec2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "platform/backend/**"
+      - "platform/frontend/**"
+      - "platform/deploy/ec2/**"
+      - "platform/deploy/aws/fleet.json"
+      - ".github/workflows/platform-ec2.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: platform-ec2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-northeast-2
+  INSTANCE_TAG: oneport-platform
+
+jobs:
+  images:
+    name: image ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: oneport-platform-api
+            context: platform/backend
+          - image: oneport-platform-web
+            context: platform/frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.ONEPORT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/ghost/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=ec2-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=ec2-${{ matrix.image }}
+
+  deploy:
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.ONEPORT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Render release
+        run: |
+          mkdir -p release
+          cp platform/deploy/ec2/compose.yaml platform/deploy/ec2/deploy.sh release/
+          jq '.environments |= map(if .id == "aws"
+                then del(.in_cluster) + {kubeconfig: "/etc/oneport/kube/aws.kubeconfig", context: "oneaction-eks"}
+                else . end)' platform/deploy/aws/fleet.json > release/fleet.json
+          tar -czf release.tgz -C release .
+
+      - name: Deploy over SSM
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          payload=$(base64 -w0 release.tgz)
+          dir=/opt/oneport/releases/${GITHUB_SHA}
+          jq -n --arg p "$payload" --arg d "$dir" --arg r "$REGISTRY" --arg t "$GITHUB_SHA" '{commands: [
+            "set -euo pipefail",
+            "mkdir -p \($d)",
+            "echo \($p) | base64 -d | tar -xzf - -C \($d)",
+            "bash \($d)/deploy.sh \($d) \($r) \($t)",
+            "ls -1dt /opt/oneport/releases/* | tail -n +6 | xargs -r rm -rf"
+          ]}' > params.json
+          id=$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --targets "Key=tag:Name,Values=${INSTANCE_TAG}" "Key=tag:project,Values=oneport" \
+            --parameters file://params.json \
+            --timeout-seconds 600 \
+            --comment "platform-ec2 ${GITHUB_SHA::7}" \
+            --query Command.CommandId --output text)
+          echo "command: $id"
+          for _ in $(seq 60); do
+            status=$(aws ssm list-commands --command-id "$id" --query 'Commands[0].Status' --output text)
+            case "$status" in Pending|InProgress|Delayed) sleep 10 ;; *) break ;; esac
+          done
+          instance=$(aws ssm list-command-invocations --command-id "$id" --query 'CommandInvocations[0].InstanceId' --output text)
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$instance" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text
+          echo "status: $status"
+          [ "$status" = "Success" ]
