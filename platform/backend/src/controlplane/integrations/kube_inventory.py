@@ -13,7 +13,30 @@ KEPT_LABELS = (
     "app",
 )
 HOST_TOKEN = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*")
+SHORT_HOST = re.compile(
+    r"(?:://|@)([a-z0-9][a-z0-9-]*)(?![a-z0-9.-])|(?<![a-z0-9.-])([a-z0-9][a-z0-9-]*):\d"
+)
+HOST_KEY = re.compile(r"HOST|ADDR|URL|URI|ENDPOINT|SERVER|BROKER|BOOTSTRAP", re.IGNORECASE)
+EMBEDDED_PAIR = re.compile(
+    r"""["']?([a-z_][a-z0-9_.-]*)["']?[ \t]*[:=][ \t]*["']?([a-z0-9][a-z0-9-]*)["']?[ \t]*(?=$|[,#}\s])""",
+    re.MULTILINE,
+)
 SERVICE_DOMAINS = ("", ".svc", ".svc.cluster.local")
+REGISTRY_KEYS = {"fleet.json"}
+
+
+@dataclass(frozen=True)
+class ConfigValue:
+    key: str
+    value: str
+
+    def short_hosts(self) -> set[str]:
+        value = self.value.strip().lower()
+        names = {first or second for first, second in SHORT_HOST.findall(value)}
+        names |= {host for key, host in EMBEDDED_PAIR.findall(value) if HOST_KEY.search(key)}
+        if HOST_KEY.search(self.key) and HOST_TOKEN.fullmatch(value):
+            names.add(value)
+        return names
 
 
 def field_at(obj: KubeObject, *path: str) -> Any:
@@ -33,12 +56,14 @@ def mapping_at(obj: KubeObject, *path: str) -> dict[str, Any]:
     return field_at(obj, *path) or {}
 
 
-def _plain_values(containers: list[KubeObject]) -> list[str]:
+def _plain_values(containers: list[KubeObject]) -> list[ConfigValue]:
     values = []
     for container in containers:
-        values += [str(env["value"]) for env in items_at(container, "env") if env.get("value")]
-        values += [str(arg) for arg in items_at(container, "command")]
-        values += [str(arg) for arg in items_at(container, "args")]
+        for env in items_at(container, "env"):
+            if env.get("value"):
+                values.append(ConfigValue(env.get("name") or "", str(env["value"])))
+        arguments = [*items_at(container, "command"), *items_at(container, "args")]
+        values += [ConfigValue("", str(arg)) for arg in arguments]
     return values
 
 
@@ -72,7 +97,7 @@ class WorkloadSpec:
     images: list[str]
     labels: dict[str, str]
     pod_labels: dict[str, str]
-    config_values: list[str]
+    config_values: list[ConfigValue]
     configmaps: list[str]
 
     @property
@@ -150,15 +175,15 @@ class ClusterObjects:
     workloads: list[WorkloadSpec]
     services: list[ServiceSpec]
     ingresses: list[IngressSpec]
-    configmaps: dict[tuple[str, str], list[str]]
+    configmaps: dict[tuple[str, str], list[ConfigValue]]
 
-    def values_of(self, workload: WorkloadSpec) -> list[str]:
+    def values_of(self, workload: WorkloadSpec) -> list[ConfigValue]:
         mounted = [
             value
             for name in workload.configmaps
             for value in self.configmaps.get((workload.namespace, name), [])
         ]
-        return [*workload.config_values, *mounted]
+        return [v for v in [*workload.config_values, *mounted] if v.key not in REGISTRY_KEYS]
 
 
 @dataclass(frozen=True)
@@ -179,9 +204,6 @@ class ServiceIndex:
                 by_host.setdefault(host, []).extend(keys)
         return cls(by_name=by_name, by_host=by_host)
 
-    def workloads_at(self, namespace: str, host: str) -> list[str]:
-        return self.by_host.get(host) or self.by_name.get((namespace, host)) or []
-
 
 def _ingress_classes(objects: ClusterObjects, index: ServiceIndex) -> dict[str, set[str]]:
     classes: dict[str, set[str]] = {}
@@ -192,20 +214,22 @@ def _ingress_classes(objects: ClusterObjects, index: ServiceIndex) -> dict[str, 
     return classes
 
 
-def _calls(workload: WorkloadSpec, values: list[str], index: ServiceIndex) -> list[str]:
+def _calls(workload: WorkloadSpec, values: list[ConfigValue], index: ServiceIndex) -> list[str]:
     found: set[str] = set()
-    for value in values:
-        for host in HOST_TOKEN.findall(value.lower()):
-            found.update(index.workloads_at(workload.namespace, host))
+    for item in values:
+        for host in HOST_TOKEN.findall(item.value.lower()):
+            found.update(index.by_host.get(host, []))
+        for name in item.short_hosts():
+            found.update(index.by_name.get((workload.namespace, name), []))
     return sorted(found)
 
 
-def _mentions(values: list[str], parts: list[str]) -> bool:
-    lowered = [value.lower() for value in values]
+def _mentions(values: list[ConfigValue], parts: list[str]) -> bool:
+    lowered = [item.value.lower() for item in values]
     return any(part in value for part in parts for value in lowered)
 
 
-def _external_calls(values: list[str], hints: dict[str, list[str]]) -> list[str]:
+def _external_calls(values: list[ConfigValue], hints: dict[str, list[str]]) -> list[str]:
     return sorted(component for component, parts in hints.items() if _mentions(values, parts))
 
 

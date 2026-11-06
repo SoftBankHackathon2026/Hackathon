@@ -198,7 +198,7 @@ AWS_COMPONENTS = [
         "object_storage",
         managed=True,
         placement=[],
-        endpoint_hints=["oneaction-review-docs-"],
+        endpoint_hints=["oneaction-review-docs"],
     ),
     component(
         "tailscale-aws",

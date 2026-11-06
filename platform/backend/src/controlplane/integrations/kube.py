@@ -9,6 +9,7 @@ from urllib3.exceptions import HTTPError
 from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, InventoryItem, Workload
 from controlplane.integrations.kube_inventory import (
     ClusterObjects,
+    ConfigValue,
     IngressSpec,
     ServiceSpec,
     WorkloadSpec,
@@ -189,13 +190,15 @@ class ClusterReader:
         ]
         return specs
 
-    def _configmap(self, namespace: str, name: str) -> list[str] | None:
+    def _configmap(self, namespace: str, name: str) -> list[ConfigValue] | None:
         configmap = _optional(lambda: self._core.read_namespaced_config_map(name, namespace))
         if configmap is None:
             return None
-        return [str(value) for value in (configmap.data or {}).values()]
+        return [ConfigValue(key, str(value)) for key, value in (configmap.data or {}).items()]
 
-    def _configmap_values(self, workloads: list[WorkloadSpec]) -> dict[tuple[str, str], list[str]]:
+    def _configmap_values(
+        self, workloads: list[WorkloadSpec]
+    ) -> dict[tuple[str, str], list[ConfigValue]]:
         referenced = sorted({(w.namespace, name) for w in workloads for name in w.configmaps})
         found = {}
         for namespace, name in referenced:

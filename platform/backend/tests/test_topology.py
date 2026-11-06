@@ -14,6 +14,7 @@ from controlplane.integrations.config import with_default_layout
 from controlplane.integrations.defaults import AWS, ONPREM
 from controlplane.integrations.kube_inventory import (
     ClusterObjects,
+    ConfigValue,
     IngressSpec,
     ServiceSpec,
     WorkloadSpec,
@@ -98,7 +99,7 @@ SHOP = ClusterObjects(
         service("shop", "api", "api"),
     ],
     ingresses=[traefik_ingress("shop", "api")],
-    configmaps={("shop", "api-cfg"): ["KAFKA=kafka:9092"]},
+    configmaps={("shop", "api-cfg"): [ConfigValue("KAFKA", "kafka:9092")]},
 )
 
 
@@ -257,4 +258,33 @@ def test_reader_fetches_only_the_configmaps_workloads_reference(monkeypatch):
     )
     values = reader._configmap_values(SHOP.workloads)
     assert fetched == [("shop", "api-cfg")]
-    assert values == {("shop", "api-cfg"): ["kafka:9092"]}
+    assert values == {("shop", "api-cfg"): [ConfigValue("KAFKA", "kafka:9092")]}
+
+
+def test_only_host_shaped_references_become_calls():
+    objects = ClusterObjects(
+        workloads=[
+            workload("deployment", "shop", "user-only", env={"DB_USERNAME": "postgres"}),
+            workload("deployment", "shop", "host-key", env={"DB_HOST": "postgres"}),
+            workload("deployment", "shop", "url", env={"DSN": "postgresql://app@postgres/db"}),
+            workload("deployment", "shop", "registry", configmaps=["oneport-fleet"]),
+            workload("deployment", "shop", "yaml", configmaps=["worker-cfg"]),
+            workload("deployment", "shop", "repo", env={"REPOS": "acme/postgres"}),
+            workload("statefulset", "shop", "postgres", image="postgres:16"),
+        ],
+        services=[service("shop", "postgres", "postgres")],
+        ingresses=[],
+        configmaps={
+            ("shop", "oneport-fleet"): [ConfigValue("fleet.json", "postgres:5432 s3")],
+            ("shop", "worker-cfg"): [
+                ConfigValue("config.yaml", "db:\n  host: postgres  # ns\n  admin_dbname: other\n")
+            ],
+        },
+    )
+    found = live_components(AWS, build_inventory(objects, {"s3": ["s3"]}))
+    assert found["user-only"].depends_on == []
+    assert found["host-key"].depends_on == ["postgres"]
+    assert found["url"].depends_on == ["postgres"]
+    assert found["registry"].depends_on == []
+    assert found["yaml"].depends_on == ["postgres"]
+    assert found["repo"].depends_on == []
