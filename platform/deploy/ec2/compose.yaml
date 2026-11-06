@@ -1,4 +1,4 @@
-# Oneport 플랫폼 (EC2 한 대, docker compose). CD(.github/workflows/platform-ec2.yml)가 이 파일과 fleet.json 을 /opt/oneport 에 쓰고 다시 띄운다.
+# Oneport 플랫폼 (EC2 한 대, docker compose). CD(.github/workflows/platform-ec2.yml)가 이 파일과 fleet.json·cost.json 을 /opt/oneport 에 쓰고 다시 띄운다.
 #   postgres          : 플랫폼 DB
 #   oneport-api       : FastAPI. 화면 API, 보고기 ingest
 #   oneport-collector : 수집기. 세 클러스터 모두 /opt/oneport/kube 의 읽기 전용 kubeconfig 로 읽는다
@@ -46,10 +46,12 @@ services:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_INGEST_TOKEN_FILE: /etc/oneport/secrets/ingest-token
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
+      ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
     volumes:
       - ./secrets/database-url:/etc/oneport/secrets/database-url:ro
       - ./secrets/ingest-token:/etc/oneport/secrets/ingest-token:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
+      - ./cost.json:/etc/oneport/fleet/cost.json:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8320/healthz', headers={'Host': 'localhost'}))"]
       interval: 10s
@@ -61,10 +63,12 @@ services:
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
+      ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
     volumes:
       - ./secrets/database-url:/etc/oneport/secrets/database-url:ro
       - ./kube:/etc/oneport/kube:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
+      - ./cost.json:/etc/oneport/fleet/cost.json:ro
 
   oneport-web:
     image: ${ONEPORT_REGISTRY}/ghost/oneport-platform-web:${ONEPORT_TAG}

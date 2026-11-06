@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# EC2 에서 root 로 실행한다. CD 가 SSM 으로 compose.yaml·Caddyfile·fleet.json·이 스크립트를 release 폴더에 풀고 부른다.
+# EC2 에서 root 로 실행한다. CD 가 SSM 으로 compose.yaml·Caddyfile·fleet.json·cost.json·이 스크립트를 release 폴더에 풀고 부른다.
 #   deploy.sh <release 폴더> <레지스트리> <이미지 태그>
 set -euo pipefail
 release=${1:?release 폴더}
@@ -16,6 +16,7 @@ domain=$(sed -n 's/^ONEPORT_DOMAIN=//p' "$root/settings.env")
 install -m 0644 "$release/compose.yaml" "$root/compose.yaml"
 install -m 0644 "$release/Caddyfile" "$root/Caddyfile"
 install -m 0644 "$release/fleet.json" "$root/fleet.json"
+install -m 0644 "$release/cost.json" "$root/cost.json"
 printf 'ONEPORT_REGISTRY=%s\nONEPORT_TAG=%s\n' "$registry" "$tag" >"$root/.env"
 
 aws ecr get-login-password --region "${AWS_REGION:-ap-northeast-2}" | docker login --username AWS --password-stdin "$registry" >/dev/null

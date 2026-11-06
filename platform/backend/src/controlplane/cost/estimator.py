@@ -241,6 +241,10 @@ def _pick(field: str, spec: OnPremSpec, reading: OnPremReading | None) -> tuple[
     return getattr(spec, field), "owner_input"
 
 
+def _measured_note(reading: OnPremReading) -> str:
+    return f"측정: {reading.source} ({reading.note})" if reading.note else f"측정: {reading.source}"
+
+
 def price_onprem(spec: OnPremSpec, reading: OnPremReading | None = None) -> CostBreakdown:
     """온프렘 실제 비용(TCO): 장비 감가상각 + 전기 + 기타. 값이 없는 줄은 '입력 필요'.
 
@@ -271,7 +275,7 @@ def price_onprem(spec: OnPremSpec, reading: OnPremReading | None = None) -> Cost
             watts or 0,
             "W 평균",
             power_unit,
-            (f"측정: {reading.source}" if measured and reading else None)
+            (_measured_note(reading) if measured and reading else None)
             if power_unit is not None
             else missing,
             "measured" if measured else "owner_input",

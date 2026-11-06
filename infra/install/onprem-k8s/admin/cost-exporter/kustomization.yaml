@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oneport-cost
+resources:
+  - cost-exporter.yaml
+configMapGenerator:
+  - name: cost-exporter-script
+    files:
+      - exporter.py
