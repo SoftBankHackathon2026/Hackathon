@@ -13,12 +13,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+keycloak-infra = [
+    "ansible-core>=2.20,<2.21",
+    "kubernetes>=37.0.2,<38",
+    "cryptography>=42",
+]
 dev = [
     "pytest>=8.0",
 ]
 
-[tool.setuptools]
-packages = ["migration"]
+[tool.setuptools.packages.find]
+include = ["migration", "migration.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"migration.keycloak_infra" = ["ansible/**/*.py", "ansible/**/*.yml", "ansible/**/*.j2", "ansible/ansible.cfg"]
+
+[tool.setuptools.exclude-package-data]
+"migration.keycloak_infra" = ["**/__pycache__/*", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

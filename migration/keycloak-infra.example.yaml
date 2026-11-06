@@ -1,0 +1,45 @@
+schema_version: 1
+request_id: keycloak-setup-001
+timeout_seconds: 1800
+cluster:
+  id: onprem-example
+  kubeconfig: /run/platform/kubeconfig
+  context: onprem
+  # Empty means all namespaces visible to this credential.
+  namespaces: []
+nodes:
+  # Platform supplies fresh Node metadata.uid, not just a display name/IP.
+  - name: worker-01
+    uid: replace-with-current-node-uid
+    ssh_host: 192.0.2.10
+    ssh_port: 22
+    ssh_user: operator
+    private_key_file: /run/platform/ssh-key
+    known_hosts_file: /run/platform/known_hosts
+    # Optional when sudo needs a password; value comes from process environment.
+    # become_password_env: KEYCLOAK_SUDO_PASSWORD
+
+# Used only by inspect: manually entered existing environment, or selected candidate.
+# A candidate endpoint without a confirmed scheme/port must be completed by the platform.
+endpoint:
+  base_url: https://sso.example.internal:8443
+  realm: master
+  ca_file: /run/platform/ca.pem
+  # Optional; do not expose this host-local interface just for inspection.
+  # management_url: https://internal-management.example:9000
+
+# Used by preflight/install/verify. A single dedicated host installation.
+install:
+  id: onprem-identity-001
+  node_name: worker-01
+  # Direct HTTPS endpoint: port must match https_port; no reverse proxy is installed.
+  base_url: https://sso.example.internal:8443
+  https_port: 8443
+  db_port: 55432
+  certificate_file: /run/platform/tls-chain.pem
+  private_key_file: /run/platform/tls-key.pem
+  ca_file: /run/platform/ca.pem
+  db_password_env: KEYCLOAK_DB_PASSWORD
+  bootstrap_password_env: KEYCLOAK_BOOTSTRAP_PASSWORD
+  min_memory_mb: 4096
+  min_free_disk_mb: 10240

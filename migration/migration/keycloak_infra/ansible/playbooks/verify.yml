@@ -1,0 +1,22 @@
+- name: Verify target identity and certificates
+  ansible.builtin.import_playbook: preflight.yml
+
+- name: Verify managed service ownership and readiness
+  hosts: keycloak_nodes
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Require an installation managed by this tool
+      ansible.builtin.assert:
+        that: kc_host.report.managed_manifest == kc_host.report.expected_manifest
+        fail_msg: MANAGED_INSTALLATION_NOT_FOUND
+    - name: Verify managed host services
+      ansible.builtin.import_tasks: ../tasks/verify-host.yml
+
+- name: Verify published endpoint
+  hosts: localhost
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Verify platform endpoint
+      ansible.builtin.import_tasks: ../tasks/verify-endpoint.yml
