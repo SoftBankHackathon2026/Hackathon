@@ -25,7 +25,7 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 
 ### 배포 역할 정책
 
-`<ACCOUNT_ID>`는 배포할 때 채워요. 신뢰 정책은 이 저장소의 main만 받아요.
+`<ACCOUNT_ID>`는 배포할 때 채워요. 신뢰 정책은 이 저장소의 main만 받아요. 이 저장소는 OIDC `sub`에 바뀌지 않는 형식(`repo:<조직>@<조직 ID>/<저장소>@<저장소 ID>:...`)을 써서 그 값을 넣어요. 형식은 `gh api repos/SoftBankHackathon2026/Hackathon/actions/oidc/customization/sub`의 `sub_claim_prefix`로 확인해요. 이름 형식도 같이 둬서 설정이 바뀌어도 막히지 않게 해요.
 
 ```json
 {
@@ -36,7 +36,10 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {"StringEquals": {
       "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-      "token.actions.githubusercontent.com:sub": "repo:SoftBankHackathon2026/Hackathon:ref:refs/heads/main"
+      "token.actions.githubusercontent.com:sub": [
+        "repo:SoftBankHackathon2026@350755067/Hackathon@1440930975:ref:refs/heads/main",
+        "repo:SoftBankHackathon2026/Hackathon:ref:refs/heads/main"
+      ]
     }}
   }]
 }
