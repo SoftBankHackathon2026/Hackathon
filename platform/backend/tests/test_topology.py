@@ -237,3 +237,24 @@ def test_security_posture_builds_each_environment_topology_once(monkeypatch):
     assert calls == ["onprem", "aws"]
     wl01 = next(c for c in posture.controls if c.id == "WL-01")
     assert "api" in wl01.results["onprem"].resources
+
+
+def test_reader_fetches_only_the_configmaps_workloads_reference(monkeypatch):
+    monkeypatch.setattr(kube, "api_client", lambda env: kube.client.ApiClient())
+    reader = kube.ClusterReader(ONPREM)
+    fetched = []
+
+    def read_namespaced_config_map(name, namespace):
+        fetched.append((namespace, name))
+        return SimpleNamespace(data={"KAFKA": "kafka:9092"})
+
+    def list_everything():
+        raise AssertionError("must not list every ConfigMap")
+
+    reader._core = SimpleNamespace(
+        read_namespaced_config_map=read_namespaced_config_map,
+        list_config_map_for_all_namespaces=list_everything,
+    )
+    values = reader._configmap_values(SHOP.workloads)
+    assert fetched == [("shop", "api-cfg")]
+    assert values == {("shop", "api-cfg"): ["kafka:9092"]}

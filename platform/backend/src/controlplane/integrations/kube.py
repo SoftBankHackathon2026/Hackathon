@@ -189,12 +189,20 @@ class ClusterReader:
         ]
         return specs
 
-    def _configmap_values(self) -> dict[tuple[str, str], list[str]]:
-        configmaps = _optional(lambda: self._core.list_config_map_for_all_namespaces().items)
-        return {
-            (cm.metadata.namespace, cm.metadata.name): [str(v) for v in (cm.data or {}).values()]
-            for cm in configmaps or []
-        }
+    def _configmap(self, namespace: str, name: str) -> list[str] | None:
+        configmap = _optional(lambda: self._core.read_namespaced_config_map(name, namespace))
+        if configmap is None:
+            return None
+        return [str(value) for value in (configmap.data or {}).values()]
+
+    def _configmap_values(self, workloads: list[WorkloadSpec]) -> dict[tuple[str, str], list[str]]:
+        referenced = sorted({(w.namespace, name) for w in workloads for name in w.configmaps})
+        found = {}
+        for namespace, name in referenced:
+            values = self._configmap(namespace, name)
+            if values is not None:
+                found[(namespace, name)] = values
+        return found
 
     def _inventory(self) -> list[InventoryItem] | None:
         workloads = self._workload_specs()
@@ -206,7 +214,7 @@ class ClusterReader:
             workloads=workloads,
             services=[ServiceSpec.from_k8s(self._serialize(s)) for s in services],
             ingresses=[IngressSpec.from_k8s(self._serialize(i)) for i in ingresses],
-            configmaps=self._configmap_values(),
+            configmaps=self._configmap_values(workloads),
         )
         hints = {c.id: c.endpoint_hints for c in self._env.components if c.endpoint_hints}
         return build_inventory(objects, hints)
