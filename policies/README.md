@@ -59,3 +59,20 @@ Python 쪽: `python -m migration.policy evaluate --input ../policies/examples/fi
 1. 규칙을 바꾸면 `policy_version` 을 올리고 `migration_test.rego`·`examples/expected.json` 을 같이 고친다.
 2. 입력 계약을 바꾸면 `schema_version` 을 올리고 `policy_client.py` 의 `SCHEMA_VERSION` 을 맞춘다. 옛 버전 입력은 `SCHEMA-UNSUPPORTED` 로 거절된다.
 3. CI 는 `.github/workflows/policies.yml` 이다 (opa fmt/check/test → 예시 대조 → pytest → 이미지 빌드). 배포는 `gitops/apps/migration-policy` 의 이미지 태그 교체로만 한다. 클러스터에서 정책 파일을 손으로 바꾸지 않는다.
+
+## 배포 후 HTTP 판정 확인
+
+명시적인 프로젝트 kubeconfig로 포트 포워드를 연 뒤 합성 입력 15개를 보낸다.
+이 검사는 데이터 조회/이전/전환을 수행하지 않는다. 입력의 과거 시각은 stale 판정까지
+재현하기 위한 테스트 값이며, 실제 환경 검증이나 이전 승인 근거로 재사용하지 않는다.
+
+```bash
+kubectl --kubeconfig "$PROJECT_KUBECONFIG" -n hackathon port-forward svc/migration-policy 18181:8181
+# 별도 터미널, Hackathon 저장소 루트에서
+python3 policies/smoke.py --url http://127.0.0.1:18181
+```
+
+기대 결과는 `Synthetic policy checks: 15/15 passed`, 종료 코드 0이다.
+미적재 정책(HTTP 200 + 빈 객체), 다른 정책 버전, 판정/사유 불일치, 연결 실패는 종료 코드 1이다.
+이미지 pull 실패는 이 검사 전에 해결해야 하며, 공개 범위를 바꾸지 않고 Harbor GHCR upstream의
+읽기 인증을 구성하는 방법을 우선한다. 토큰은 Git/명령행 인자/로그에 남기지 않는다.
