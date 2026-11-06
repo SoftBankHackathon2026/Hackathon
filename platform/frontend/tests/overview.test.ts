@@ -140,7 +140,7 @@ test("scoreBand and complianceBar", () => {
   assert.equal(scoreBand(80), "high");
   assert.equal(scoreBand(57), "mid");
   assert.equal(scoreBand(49), "low");
-  assert.equal(BAND_LABELS.low, "준수 낮음");
+  assert.equal(BAND_LABELS.low, "기준 미달");
   const bar = complianceBar({ passed: 10, failed: 10, unknown: 3 }, 23);
   assert.equal(bar.total, 23);
   assert.deepEqual(

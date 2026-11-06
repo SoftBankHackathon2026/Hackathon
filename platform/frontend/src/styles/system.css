@@ -787,6 +787,443 @@ th[aria-sort="descending"] .pk-sort-mark {
   white-space: normal;
 }
 
+/* ── 19. 필터 타일(Security Inbox 방식) ──────────────── */
+.ftiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.ftile-group {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.ftile-group header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ftile-group h2 {
+  margin: 0;
+  color: var(--text-secondary);
+  font: var(--type-label);
+  font-weight: 700;
+}
+.ftile-group header span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ftile-row {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+}
+.shell .ftile {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-weak);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+  font: var(--type-body);
+  text-align: left;
+}
+.shell .ftile:hover {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.shell .ftile[aria-pressed="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--text);
+}
+.ftile b {
+  color: var(--text);
+  font: var(--type-number);
+  font-variant-numeric: tabular-nums;
+}
+.ftile.tone-none b {
+  color: var(--text-disabled);
+}
+.ftile.tone-bad b {
+  color: var(--danger-contrast);
+}
+.ftile.tone-warn b {
+  color: var(--warning-contrast);
+}
+.ftile.tone-ok b {
+  color: var(--success-contrast);
+}
+
+/* ── 20. 보안 목록·표준 ───────────────────────────── */
+.env-hits {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.env-hits .sub {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.std-ids {
+  white-space: nowrap;
+}
+.sev-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sev-counts .sev-tag {
+  min-width: 0;
+}
+.std-cell {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+.env-score {
+  font: var(--type-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.env-score.band-low {
+  color: var(--danger-contrast);
+}
+.env-score.band-mid {
+  color: var(--warning-contrast);
+}
+.env-score.band-high {
+  color: var(--success-contrast);
+}
+.env-scores {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.env-scores li {
+  display: grid;
+  grid-template-columns:
+    minmax(200px, 260px) minmax(120px, 1fr)
+    40px 72px minmax(0, 220px);
+  gap: 16px;
+  align-items: center;
+  height: 44px;
+  border-bottom: 1px solid var(--divider);
+}
+.env-scores li:last-child {
+  border-bottom: 0;
+}
+.env-scores .env-score {
+  font: var(--type-subtitle);
+  text-align: right;
+}
+.env-score-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+}
+.env-score-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--other);
+}
+.env-score-track .band-low {
+  background: var(--danger);
+}
+.env-score-track .band-mid {
+  background: var(--warning);
+}
+.env-score-track .band-high {
+  background: var(--success);
+}
+.env-score-counts {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 21. 규칙 행(분류 아이콘 타일 + 제목 + 보조 줄) ─────── */
+.rule-cell {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.rule-text {
+  display: grid;
+  min-width: 0;
+}
+.rule-title {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font: var(--type-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rule-sub {
+  display: block;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.cat-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cat-network {
+  background: #fdeee3;
+  color: #c2581a;
+}
+.cat-workload {
+  background: var(--accent-soft);
+  color: var(--accent-contrast);
+}
+.cat-identity {
+  background: #fbe9f2;
+  color: #a8326f;
+}
+.cat-data {
+  background: #e4f0fb;
+  color: #1f6fb4;
+}
+.cat-detection {
+  background: #e1f4f2;
+  color: #00796f;
+}
+.cat-governance {
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+/* 심각도 막대 표식 */
+.sev-meter {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-secondary);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.sev-meter-bars {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+}
+.sev-meter-bars i {
+  width: 4px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--surface-sunken);
+}
+.sev-critical .sev-meter-bars i.on {
+  background: #9b1c1c;
+}
+.sev-high .sev-meter-bars i.on {
+  background: var(--danger);
+}
+.sev-medium .sev-meter-bars i.on {
+  background: var(--warning);
+}
+.sev-low .sev-meter-bars i.on {
+  background: var(--border-strong);
+}
+.sev-meter.sev-critical,
+.sev-meter.sev-high {
+  color: var(--danger-contrast);
+  font-weight: 600;
+}
+.pk-table th.sev-col {
+  width: 96px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── 22. 영향 경로 ─────────────────────────────────── */
+.fp-group.wide {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.ip-env {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px 6px;
+  border-radius: var(--radius-control);
+  background: var(--surface-weak);
+}
+.ip-env .pk-path {
+  font: var(--type-strong);
+}
+.impact-path {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ip-col {
+  fill: var(--text-tertiary);
+  font: var(--type-tag);
+}
+.ip-edge {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 3;
+}
+.ip-hit {
+  fill: var(--danger);
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.ip-label {
+  fill: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 11px;
+}
+.fp-group p.ip-legend {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.ip-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/* ── 23. 표준 표(펼치는 그룹) ───────────────────────── */
+.std-table td {
+  height: 48px;
+}
+.std-group td {
+  background: var(--surface-weak);
+}
+.std-group:hover td {
+  background: var(--surface-subtle);
+}
+.std-name {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.std-name .pk-chevron {
+  margin: 0 4px 0 2px;
+}
+.pk-chevron.open {
+  transform: rotate(45deg);
+}
+.std-child td:first-child {
+  padding-left: 30px;
+}
+.std-verdict {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+}
+.pf-counts {
+  display: inline-flex;
+  gap: 14px;
+  justify-content: flex-end;
+  font: var(--type-strong);
+  font-variant-numeric: tabular-nums;
+}
+.pf-counts > span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-width: 34px;
+  justify-content: flex-end;
+}
+.pf-counts i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.pf-pass i {
+  background: var(--success);
+}
+.pf-fail i {
+  background: var(--danger);
+}
+.pf-fail.zero {
+  color: var(--text-tertiary);
+}
+.pf-fail.zero i {
+  background: var(--border-strong);
+}
+.posture {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 160px;
+}
+.posture-track {
+  flex: 1;
+  max-width: 180px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+}
+.posture-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.posture-track .band-high {
+  background: var(--success);
+}
+.posture-track .band-mid {
+  background: var(--warning);
+}
+.posture-track .band-low {
+  background: var(--danger);
+}
+.posture b {
+  min-width: 36px;
+  font: var(--type-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── 24. 개요 대시보드(위젯 격자) ────────────────────── */
 .sec-grid {
   display: grid;
