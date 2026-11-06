@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3환경 동시 보기</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --surface: #0b0f14; --panel: #151b23; --line: #2a333f;
+    --text: #e6edf3; --muted: #9aa7b4; --alert: #ff6b6b;
+    --environment: #9aa7b4;
+  }
+  [data-environment="onprem"] { --environment: #2dd4bf; }
+  [data-environment="aws"] { --environment: #ff9900; }
+  [data-environment="gcp"] { --environment: #60a5fa; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--surface); color: var(--text);
+    font: 1vw/1.3 system-ui, "Apple SD Gothic Neo", "Hiragino Sans",
+        "Noto Sans KR", "Noto Sans JP", sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  #top {
+    flex: none; display: flex; align-items: center; justify-content: center;
+    gap: 1.6vw; padding: 1vh 1vw; font-size: 1.4vw; font-weight: 700;
+  }
+  #top-ja { color: var(--muted); font-size: 1.1vw; font-weight: 500; }
+  #grid {
+    flex: 1; min-height: 0; display: grid; gap: 1vw; padding: 0 1vw;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .panel {
+    position: relative; min-width: 0; min-height: 0; overflow: hidden;
+    display: flex; flex-direction: column; gap: 1vh; padding: 1.2vh 1vw;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .head { display: flex; align-items: flex-start; gap: 1vw; }
+  .names { min-width: 0; }
+  .name {
+    color: var(--environment); font-size: 3.6vw; font-weight: 900;
+    line-height: 1.05; white-space: nowrap;
+  }
+  .panel.stale .name { opacity: .35; }
+  .name-ja { color: var(--muted); font-size: 1vw; }
+  .state { margin-left: auto; text-align: right; }
+  .status {
+    display: inline-block; padding: .1em .5em; border-radius: 8px;
+    color: var(--muted); font-size: 1.5vw; font-weight: 800; white-space: nowrap;
+  }
+  .status.down { background: var(--alert); color: #1f0505; }
+  .meta {
+    overflow: hidden; color: var(--muted); font-size: 1vw;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .meta b { color: var(--text); }
+  .detail { color: var(--alert); font-size: .9vw; min-height: 1.3em; }
+  .banner {
+    padding: .25em .5em; border-radius: 6px; background: #ffb020; color: #1a1205;
+    font-size: 1.3vw; font-weight: 800; text-align: center;
+  }
+  .counters {
+    display: grid; gap: .6vw;
+    grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
+  }
+  .label { color: var(--muted); font-size: .9vw; white-space: nowrap; }
+  .value {
+    font-size: 2.1vw; font-weight: 800; line-height: 1.15; white-space: nowrap;
+  }
+  .unit { color: var(--muted); font-size: .45em; font-weight: 600; }
+  .chart-head { display: flex; justify-content: space-between; }
+  .chart { display: block; width: 100%; height: 11vh; }
+  /* 환경 선택자보다 우선순위가 낮아야 막대가 그 시점 환경 색이 된다. */
+  rect { --environment: #9aa7b4; fill: var(--environment); }
+  .chart line {
+    stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke;
+  }
+  .frame-head {
+    display: flex; justify-content: space-between; color: var(--muted);
+    font-size: .9vw;
+  }
+  .frame-head a { color: #93c5fd; text-decoration: none; }
+  .frame-box {
+    position: relative; flex: 1; min-height: 0; overflow: hidden;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  }
+  /* 클릭으로 키보드 포커스를 뺏기면 단축키가 먹지 않는다. */
+  .frame-box iframe {
+    position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0;
+    pointer-events: none;
+  }
+  .unset-note {
+    position: absolute; inset: 0; display: none; align-items: center;
+    justify-content: center; background: rgba(21, 27, 35, .92);
+    color: var(--muted); font-size: 2.6vw; font-weight: 800;
+  }
+  .panel.unset .unset-note { display: flex; }
+  #foot {
+    flex: none; display: flex; justify-content: flex-end; gap: 1vw;
+    padding: .6vh 1vw; color: var(--muted); font-size: .95vw;
+  }
+  #paused {
+    padding: 0 .6em; border-radius: 4px; background: #ffb020; color: #1a1205;
+    font-weight: 800;
+  }
+  [hidden] { display: none !important; }
+  @media (max-width: 900px) {
+    html, body { height: auto; }
+    body { font-size: 14px; }
+    #top { flex-direction: column; gap: 2px; font-size: 16px; }
+    #top-ja { font-size: 13px; }
+    #grid { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 0 16px; }
+    .panel { gap: 8px; padding: 12px; }
+    .name { font-size: 36px; }
+    .name-ja, .meta, .frame-head, .label { font-size: 13px; }
+    .status { font-size: 16px; }
+    .banner { font-size: 15px; }
+    .value { font-size: 24px; }
+    .chart { height: 90px; }
+    .frame-box { flex: none; height: 200px; }
+    .unset-note { font-size: 22px; }
+    #foot { padding: 8px 16px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+  <div id="top"><span id="top-ko"></span><span id="top-ja" lang="ja"></span></div>
+  <div id="grid"></div>
+  <div id="foot"><span id="paused" role="status" hidden>일시정지</span>
+    <span>P 일시정지 · F 전체화면</span></div>
+  <template id="panel-template">
+    <section class="panel">
+      <div class="head">
+        <div class="names">
+          <div class="name" data-part="name"></div>
+          <div class="name-ja" lang="ja" data-part="name-ja"></div>
+        </div>
+        <div class="state">
+          <div class="status" role="status" data-part="status">연결 중</div>
+          <div class="detail" data-part="detail"></div>
+        </div>
+      </div>
+      <div class="meta">응답 환경 <b data-part="responder">—</b>
+        · 리전 <b data-part="region">—</b>
+        · 버전 <b data-part="version">—</b>
+        · DB <b data-part="database">—</b></div>
+      <div class="banner" role="status" data-part="banner" hidden>⚠ 전환 중 · 쓰기 일시 정지</div>
+      <div class="counters">
+        <div><div class="label">총 행 수</div>
+          <div class="value" data-part="total">—</div></div>
+        <div><div class="label">초당 유입(10초)</div>
+          <div class="value"><span data-part="rate">—</span>
+            <span class="unit">건/초</span></div></div>
+        <div><div class="label">마지막 쓰기 후</div>
+          <div class="value"><span data-part="last-write">—</span>
+            <span class="unit">초</span></div></div>
+      </div>
+      <div>
+        <div class="chart-head"><span class="label">최근 60초 유입</span>
+          <span class="label" data-part="peak"></span></div>
+        <svg class="chart" viewBox="0 0 600 120" preserveAspectRatio="none" role="img"
+            aria-label="최근 60초 초당 유입량. 막대 색은 그 시점의 환경, 끊긴 구간은 빈칸">
+          <line x1="0" y1="120" x2="600" y2="120"/>
+          <g data-part="bars"></g>
+        </svg>
+      </div>
+      <div class="frame-head"><span>실제 서비스 화면 / 実際のサービス画面</span>
+        <a data-part="open" target="_blank" rel="noopener noreferrer">새 창으로 열기 ↗</a></div>
+      <div class="frame-box" data-part="frame-box">
+        <iframe data-part="frame" title="실제 서비스 화면" tabindex="-1"
+            referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>
+      </div>
+      <div class="unset-note">주소 미설정</div>
+    </section>
+  </template>
+  <script src="/live-model.js"></script>
+  <script src="/viewer.js"></script>
+</body>
+</html>
