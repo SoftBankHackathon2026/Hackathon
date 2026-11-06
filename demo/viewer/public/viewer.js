@@ -305,6 +305,7 @@ function createPanel(environment, pollMillis, timeoutMillis) {
   const hasQr = Boolean(environment.publicUrl);
   part('local-note').hidden = hasQr || !environment.localOnly;
   part('no-public-url').hidden = hasQr || environment.localOnly;
+  part('local-test').hidden = !environment.localTest;
   if (environment.pageUrl) {
     part('open').href = `${environment.pageUrl}/`;
     new ResizeObserver(fitFrame).observe(part('frame-box'));

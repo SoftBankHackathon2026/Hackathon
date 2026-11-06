@@ -1,0 +1,9 @@
+{
+  "pollMillis": 500,
+  "timeoutMillis": 3000,
+  "environments": [
+    {"id": "onprem", "name": "온프렘", "nameJa": "オンプレミス", "url": "http://localhost:8091", "public_url": "", "local_only": true},
+    {"id": "aws", "name": "AWS", "nameJa": "AWS", "url": "https://sample-app.hackerthon.yubin.dev", "public_url": "https://sample-app.hackerthon.yubin.dev"},
+    {"id": "gcp", "name": "GCP", "nameJa": "GCP", "url": "", "public_url": ""}
+  ]
+}
