@@ -40,17 +40,23 @@
   }
   /* QR 이 없는 칸도 높이를 맞춰 칸끼리 그래프 위치가 어긋나지 않게 한다. */
   .head { display: flex; align-items: flex-start; gap: 1vw; min-height: 7vw; }
-  .names { min-width: 0; }
+  /* 이름은 줄지 않고, 공간이 모자라면 상태 문구가 줄바꿈된다. */
+  .names { flex: none; }
   .name {
     color: var(--environment); font-size: 3.6vw; font-weight: 900;
     line-height: 1.05; white-space: nowrap;
   }
   .panel.stale .name { opacity: .35; }
   .name-ja { color: var(--muted); font-size: 1vw; }
-  .state { margin-left: auto; text-align: right; }
+  .local-test {
+    display: inline-block; margin-top: .3em; padding: .1em .5em;
+    border: 1px dashed #fbbf24; border-radius: 4px; color: #fbbf24;
+    font-size: .95vw; font-weight: 800; white-space: nowrap;
+  }
+  .state { flex: 1; min-width: 0; text-align: right; }
   .status {
     display: inline-block; padding: .1em .5em; border-radius: 8px;
-    color: var(--muted); font-size: 1.5vw; font-weight: 800; white-space: nowrap;
+    color: var(--muted); font-size: 1.5vw; font-weight: 800; word-break: keep-all;
   }
   .status.down { background: var(--alert); color: #1f0505; }
   .meta {
@@ -184,6 +190,8 @@
         <div class="names">
           <div class="name" data-part="name"></div>
           <div class="name-ja" lang="ja" data-part="name-ja"></div>
+          <div class="local-test" data-part="local-test">로컬 시험 ·
+            <span lang="ja">ローカル試験</span></div>
         </div>
         <div class="state">
           <div class="status" role="status" data-part="status">연결 중</div>
