@@ -15,6 +15,7 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
 from pydantic import BaseModel, Field
+from urllib3.exceptions import HTTPError as Urllib3Error
 
 from controlplane.cost.models import (
     HOURS_PER_MONTH,
@@ -555,7 +556,7 @@ def collect_inventory(
     try:
         nodes, volumes, workloads = kube(env)
         sources.append("kubernetes")
-    except (ApiException, ConfigException, OSError) as exc:
+    except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
         gaps.append(f"클러스터 자원: 읽지 못함 ({type(exc).__name__})")
     scan = ManagedScan()
     if env.provider == "aws":

@@ -5,7 +5,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 import httpx
+from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
+from urllib3.exceptions import HTTPError as Urllib3Error
 
 from controlplane.core import db
 from controlplane.cost.collect import collect_inventory
@@ -124,13 +126,13 @@ class FleetCollector:
             for env in self._config.environments:
                 try:
                     self.collect_environment(env)
-                except (ConfigException, OSError) as exc:
+                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
                     LOG.warning("env=%s facts error=%s", env.id, type(exc).__name__)
         if self._ticks % COST_EVERY_TICKS == 0:
             for env in self._config.environments:
                 try:
                     self.collect_costs(env)
-                except (ConfigException, OSError) as exc:
+                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
                     LOG.warning("env=%s cost error=%s", env.id, type(exc).__name__)
         self._ticks += 1
 
