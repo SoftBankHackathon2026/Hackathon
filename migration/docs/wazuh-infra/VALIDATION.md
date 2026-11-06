@@ -25,7 +25,7 @@
 저장소의 `migration/`에서 실행합니다.
 
 ```sh
-python -m pip install '.[wazuh-infra,dev]' build wheel ruff==0.17.4
+python -m pip install '.[wazuh-infra,dev]' build wheel 'setuptools>=69' ruff==0.17.4
 ruff check --isolated --select E9,F,I migration/wazuh_infra tests/wazuh_infra
 ruff format --check migration/wazuh_infra tests/wazuh_infra
 python -m pytest -ra

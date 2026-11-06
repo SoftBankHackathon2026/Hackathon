@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install optional infrastructure and test tools
-        run: python -m pip install '.[wazuh-infra,dev]' build wheel ruff==0.17.4
+        run: python -m pip install '.[wazuh-infra,dev]' build wheel 'setuptools>=69' ruff==0.17.4
       - name: Check source formatting and imports
         run: |
           ruff check --isolated --select E9,F,I migration/wazuh_infra tests/wazuh_infra
