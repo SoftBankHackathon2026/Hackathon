@@ -1,213 +1,41 @@
 import { useState } from "react";
-import type { EnvComponent, FleetEnvironment } from "../../api/migrations";
-import type { Control, Severity } from "../../api/security";
-import { StatusDot } from "../../components/StatusDot";
+import type { FleetEnvironment } from "../../api/migrations";
+import type { Severity } from "../../api/security";
 import { SEVERITY_LABELS, SEVERITY_ORDER } from "../security/posture";
-import { controlHash } from "../../app/routes";
-import { SeverityDot } from "../../components/Severity";
-import { SEVERITY_LABELS as SEV_LABELS } from "../security/posture";
-import { excerpt } from "../security/explorer";
-import { placementPath, statusCounts } from "./canvasModel";
-import {
-  OVERLAY_GROUPS,
-  type Marker,
-  type OverlayGroup,
-} from "./securityModel";
-import {
-  COMPONENT_STATUS_LABELS,
-  LAYER_LABELS,
-  componentTone,
-  dependents,
-  kindLabel,
-  detailText,
-} from "./model";
-import { blockPaint } from "./blockStyle";
-import { cloudIconUrl } from "./cloudAssets";
-import { cloudProviderOf, serviceIcon } from "./cloudIcons";
-import { iconFor } from "./iconMap";
-import { inkOn } from "./iso";
-import type { Overlay, TileRef } from "./IsoCanvas";
+import { statusCounts } from "./canvasModel";
+import { OVERLAY_GROUPS, type OverlayGroup } from "./securityModel";
+import { LEVEL_COLORS, LEVEL_LABELS, LEVEL_ORDER, levelOf } from "./blockStyle";
 
-function ServiceChip({
-  component,
-  env,
+/** 경계 범례(Cloudcraft 그룹 기준 칩처럼 단계마다 색). 지금 그림에 있는 단계만. */
+export function BoundaryKey({
+  environments,
 }: {
-  component: EnvComponent;
-  env: FleetEnvironment;
+  environments: FleetEnvironment[];
 }) {
-  const url = cloudIconUrl(serviceIcon(cloudProviderOf(env), component));
-  const icon = iconFor(component);
-  const paint = blockPaint(component, false);
-  return (
-    <span className="rc-chip">
-      {url ? (
-        <img src={url} width="16" height="16" alt="" />
-      ) : (
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          style={{ background: paint.top, borderRadius: 3, padding: 2 }}
-          fill={icon.filled ? inkOn(paint.top) : "none"}
-          stroke={icon.filled ? "none" : inkOn(paint.top)}
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d={icon.path} />
-        </svg>
-      )}
-      {kindLabel(component.kind)}
-    </span>
+  const present = new Set(
+    environments.flatMap((env) => [
+      ...(env.boundary ?? []).map(levelOf),
+      ...env.components.flatMap((c) => (c.placement ?? []).map(levelOf)),
+    ]),
   );
-}
-
-export function ResourceCard({
-  env,
-  component,
-  overlay,
-  marker,
-  onSelect,
-  onClose,
-}: {
-  env: FleetEnvironment;
-  component: EnvComponent;
-  overlay: Overlay;
-  marker: Marker | undefined;
-  onSelect: (ref: TileRef) => void;
-  onClose: () => void;
-}) {
-  const nameOf = (id: string) =>
-    env.components.find((c) => c.id === id)?.name ?? id;
-  const users = dependents(env.components, component.id);
-  const path = placementPath(env, component);
+  const levels = LEVEL_ORDER.filter((level) => present.has(level));
   return (
-    <aside className="resource-card" aria-label={`${component.name} 상세`}>
-      <header>
-        <div className="rc-chips">
-          <ServiceChip component={component} env={env} />
-        </div>
-        <button
-          type="button"
-          className="card-close"
-          aria-label="닫기"
-          onClick={onClose}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-            <path
-              d="M3 3l10 10M13 3L3 13"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </header>
-      <h3 className="rc-name">{component.name}</h3>
-      <dl className="rc-keys">
-        <div>
-          <dt>환경</dt>
-          <dd>{env.name}</dd>
-        </div>
-        <div>
-          <dt>종류</dt>
-          <dd>
-            {LAYER_LABELS[component.layer]}
-            {component.managed ? " · 관리형 서비스" : ""}
-          </dd>
-        </div>
-        <div>
-          <dt>배치</dt>
-          <dd>{path.slice(-2).join(" › ") || "-"}</dd>
-        </div>
-        <div>
-          <dt>상태</dt>
-          <dd>
-            <StatusDot tone={componentTone(component.status)}>
-              {COMPONENT_STATUS_LABELS[component.status]}
-            </StatusDot>
-          </dd>
-        </div>
-      </dl>
-      <dl className="card-rows">
-        <div>
-          <dt>상세</dt>
-          <dd>{detailText(component.detail) || "-"}</dd>
-        </div>
-        <div>
-          <dt>의존</dt>
-          <dd>
-            {component.depends_on.length === 0
-              ? "-"
-              : component.depends_on.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className="link-button"
-                    onClick={() => onSelect({ envId: env.id, id })}
-                  >
-                    {nameOf(id)}
-                  </button>
-                ))}
-          </dd>
-        </div>
-        <div>
-          <dt>사용처</dt>
-          <dd>
-            {users.length === 0
-              ? "-"
-              : users.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="link-button"
-                    onClick={() => onSelect({ envId: env.id, id: c.id })}
-                  >
-                    {c.name}
-                  </button>
-                ))}
-          </dd>
-        </div>
-      </dl>
-      {overlay === "security" && (
-        <section className="rc-security">
-          <h4 className="rc-section">보안</h4>
-          {marker ? (
-            <ul className="rc-findings">
-              {marker.controls.map((control: Control) => (
-                <li key={control.id}>
-                  <div className="rc-find-head">
-                    <SeverityDot severity={control.severity}>
-                      {SEV_LABELS[control.severity]}
-                    </SeverityDot>
-                    <span className="strong">{control.title}</span>
-                  </div>
-                  {control.standard_refs.length > 0 && (
-                    <div className="chips">
-                      {control.standard_refs.slice(0, 3).map((ref) => (
-                        <span key={ref} className="chip">
-                          {ref}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <p className="sub rc-why">{excerpt(control.why, 70)}</p>
-                  <a
-                    className="text-link rc-more"
-                    href={controlHash(control.id)}
-                  >
-                    자세히 보기 →
-                  </a>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="rc-clean">실패한 통제 없음 ✓</p>
-          )}
-        </section>
-      )}
-    </aside>
+    <ol className="boundary-key" aria-label="경계 단계">
+      {levels.map((level) => (
+        <li key={level}>
+          <i
+            style={{
+              borderColor: LEVEL_COLORS[level],
+              borderStyle:
+                level === "region" || level === "namespace"
+                  ? "dashed"
+                  : "solid",
+            }}
+          />
+          {LEVEL_LABELS[level]}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -219,9 +47,10 @@ export function InfraLegend({
   const counts = statusCounts(environments.flatMap((e) => e.components));
   const rows = [
     { tone: "ok", label: "정상", count: counts.healthy },
-    { tone: "warn", label: "일부만 준비됨", count: counts.degraded },
+    { tone: "warn", label: "일부 파드만 준비됨", count: counts.degraded },
     { tone: "bad", label: "중단", count: counts.down },
-    { tone: "idle", label: "상태 미수집", count: counts.unknown },
+    { tone: "idle", label: "복제본 0개", count: counts.idle },
+    { tone: "idle", label: "상태 정보 없음", count: counts.unknown },
   ].filter((row) => row.tone === "ok" || row.count > 0);
   return (
     <div className="canvas-legend" role="group" aria-label="범례">

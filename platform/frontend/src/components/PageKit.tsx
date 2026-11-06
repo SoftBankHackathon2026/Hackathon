@@ -1,20 +1,42 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Tone } from "../features/migrations/stages";
 
+/**
+ * 모든 화면의 머리. 화면 제목(24) + 상태 + 오른쪽 동작, 그 아래 한 줄 설명(선택), 맨 아래 탭.
+ * 상세 화면은 crumb 로 상위 화면을 건다. 위쪽 고정 막대에는 위치와 갱신 상태만 둔다.
+ */
 export function PageHeader({
   title,
+  crumb,
+  status,
+  meta,
+  actions,
   tabs,
   active,
   onTab,
 }: {
   title: string;
+  crumb?: { label: string; href: string };
+  status?: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
   tabs?: { id: string; label: string }[];
   active?: string;
   onTab?: (id: string) => void;
 }) {
   return (
-    <header className="pk-header">
-      <h1>{title}</h1>
+    <header className={`pk-header${tabs ? " has-tabs" : ""}`}>
+      {crumb && (
+        <a className="pk-crumb" href={crumb.href}>
+          {crumb.label}
+        </a>
+      )}
+      <div className="pk-title-row">
+        <h1>{title}</h1>
+        {status}
+        {actions && <div className="pk-header-actions">{actions}</div>}
+      </div>
+      {meta && <p className="pk-header-meta">{meta}</p>}
       {tabs && (
         <nav className="pk-tabs" aria-label={`${title} 보기`}>
           {tabs.map((tab) => (
@@ -60,45 +82,42 @@ export function FilterSelect({
 
 export function ScopeFilterRow({ children }: { children: ReactNode }) {
   return (
-    <div className="pk-scope" role="group" aria-label="이 페이지 필터">
-      <span className="pk-scope-title">이 페이지 필터</span>
+    <div className="pk-scope" role="group" aria-label="필터">
       {children}
     </div>
   );
 }
 
+type SectionAction = { label: string; href?: string; onClick?: () => void };
+
+/**
+ * 섹션 = 제목 + 개수나 상태(meta) + 동작 하나(글자 링크).
+ * description 은 사용자가 따라야 할 안내가 있을 때만 쓴다. 제목을 다시 말하는 부제로 쓰지 않는다.
+ */
 export function Section({
   id,
   title,
+  meta,
   description,
   action,
   children,
 }: {
   id?: string;
   title: string;
-  description?: string;
-  action?: { label: string; href?: string; onClick?: () => void };
+  meta?: ReactNode;
+  description?: ReactNode;
+  action?: SectionAction;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
   return (
     <section className="pk-section" id={id}>
       <header className="pk-section-head">
-        <button
-          type="button"
-          className="pk-chevron"
-          aria-expanded={open}
-          aria-label={`${title} ${open ? "접기" : "펼치기"}`}
-          onClick={() => setOpen(!open)}
-        >
-          <span className="dash-chevron" aria-hidden="true" />
-        </button>
         <h2>{title}</h2>
-        {description && <p>{description}</p>}
+        {meta !== undefined && <span className="pk-section-meta">{meta}</span>}
         {action &&
           (action.href ? (
             <a className="pk-action" href={action.href}>
-              {action.label} →
+              {action.label}
             </a>
           ) : (
             <button
@@ -106,15 +125,17 @@ export function Section({
               className="pk-action"
               onClick={action.onClick}
             >
-              {action.label} →
+              {action.label}
             </button>
           ))}
       </header>
-      {open && <div className="pk-section-body">{children}</div>}
+      {description && <p className="pk-section-help">{description}</p>}
+      <div className="pk-section-body">{children}</div>
     </section>
   );
 }
 
+/** 상태는 점 + 1~2단어 글자. 배경을 채우지 않는다. */
 export function StatusLabel({
   tone,
   children,
@@ -123,6 +144,37 @@ export function StatusLabel({
   children: ReactNode;
 }) {
   return <span className={`pk-label tone-${tone}`}>{children}</span>;
+}
+
+/** 숫자 요약 한 줄. 큰 숫자 카드 대신 쓴다. 문제가 있는 항목만 tone 으로 색을 준다. */
+export function SummaryRow({
+  items,
+}: {
+  items: {
+    label: string;
+    value: string;
+    unit?: string;
+    tone?: Tone;
+    note?: ReactNode;
+  }[];
+}) {
+  return (
+    <dl className="pk-summary">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className={item.tone ? `tone-${item.tone}` : undefined}
+        >
+          <dt>{item.label}</dt>
+          <dd>
+            <span className="pk-summary-value">{item.value}</span>
+            {item.unit && <small>{item.unit}</small>}
+            {item.note && <span className="pk-summary-note">{item.note}</span>}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function SummaryCard({

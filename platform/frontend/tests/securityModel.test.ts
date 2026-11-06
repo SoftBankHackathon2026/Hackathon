@@ -277,28 +277,19 @@ test("toggle and excerpt helpers", () => {
   assert.equal(excerpt(undefined), "");
 });
 
-import { markerRows } from "../src/features/environments/securityModel.ts";
-
-test("markerRows lists every finding at a marker with its status in that environment", () => {
+test("a marker keeps every failing control at that spot", () => {
   const markers = buildMarkers(env, controls, { group: null, hidden: [] });
   const alb = markers.get("tile:aws:alb");
   assert.ok(alb);
-  const rows = markerRows(alb);
-  assert.equal(rows.length, alb.extra + 1);
+  assert.equal(alb.controls.length, alb.extra + 1);
   assert.deepEqual(
-    rows.map((r) => r.id),
+    alb.controls.map((c) => c.id),
     ["NET-03", "NET-04"],
   );
+  assert.ok(alb.controls.every((c) => c.results.aws?.status === "fail"));
+  const boundary = markers.get("env:aws");
   assert.deepEqual(
-    rows.map((r) => r.title),
-    ["title NET-03", "title NET-04"],
-  );
-  assert.ok(rows.every((r) => r.status === "fail"));
-  const boundary = markerRows(
-    markers.get("env:aws") as NonNullable<typeof alb>,
-  );
-  assert.deepEqual(
-    boundary.map((r) => r.severity),
+    boundary?.controls.map((c) => c.severity),
     ["critical", "low"],
   );
 });

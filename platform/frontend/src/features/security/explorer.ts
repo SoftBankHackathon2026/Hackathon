@@ -14,6 +14,8 @@ export type ExplorerFilters = {
   env: string[];
   standard: string[];
   query: string;
+  /** 필터 타일(전환 영향)이 고른 통제만. 없으면 전체. */
+  ids?: string[];
 };
 
 export const ALL_SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
@@ -48,6 +50,8 @@ export function matchesFilters(
   filters: ExplorerFilters,
   skip?: Dimension,
 ) {
+  if (skip !== "ids" && filters.ids && !filters.ids.includes(control.id))
+    return false;
   if (skip !== "severity" && !filters.severity.includes(control.severity))
     return false;
   if (skip !== "category" && !filters.category.includes(control.category))
@@ -140,4 +144,30 @@ export function excerpt(text: string | undefined, max = 60) {
   if (!text) return "";
   const first = text.split(/(?<=[.다요])\s/)[0] ?? text;
   return first.length > max ? `${first.slice(0, max - 1)}…` : first;
+}
+
+/** 특정 통제를 목록에서 열 수 있게, 그 통제를 가리는 필터만 넓힌다. 이미 보이면 null. */
+export function revealFilters(
+  filters: ExplorerFilters,
+  control: Control | undefined,
+): Partial<ExplorerFilters> | null {
+  if (!control || matchesFilters(control, filters)) return null;
+  const statuses = filters.env
+    .map((id) => control.results[id]?.status)
+    .filter(
+      (s): s is ControlStatus => s !== undefined && SHOWN_STATUSES.includes(s),
+    );
+  const refs = control.standard_refs.map(standardId);
+  return {
+    ids: undefined,
+    query: "",
+    severity: filters.severity.includes(control.severity)
+      ? filters.severity
+      : [...filters.severity, control.severity],
+    category: filters.category.includes(control.category)
+      ? filters.category
+      : [...filters.category, control.category],
+    standard: [...new Set([...filters.standard, ...refs])],
+    status: [...new Set([...filters.status, ...statuses])],
+  };
 }

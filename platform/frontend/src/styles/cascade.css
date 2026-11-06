@@ -2,8 +2,8 @@
   width: auto;
   margin: 0;
   padding: 7px 14px;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
   font-weight: 400;
   background: transparent;
   color: var(--ink);
@@ -34,10 +34,10 @@
   top: 50%;
   transform: translateY(-50%);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--rail);
   color: var(--on-dark);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   white-space: nowrap;
   opacity: 0;
@@ -46,7 +46,7 @@
 }
 .page-title h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -57,10 +57,10 @@
   gap: 8px;
   padding: 3px 8px 3px 3px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   list-style: none;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .account-menu summary:hover {
@@ -75,21 +75,21 @@
 }
 .login-card h1 {
   margin: 6px 0 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   color: var(--ink);
 }
 .login-card label {
   display: grid;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--sub);
 }
 .login-card button {
   width: 100%;
   margin: 0;
   padding: 10px 14px;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
   border: 1px solid transparent;
 }
 .login > .banner,
@@ -125,7 +125,7 @@
 }
 .role {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .shell .secondary,
 .shell .primary {

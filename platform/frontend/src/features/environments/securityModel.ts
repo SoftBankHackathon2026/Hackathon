@@ -7,7 +7,7 @@ export type OverlayGroup =
 export const OVERLAY_GROUPS: { id: OverlayGroup; label: string }[] = [
   { id: "misconfig", label: "설정 오류" },
   { id: "identity", label: "권한 위험" },
-  { id: "detection", label: "탐지·감사" },
+  { id: "detection", label: "탐지/감사" },
   { id: "governance", label: "거버넌스" },
 ];
 
@@ -173,13 +173,4 @@ export function labelOptions(
     { key: "left", rect: { x: cx - r - 4 - w, y: cy - h / 2, w, h } },
     { key: "up", rect: { x: cx - w / 2, y: cy - r - 4 - h, w, h } },
   ];
-}
-
-export function markerRows(marker: Marker) {
-  return marker.controls.map((control) => ({
-    id: control.id,
-    title: control.title,
-    severity: control.severity,
-    status: control.results[marker.envId]?.status ?? "fail",
-  }));
 }

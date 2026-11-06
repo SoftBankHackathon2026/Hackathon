@@ -9,7 +9,8 @@ export type IconName =
   | "pulse"
   | "users"
   | "shield"
-  | "swap";
+  | "swap"
+  | "coin";
 const paths: Record<IconName, string> = {
   grid: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   rocket:
@@ -24,6 +25,7 @@ const paths: Record<IconName, string> = {
     "M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20 M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4 M15.5 4.2a3.5 3.5 0 0 1 0 6.6",
   shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M9 12l2 2 4-4",
   swap: "M4 8h13 M13 4l4 4-4 4 M20 16H7 M11 12l-4 4 4 4",
+  coin: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M15 9.5c0-1.4-1.3-2.5-3-2.5s-3 1-3 2.3c0 3 6 1.7 6 4.7 0 1.3-1.3 2.5-3 2.5s-3-1.1-3-2.5 M12 5.5V7 M12 17v1.5",
 };
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return (

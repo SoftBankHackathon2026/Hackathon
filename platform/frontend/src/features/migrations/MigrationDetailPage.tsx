@@ -1,11 +1,13 @@
+import { Skeleton } from "../../components/QueryBoundary";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { SourceTag } from "../../components/Badge";
 import { StateLabel } from "../../components/StatusDot";
 import { DashSection } from "../../components/DashSection";
-import { PageActions, PageTabs } from "../../components/PageSlots";
-import { Segmented } from "../../components/Segmented";
-import { formatAgo } from "../../lib/format";
+import { PageActions } from "../../components/PageSlots";
+import { FilterSelect, PageHeader } from "../../components/PageKit";
+import { RefreshStatus } from "../../components/RefreshStatus";
+import { StatTiles } from "../../components/StatTiles";
+import { formatCount, formatSeconds } from "../../lib/format";
 import { CdcPath } from "./CdcPath";
 import { EnvironmentGraphs, EnvironmentTable } from "./EnvironmentWrites";
 import { EventRail } from "./EventRail";
@@ -17,7 +19,13 @@ import {
   migrationQueryOptions,
   seriesQueryOptions,
 } from "./queries";
-import { pollInterval, STATUS_LABELS, statusTone } from "./stages";
+import {
+  pollInterval,
+  stageTitle,
+  STATUS_LABELS,
+  stepLabel,
+  statusTone,
+} from "./stages";
 import { lifetimeMinutes, lifetimeSpan, lifetimeWindow } from "./timeline";
 import { StageLog } from "./StageLog";
 import { TransitionTimeline } from "./TransitionTimeline";
@@ -71,6 +79,7 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
   const targetName = envShortName(environments, summary.target_env);
   const sentence = headline(detail, { source: sourceName, target: targetName });
   const worker = detail.worker;
+  const failedWrites = summary.writes.failed + summary.downtime.failed_requests;
   const counts = {
     source:
       worker?.committed_by_target[summary.data_source] ??
@@ -81,42 +90,112 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
   };
 
   return (
-    <div className="dash-page">
-      <PageTabs>
-        <StateLabel tone={statusTone(summary.status)}>
-          {STATUS_LABELS[summary.status]}
-        </StateLabel>
-      </PageTabs>
+    <div className="pk-page">
       <PageActions>
-        <Segmented
-          label="조회 범위"
-          value={minutes}
-          options={RANGES}
-          onChange={setMinutes}
+        <FilterSelect
+          label="기간"
+          value={String(minutes)}
+          options={RANGES.map((r) => ({
+            value: String(r.value),
+            label: r.label,
+          }))}
+          onChange={(value) => setMinutes(Number(value))}
         />
-        <SourceTag source={fleet?.source} />
-        <span className="updated-at">갱신 {formatAgo(summary.updated_at)}</span>
+        <RefreshStatus source={fleet?.source} at={summary.updated_at} />
       </PageActions>
-      <p className="job-meta">
-        {sourceName} → {targetName} · 데이터 {summary.data_source} →{" "}
-        {summary.data_target}
-      </p>
+      <PageHeader
+        title={summary.job_id}
+        status={
+          <StateLabel tone={statusTone(summary.status)}>
+            {STATUS_LABELS[summary.status]}
+          </StateLabel>
+        }
+        meta={
+          <>
+            {sourceName} → {targetName}, 데이터 {summary.data_source} →{" "}
+            {summary.data_target}, {stageTitle(summary.stage)}{" "}
+            {summary.stage_index}/{summary.stage_count}단계
+          </>
+        }
+      />
+      {sentence.parts.some((part) => part.bad) && (
+        <p className="pk-alert" role="status">
+          {sentence.parts.map((part, i) =>
+            part.bad ? (
+              <strong key={i}>{part.text}</strong>
+            ) : (
+              <span key={i}>{part.text}</span>
+            ),
+          )}
+        </p>
+      )}
+      <StatTiles
+        label="작업 요약"
+        items={[
+          {
+            id: "stage",
+            label: "단계",
+            value: stepLabel(summary),
+            note: stageTitle(summary.stage),
+            meter: {
+              ratio:
+                summary.status === "completed"
+                  ? 1
+                  : summary.status === "pending"
+                    ? 0
+                    : summary.stage_index / summary.stage_count,
+              tone: statusTone(summary.status) === "bad" ? "bad" : "running",
+            },
+          },
+          {
+            id: "source",
+            label: `원본 쓰기: ${sourceName}`,
+            value: formatCount(counts.source),
+            unit: "건",
+          },
+          {
+            id: "target",
+            label: `대상 반영: ${targetName}`,
+            value:
+              counts.source > 0
+                ? `${Math.min(100, (counts.target / counts.source) * 100).toFixed(1)}%`
+                : "-",
+            note: `${formatCount(counts.target)}건`,
+          },
+          {
+            id: "failed",
+            label: "실패한 쓰기",
+            value: formatCount(failedWrites),
+            unit: "건",
+            tone: failedWrites > 0 ? "bad" : "none",
+            dim: failedWrites === 0,
+          },
+          {
+            id: "pause",
+            label: "쓰기 중단",
+            value: formatSeconds(summary.downtime.write_pause_seconds),
+            note:
+              summary.downtime.write_pause_seconds === null
+                ? "전환 전"
+                : "원본 쓰기 차단 구간",
+          },
+          {
+            id: "verify",
+            label: "데이터 불일치",
+            value:
+              summary.verify_mismatch === null
+                ? "-"
+                : formatCount(summary.verify_mismatch),
+            unit: summary.verify_mismatch === null ? undefined : "건",
+            tone: (summary.verify_mismatch ?? 0) > 0 ? "bad" : "none",
+            note:
+              summary.verify_mismatch === null ? "검증 전" : "원본/대상 비교",
+          },
+        ]}
+      />
       <div className="detail-layout">
         <EventRail events={events.data} />
         <div className="detail-main">
-          <p className="headline">
-            <span>
-              {sentence.parts.map((part, i) =>
-                part.bad ? (
-                  <strong key={i} className="text-bad">
-                    {part.text}
-                  </strong>
-                ) : (
-                  <span key={i}>{part.text}</span>
-                ),
-              )}
-            </span>
-          </p>
           <DashSection title="전환 타임라인">
             {lifetime.data ? (
               <TransitionTimeline
@@ -128,7 +207,7 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
                 시계열을 불러오지 못했어요. 자동으로 다시 시도해요.
               </p>
             ) : (
-              <p className="empty-line">불러오는 중이에요…</p>
+              <Skeleton rows={2} />
             )}
           </DashSection>
           <DashSection title="환경별 쓰기">
@@ -139,10 +218,8 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
                 sourceName={sourceName}
                 targetName={targetName}
               />
-            ) : (
-              !series.isError && (
-                <p className="empty-line">불러오는 중이에요…</p>
-              )
+            ) : minutes === ALL && lifetime.data ? null : (
+              !series.isError && <Skeleton rows={2} />
             )}
             <EnvironmentTable
               series={lifetime.data}
@@ -161,18 +238,14 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
           <DashSection title="검증과 정책 게이트">
             <div className="two-col">
               <section aria-label="데이터 검증">
-                <header className="graph-head">
-                  <h3>데이터 검증</h3>
-                </header>
+                <h3 className="sub-head">데이터 검증</h3>
                 <VerifyTable
                   pre={detail.verify.pre}
                   post={detail.verify.post}
                 />
               </section>
               <section aria-label="정책 게이트">
-                <header className="graph-head">
-                  <h3>정책 게이트</h3>
-                </header>
+                <h3 className="sub-head">정책 게이트</h3>
                 <GatesTable gates={detail.gates} />
               </section>
             </div>

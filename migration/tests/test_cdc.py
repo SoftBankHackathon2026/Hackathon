@@ -51,6 +51,7 @@ def test_sink_offsets_parsing():
 class _FakeConnect(BaseHTTPRequestHandler):
     connectors: dict[str, dict] = {}
     calls: list[tuple[str, str]] = []
+    status_404_once: set[str] = set()
 
     def log_message(self, *_: object) -> None:
         pass
@@ -76,6 +77,9 @@ class _FakeConnect(BaseHTTPRequestHandler):
         if parts[2] == "config":
             return self._json(200, self.connectors[name])
         if parts[2] == "status":
+            if name in self.status_404_once:
+                self.status_404_once.discard(name)
+                return self._json(404, {"error_code": 404, "message": f"No status found for connector {name}"})
             return self._json(200, {"name": name, "connector": {"state": "RUNNING"}, "tasks": [{"id": 0, "state": "RUNNING"}]})
         if parts[2] == "offsets":
             return self._json(200, {"offsets": [{"partition": {"kafka_topic": "t", "kafka_partition": 0}, "offset": {"kafka_offset": 7}}]})
@@ -106,6 +110,7 @@ class _FakeConnect(BaseHTTPRequestHandler):
 def connect_server():
     _FakeConnect.connectors = {}
     _FakeConnect.calls = []
+    _FakeConnect.status_404_once = set()
     server = HTTPServer(("127.0.0.1", 0), _FakeConnect)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -129,6 +134,18 @@ def test_connect_client_lifecycle(connect_server):
     assert c.delete("x") is False
     with pytest.raises(ConnectError):
         c.status("x")
+
+
+def test_is_running_treats_status_404_as_not_yet(connect_server):
+    """등록 직후 Connect 가 /status 에 404 (No status found) 를 돌려주는 동안은 예외가 아니라 False."""
+    c = ConnectClient(connect_server, timeout=5)
+    c.put_config("y", {"a": "1"})
+    _FakeConnect.status_404_once.add("y")
+    running, st = c.is_running("y")
+    assert running is False
+    assert st == {"pending": "status not available yet"}
+    running, _ = c.is_running("y")  # 다음 조회부터 정상
+    assert running is True
 
 
 def test_connect_error_message_redacts_password(connect_server, env):

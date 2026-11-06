@@ -53,13 +53,13 @@ FLOW: tuple[StageInfo, ...] = (
     StageInfo(
         Stage.PRECHECK,
         "사전 점검",
-        "양쪽 테이블·권한·wal_level·CDC 계정·워커 대상 확인",
+        "양쪽 테이블/권한/wal_level/CDC 계정/워커 대상 확인",
         "precheck",
     ),
     StageInfo(
         Stage.COPYING,
         "초기 복사",
-        "publication·slot 준비, Source/Sink 커넥터 등록, seed 복사",
+        "publication/slot 준비, Source/Sink 커넥터 등록, seed 복사",
         "copying",
     ),
     StageInfo(
@@ -74,7 +74,7 @@ FLOW: tuple[StageInfo, ...] = (
     StageInfo(
         Stage.FENCING,
         "원본 쓰기 차단",
-        "워커 일시정지·drain, 원본 INSERT 회수, 시험 INSERT 거절 확인",
+        "워커 일시정지/drain, 원본 INSERT 회수, 시험 INSERT 거절 확인",
         "fenced",
     ),
     StageInfo(
@@ -96,7 +96,7 @@ FLOW: tuple[StageInfo, ...] = (
         "대상 신규 커밋, 원본 차단 유지, verify(post) 통과",
         "post_switch",
     ),
-    StageInfo(Stage.COMPLETED, "완료", "승인 ID·마지막 요청·offset·검증 결과 보관", "verify_final"),
+    StageInfo(Stage.COMPLETED, "완료", "승인 ID/마지막 요청/offset/검증 결과 보관", "verify_final"),
 )
 FLOW_STAGES: tuple[Stage, ...] = tuple(info.stage for info in FLOW)
 POINT_OF_NO_RETURN = Stage.SWITCHING

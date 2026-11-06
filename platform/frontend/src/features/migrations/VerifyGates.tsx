@@ -29,7 +29,7 @@ export function VerifyTable({
   ];
   return (
     <div className="table-wrap">
-      <table className="dt compact">
+      <table className="pk-table">
         <thead>
           <tr>
             <th>항목</th>
@@ -77,9 +77,11 @@ export function GatesTable({ gates }: { gates: Gate[] }) {
   const rows = [...gates].sort(
     (a, b) => Date.parse(b.evaluated_at) - Date.parse(a.evaluated_at),
   );
+  if (rows.length === 0)
+    return <p className="pk-empty">아직 평가 기록이 없어요.</p>;
   return (
     <div className="table-wrap">
-      <table className="dt compact">
+      <table className="pk-table">
         <thead>
           <tr>
             <th>시각</th>
@@ -90,13 +92,6 @@ export function GatesTable({ gates }: { gates: Gate[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={5} className="sub">
-                아직 평가 기록이 없어요.
-              </td>
-            </tr>
-          )}
           {rows.map((gate) => (
             <tr key={gate.decision_id}>
               <td className="sub">{formatDateTime(gate.evaluated_at)}</td>

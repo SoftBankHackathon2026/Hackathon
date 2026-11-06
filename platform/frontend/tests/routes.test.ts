@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   controlHash,
   migrationHash,
+  nodesHash,
   readRoute,
   resourceHash,
   routeTitle,
@@ -42,4 +43,17 @@ test("security and environment deep links carry their target", () => {
     select: { envId: "aws", id: "rds" },
   });
   assert.deepEqual(readRoute("#environments/aws"), { view: "environments" });
+});
+
+test("node view links open the cluster or node panel", () => {
+  assert.deepEqual(readRoute("#environments/nodes"), {
+    view: "environments",
+    nodes: {},
+  });
+  assert.equal(nodesHash("onprem"), "#environments/nodes/onprem");
+  assert.deepEqual(readRoute(nodesHash("onprem", "worker-1")), {
+    view: "environments",
+    nodes: { envId: "onprem", node: "worker-1" },
+  });
+  assert.equal(nodesHash(), "#environments/nodes");
 });

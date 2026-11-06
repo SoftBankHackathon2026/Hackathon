@@ -2,11 +2,13 @@ import { useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icon";
 import { SlotContext } from "./PageSlots";
 
-export type View = "migrations" | "environments" | "security" | "team";
+export type View =
+  "migrations" | "environments" | "security" | "costs" | "team";
 export const views: { id: View; title: string; icon: IconName }[] = [
   { id: "migrations", title: "마이그레이션", icon: "swap" },
   { id: "environments", title: "환경", icon: "layers" },
   { id: "security", title: "보안", icon: "shield" },
+  { id: "costs", title: "비용", icon: "coin" },
   { id: "team", title: "팀", icon: "users" },
 ];
 
@@ -81,7 +83,7 @@ export function AppShell({
           </a>
           <a
             className="rail-item"
-            href="https://github.com/softbank-hackathon-2026-term1-azalea/oneport-platform/blob/main/platform/README.md"
+            href="https://github.com/SoftBankHackathon2026/Hackathon/blob/main/platform/README.md"
             target="_blank"
             rel="noreferrer"
             aria-label="문서"
@@ -95,7 +97,7 @@ export function AppShell({
         <header className="page-head">
           <div className="head-main">
             {!hideTitle && (
-              <div className="page-title">
+              <nav className="page-where" aria-label="현재 위치">
                 {crumb && (
                   <>
                     <button className="page-crumb" onClick={crumb.onClick}>
@@ -106,8 +108,8 @@ export function AppShell({
                     </span>
                   </>
                 )}
-                <h1>{title}</h1>
-              </div>
+                <span aria-current="page">{title}</span>
+              </nav>
             )}
             <div className="page-tabs" ref={setTabs} />
           </div>

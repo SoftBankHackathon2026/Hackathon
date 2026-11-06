@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EnvComponent, FleetEnvironment } from "../../api/migrations";
 import { useElementWidth } from "../../components/charts/useElementWidth";
 import {
@@ -15,12 +10,16 @@ import {
   type TileRect,
 } from "./canvasLayout";
 import { blockPaint, containerPaint } from "./blockStyle";
+import { componentTone } from "./model";
+import { podCells, podSummary } from "./podModel";
+import { primaryEndpoint } from "./endpointModel";
 import { matchesQuery, problemOrdinals, type PathNode } from "./canvasModel";
 import { controlHash } from "../../app/routes";
-import { STATUS_LABELS } from "../security/posture";
+import { CATEGORY_LABELS, SEVERITY_ORDER } from "../security/posture";
+import { CategoryIcon } from "../security/CategoryIcon";
+import { SeverityMeter } from "../security/SeverityMeter";
 import {
   labelOptions,
-  markerRows,
   placeFirstFit,
   textWidth,
   type Marker as SecurityMarker,
@@ -36,6 +35,7 @@ import {
   type CloudIconRef,
 } from "./cloudIcons";
 import { iconFor } from "./iconMap";
+import { usePanZoom } from "./usePanZoom";
 import {
   COS,
   SIN,
@@ -49,7 +49,6 @@ import {
   shade,
   shortLabel,
   zoomAt,
-  type View,
   type ViewMode,
 } from "./iso";
 
@@ -68,10 +67,10 @@ const EDGE = 30;
 const PLATE_PAD = 6;
 const SEV_PAINT: Record<string, { fill: string; stroke: string; ink: string }> =
   {
-    critical: { fill: "#fbe9e7", stroke: "#c2362b", ink: "#a02a20" },
-    high: { fill: "#fcebdd", stroke: "#d9661f", ink: "#9a4710" },
-    medium: { fill: "#f8efd3", stroke: "#b8860b", ink: "#7a5a08" },
-    low: { fill: "#f2f2f2", stroke: "#8a8a8a", ink: "#525252" },
+    critical: { fill: "#fcebea", stroke: "#c9302d", ink: "#b32322" },
+    high: { fill: "#fdeee3", stroke: "#dd6f23", ink: "#a64d10" },
+    medium: { fill: "#f3f4fd", stroke: "#8b95a1", ink: "#6b7684" },
+    low: { fill: "#f3f4fd", stroke: "#b0b8c1", ink: "#6b7684" },
   };
 
 function trimSegment(a: Point, b: Point, distance: number): [Point, Point] {
@@ -318,7 +317,8 @@ export function IsoCanvas({
   onSelect,
   markers,
   path,
-  height,
+  height: maxHeight,
+  showPods = false,
 }: {
   layout: CanvasLayout;
   environments: FleetEnvironment[];
@@ -331,15 +331,28 @@ export function IsoCanvas({
   markers: Map<string, SecurityMarker>;
   path: PathView;
   height: number;
+  /** 파드 보기(Cloudcraft 처럼 기본은 끔): 워크로드 타일 뒤쪽에 파드 하나당 작은 블록 하나 */
+  showPods?: boolean;
 }) {
   const { ref, width } = useElementWidth(900);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [hover, setHover] = useState<string | null>(null);
   const [openMarker, setOpenMarker] = useState<string | null>(null);
-  const pointers = useRef(new Map<number, Point>());
-  const drag = useRef({ moved: false, startX: 0, startY: 0 });
+  const { view, setView, moved, handlers } = usePanZoom(svgRef, () =>
+    onSelect(null),
+  );
   const bounds = layoutBounds(layout, mode);
+  // 캔버스 높이는 그림 비율에 맞춘다(너비에 맞춰 그렸을 때 높이, 최소 480). 큰 빈 공간을 두지 않는다.
+  const fitScale = Math.min(
+    (width - 48) / Math.max(bounds.maxX - bounds.minX, 1),
+    1.4,
+  );
+  const height = Math.round(
+    Math.min(
+      maxHeight,
+      Math.max(480, (bounds.maxY - bounds.minY) * fitScale + 72),
+    ),
+  );
   const fit = () => fitView(bounds, width, height);
 
   useEffect(() => {
@@ -367,75 +380,6 @@ export function IsoCanvas({
   useEffect(() => {
     if (overlay !== "security") setOpenMarker(null);
   }, [overlay]);
-
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const box = svg.getBoundingClientRect();
-      const factor = Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0015));
-      setView((prev) =>
-        zoomAt(prev, factor, event.clientX - box.left, event.clientY - box.top),
-      );
-    };
-    svg.addEventListener("wheel", onWheel, { passive: false });
-    return () => svg.removeEventListener("wheel", onWheel);
-  }, []);
-
-  const onPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    pointers.current.set(event.pointerId, [event.clientX, event.clientY]);
-    drag.current = {
-      moved: false,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
-  };
-  const onPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const previous = pointers.current.get(event.pointerId);
-    if (!previous) return;
-    const next: Point = [event.clientX, event.clientY];
-    if (!drag.current.moved) {
-      if (
-        Math.hypot(
-          next[0] - drag.current.startX,
-          next[1] - drag.current.startY,
-        ) < 4
-      )
-        return;
-      drag.current.moved = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    const others = [...pointers.current.entries()].filter(
-      ([id]) => id !== event.pointerId,
-    );
-    if (others.length === 1) {
-      const other = others[0][1];
-      const before = Math.hypot(previous[0] - other[0], previous[1] - other[1]);
-      const after = Math.hypot(next[0] - other[0], next[1] - other[1]);
-      const box = event.currentTarget.getBoundingClientRect();
-      if (before > 0)
-        setView((prev) =>
-          zoomAt(
-            prev,
-            after / before,
-            (next[0] + other[0]) / 2 - box.left,
-            (next[1] + other[1]) / 2 - box.top,
-          ),
-        );
-    } else {
-      setView((prev) => ({
-        ...prev,
-        x: prev.x + next[0] - previous[0],
-        y: prev.y + next[1] - previous[1],
-      }));
-    }
-    pointers.current.set(event.pointerId, next);
-  };
-  const onPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
-    pointers.current.delete(event.pointerId);
-    if (!drag.current.moved) onSelect(null);
-  };
 
   const tileOf = new Map(layout.tiles.map((t) => [`${t.envId}:${t.id}`, t]));
   const screenCenter = (tile: TileRect): Point => {
@@ -465,7 +409,7 @@ export function IsoCanvas({
         0.62,
       )
     : null;
-  const chipText = path ? `${path.chip.jobId} · ${path.chip.status}` : "";
+  const chipText = path ? `${path.chip.jobId}, ${path.chip.status}` : "";
   const active = selected?.id ?? hover;
   const blocks = environments
     .flatMap((env) =>
@@ -477,12 +421,52 @@ export function IsoCanvas({
     .sort((a, b) => a.tile.x + a.tile.y - (b.tile.x + b.tile.y));
   const searching = query.trim() !== "";
   const grid = 48;
+  // 화면에서 늘 12px 이상으로 보이게 한다. 겹침은 이름 배치(블록)와 너비 맞춤(그룹)으로 막는다.
   const fs = Math.max(12, 12 / view.k);
   const lift = (component: EnvComponent) =>
     mode === "iso"
       ? blockPaint(component, false).height + EDGE * SIN + fs * 1.6
       : EDGE / 2 + fs * 1.6;
-  const floorFont = Math.max(11, 10 / view.k);
+  // 바닥 글자(그룹·환경 이름)는 머리 공간(GROUP_HEAD·ENV_HEAD) 안에 들어가는 크기까지만 키운다.
+  // 파드 칸: 블록 오른쪽에 5칸씩 최대 3줄(Cloudcraft 가 인스턴스를 나란히 그리듯). 파드 하나 = 작은 블록 하나.
+  const POD_EDGE = 9;
+  const POD_COLS = 5;
+  const POD_ROWS = 3;
+  const podLayout = (tile: TileRect, component: EnvComponent) => {
+    if (!showPods) return null;
+    const { cells, hidden } = podCells(component, POD_COLS * POD_ROWS);
+    if (cells.length === 0) return null;
+    const [px, py] = screenCenter(tile);
+    const startX = px + (mode === "iso" ? EDGE * COS : EDGE / 2) + 8;
+    const step = mode === "iso" ? 11 : 12;
+    const rowStep = mode === "iso" ? 10 : 12;
+    const rows = Math.ceil(cells.length / POD_COLS);
+    const top = py - ((rows - 1) * rowStep) / 2;
+    const spots = cells.map((cell, i) => ({
+      ...cell,
+      x: startX + (i % POD_COLS) * step,
+      y: top + Math.floor(i / POD_COLS) * rowStep,
+    }));
+    const last = spots[spots.length - 1];
+    const more: Point | null = hidden ? [last.x + step - 2, last.y] : null;
+    return { spots, hidden, more };
+  };
+  // 화면에서 그룹 이름 12px, 환경 이름 16px 이상(머리 공간 GROUP_HEAD 46, ENV_HEAD 48 안).
+  const floorFont = Math.min(30, Math.max(12, 12.5 / view.k));
+  const envFont = Math.min(34, Math.max(15, 16 / view.k));
+  const floorBase = (y: number) => y + 6 + floorFont * 0.82;
+  const envBase = (y: number) => y + 6 + envFont * 0.82;
+  // 축소해서 볼 때는 네임스페이스 이름을 숨긴다(Cloudcraft 처럼 확대하면 보임). 블록 이름이 우선.
+  const showGroupLabel = (group: { kind: string }) =>
+    group.kind !== "namespace" || view.k >= 0.7;
+  /** 바닥 글자를 주어진 너비에 맞게 자른다(전체 이름은 title 로). */
+  const fitText = (text: string, max: number, size: number) => {
+    if (textWidth(text, size) <= max) return text;
+    let out = text;
+    while (out.length > 1 && textWidth(`${out}…`, size) > max)
+      out = out.slice(0, -1);
+    return `${out}…`;
+  };
   const floorObstacle = (
     x: number,
     y: number,
@@ -498,16 +482,98 @@ export function IsoCanvas({
       return { x: px, y: py - size, w, h };
     });
   };
+  // 연결선 이름표: 겹치면 아래로 비켜 놓고, 블록 이름 배치의 장애물로도 쓴다.
+  const linkPlates: {
+    key: string;
+    a: Point;
+    b: Point;
+    mid: Point;
+    w: number;
+    label: string;
+  }[] = [];
+  for (const link of layout.links) {
+    const fromTile = tileOf.get(`${link.route.envId}:${link.route.from}`);
+    const toTile = layout.tiles.find((t) => t.id === link.route.to);
+    if (!fromTile || !toTile) continue;
+    const a = screenCenter(fromTile);
+    const b = screenCenter(toTile);
+    const mid = pointAlong(a, b, 0.5);
+    const w = textWidth(link.label, fs) + 20;
+    let y = mid[1];
+    const overlaps = (yy: number) =>
+      linkPlates.some(
+        (o) =>
+          Math.abs(o.mid[0] - mid[0]) < (o.w + w) / 2 &&
+          Math.abs(o.mid[1] - yy) < fs * 2,
+      );
+    while (overlaps(y)) y += fs * 2.1;
+    linkPlates.push({
+      key: `${link.route.from}~${link.route.to}`,
+      a,
+      b,
+      mid: [mid[0], y],
+      w,
+      label: link.label,
+    });
+  }
+  const plateRects: Rect[] = linkPlates.map((pl) => ({
+    x: pl.mid[0] - pl.w / 2,
+    y: pl.mid[1] - fs * 0.95,
+    w: pl.w,
+    h: fs * 1.9,
+  }));
+  // 인프라 보기의 문제 표식(번호 + 이름): 이름표가 피해야 할 자리, 표식이 있는 블록은 이름표를 따로 달지 않는다.
+  const problemRects: Rect[] =
+    overlay === "infra"
+      ? blocks.flatMap(({ env, component, tile }) => {
+          if (!problemOrdinals(env.components).has(component.id)) return [];
+          const [px, py] = screenCenter(tile);
+          const cy = py - lift(component);
+          const w =
+            textWidth(shortLabel(component.name, 16), fs) + PLATE_PAD * 2;
+          return [
+            { x: px - fs * 0.9, y: cy - fs * 0.9, w: w + fs * 2, h: fs * 1.8 },
+          ];
+        })
+      : [];
+  const podRects: Rect[] = showPods
+    ? blocks.flatMap(({ component, tile }) => {
+        const pods = podLayout(tile, component);
+        if (!pods) return [];
+        const xs = pods.spots.map((p) => p.x);
+        const ys = pods.spots.map((p) => p.y);
+        return [
+          {
+            x: Math.min(...xs) - 8,
+            y: Math.min(...ys) - 12,
+            w: Math.max(...xs) - Math.min(...xs) + 16 + (pods.more ? 24 : 0),
+            h: Math.max(...ys) - Math.min(...ys) + 18,
+          },
+        ];
+      })
+    : [];
+  const hasProblemMark = (envId: string, id: string) =>
+    overlay === "infra" &&
+    problemOrdinals(
+      environments.find((e) => e.id === envId)?.components ?? [],
+    ).has(id);
   const obstacles: Rect[] = [
-    ...layout.groups.flatMap((g) =>
-      floorObstacle(g.x + 8, g.y + 17, g.label, floorFont),
-    ),
+    ...layout.groups
+      .filter(showGroupLabel)
+      .flatMap((g) =>
+        floorObstacle(
+          g.x + 8,
+          floorBase(g.y),
+          fitText(g.label, g.w - 16 - floorFont * 1.6, floorFont),
+          floorFont,
+        ),
+      ),
     ...layout.envHeads.flatMap((h) =>
       floorObstacle(
         h.x,
-        h.y + 22,
+        envBase(h.y),
         environments.find((e) => e.id === h.envId)?.name ?? "",
-        Math.max(16, 11 / view.k),
+        envFont,
       ),
     ),
     ...blocks.map(({ component, tile }) => {
@@ -520,39 +586,91 @@ export function IsoCanvas({
         h: top + (mode === "iso" ? 2 * EDGE * SIN : EDGE),
       };
     }),
+    ...plateRects,
+    ...problemRects,
+    ...podRects,
   ];
-  const floorCount = obstacles.length - blocks.length;
-  const nameText = (name: string, long: boolean) =>
-    shortLabel(name, mode === "flat" ? 10 : long ? 16 : 9);
-  const nameRequests: PlacementRequest[] = blocks.map(({ component, tile }) => {
-    const [px, py] = screenCenter(tile);
-    const below = (mode === "iso" ? EDGE * SIN : EDGE / 2) + 3;
-    const make = (long: boolean) => {
-      const w = textWidth(nameText(component.name, long), fs) + 6;
-      return {
-        key: `${long ? "long" : "short"}`,
-        rect: { x: px - w / 2, y: py + below, w, h: fs * 1.4 },
-      };
-    };
-    const side = (dir: 1 | -1) => {
-      const w = textWidth(nameText(component.name, false), fs) + 6;
+  const floorCount =
+    obstacles.length -
+    blocks.length -
+    plateRects.length -
+    problemRects.length -
+    podRects.length;
+  type NameSize = "long" | "short" | "tiny";
+  const NAME_CHARS: Record<NameSize, number> = { long: 24, short: 13, tiny: 8 };
+  const nameText = (name: string, size: NameSize) =>
+    shortLabel(
+      name,
+      mode === "flat" ? Math.min(14, NAME_CHARS[size]) : NAME_CHARS[size],
+    );
+  // 이름 뒤 파드 수(준비/전체). 파드가 2개 이상이거나 준비 안 된 파드가 있을 때만.
+  const countText = (component: EnvComponent) => {
+    const s = podSummary(component);
+    if (!s || (s.total <= 1 && s.ready === s.total)) return "";
+    return `${s.ready}/${s.total}`;
+  };
+  // 이름 앞 상태 점(Cloudcraft 처럼 "● 이름") 자리
+  const dotRoom = fs * 0.95;
+  const nameRequests: PlacementRequest[] = blocks
+    .filter(({ env, component }) => !hasProblemMark(env.id, component.id))
+    .map(({ component, tile }) => {
+      const [px, py] = screenCenter(tile);
+      const below = (mode === "iso" ? EDGE * SIN : EDGE / 2) + 3;
       const half = (mode === "iso" ? EDGE * COS : EDGE / 2) + 4;
-      return {
-        key: dir === 1 ? "right" : "left",
-        rect: {
-          x: dir === 1 ? px + half : px - half - w,
-          y: py - fs * 0.7,
-          w,
-          h: fs * 1.4,
-        },
+      const top =
+        mode === "iso"
+          ? blockPaint(component, false).height + EDGE * SIN
+          : EDGE / 2;
+      const count = countText(component);
+      const at = (pos: "below" | "right" | "left" | "up", size: NameSize) => {
+        const w =
+          textWidth(nameText(component.name, size), fs) +
+          6 +
+          dotRoom +
+          (count ? textWidth(count, fs * 0.9) + fs * 0.4 : 0) +
+          (primaryEndpoint(component) ? fs * 1.1 : 0);
+        const h = fs * 1.4;
+        const rect =
+          pos === "below"
+            ? { x: px - w / 2, y: py + below, w, h }
+            : pos === "right"
+              ? { x: px + half, y: py - fs * 0.7, w, h }
+              : pos === "left"
+                ? { x: px - half - w, y: py - fs * 0.7, w, h }
+                : { x: px - w / 2, y: py - top - fs * 1.6, w, h };
+        return { key: `${pos}:${size}`, rect };
       };
-    };
-    return {
-      id: `${component.id}@${tile.envId}`,
-      options: [make(true), make(false), side(1), side(-1)],
-    };
-  });
-  const namePlaced = placeFirstFit(nameRequests, obstacles.slice(floorCount));
+      // 긴 이름 → 보통 이름(아래, 오른쪽, 왼쪽, 위) → 짧은 이름. 자리가 좁아도 이름을 빼먹지 않는다.
+      return {
+        id: `${component.id}@${tile.envId}`,
+        options: [
+          at("below", "long"),
+          at("below", "short"),
+          at("right", "short"),
+          at("left", "short"),
+          at("up", "short"),
+          at("below", "tiny"),
+          at("right", "tiny"),
+          at("left", "tiny"),
+          at("up", "tiny"),
+        ],
+      };
+    });
+  // 먼저 그룹 이름까지 피해서 놓고, 자리가 없을 때만 그룹 이름 위에 놓는다(이름을 빼먹지 않는다).
+  const strictNames = placeFirstFit(nameRequests, obstacles);
+  const strictRects = [...strictNames.values()].flatMap((o) =>
+    o ? [o.rect] : [],
+  );
+  const relaxedNames = placeFirstFit(
+    nameRequests.filter((r) => !strictNames.get(r.id)),
+    [...obstacles.slice(floorCount), ...strictRects],
+  );
+  const namePlaced = new Map(
+    nameRequests.map((r) => [
+      r.id,
+      strictNames.get(r.id) ?? relaxedNames.get(r.id) ?? null,
+    ]),
+  );
   const nameRects = [...namePlaced.values()].flatMap((o) =>
     o ? [o.rect] : [],
   );
@@ -599,10 +717,7 @@ export function IsoCanvas({
         className="iso-svg"
         width={width}
         height={height}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        {...handlers}
       >
         <defs>
           <pattern
@@ -651,11 +766,12 @@ export function IsoCanvas({
                 <text
                   key={head.envId}
                   x={head.x}
-                  y={head.y + 22}
+                  y={envBase(head.y)}
                   className="floor-env"
-                  style={{ fontSize: Math.max(16, 11 / view.k) }}
+                  style={{ fontSize: envFont }}
                 >
-                  {env?.name}
+                  <title>{env?.name}</title>
+                  {fitText(env?.name ?? "", head.w - envFont * 4, envFont)}
                   <tspan className="floor-env-sub">
                     {"  "}
                     {env?.role === "legacy" ? "레거시" : "신규"}
@@ -706,48 +822,37 @@ export function IsoCanvas({
                 />
               );
             })}
-            {layout.links.map((link) => {
-              const a = screenCenter(
-                tileOf.get(
-                  `${link.route.envId}:${link.route.from}`,
-                ) as TileRect,
-              );
-              const to = layout.tiles.find((t) => t.id === link.route.to);
-              const b = screenCenter(to as TileRect);
-              const mid = pointAlong(a, b, 0.5);
-              const w = link.label.length * fs * 0.55 + 20;
-              return (
-                <g
-                  key={`${link.route.from}~${link.route.to}`}
-                  className={pathMode ? "muted-group" : undefined}
+            {linkPlates.map((plate) => (
+              <g
+                key={plate.key}
+                className={pathMode ? "muted-group" : undefined}
+              >
+                <line
+                  x1={plate.a[0]}
+                  y1={plate.a[1]}
+                  x2={plate.b[0]}
+                  y2={plate.b[1]}
+                  className="canvas-line link"
+                />
+                <rect
+                  x={plate.mid[0] - plate.w / 2}
+                  y={plate.mid[1] - fs * 0.95}
+                  width={plate.w}
+                  height={fs * 1.9}
+                  rx="4"
+                  className="label-plate"
+                />
+                <text
+                  x={plate.mid[0]}
+                  y={plate.mid[1] + fs * 0.35}
+                  textAnchor="middle"
+                  className="plate-text"
+                  style={{ fontSize: fs }}
                 >
-                  <line
-                    x1={a[0]}
-                    y1={a[1]}
-                    x2={b[0]}
-                    y2={b[1]}
-                    className="canvas-line link"
-                  />
-                  <rect
-                    x={mid[0] - w / 2}
-                    y={mid[1] - fs * 0.95}
-                    width={w}
-                    height={fs * 1.9}
-                    rx="4"
-                    className="label-plate"
-                  />
-                  <text
-                    x={mid[0]}
-                    y={mid[1] + fs * 0.35}
-                    textAnchor="middle"
-                    className="plate-text"
-                    style={{ fontSize: fs }}
-                  >
-                    {link.label}
-                  </text>
-                </g>
-              );
-            })}
+                  {plate.label}
+                </text>
+              </g>
+            ))}
             {pathMode &&
               flows.map((flow, i) => {
                 const [a, b] = trimSegment(
@@ -799,6 +904,71 @@ export function IsoCanvas({
                 );
               })}
           </g>
+          {showPods && (
+            <g className="pod-layer">
+              {blocks.map(({ env, component, tile }) => {
+                const pods = podLayout(tile, component);
+                if (!pods) return null;
+                const key = `${env.id}:${component.id}`;
+                const dim =
+                  (pathMode && !pathKeys.has(key)) ||
+                  (searching && !matchesQuery(component, query));
+                const faces = blockFaces(
+                  mode,
+                  POD_EDGE,
+                  mode === "iso" ? 7 : 0,
+                );
+                return (
+                  <g key={`pods-${key}`} opacity={dim ? 0.25 : 1}>
+                    {pods.spots.map((spot) => (
+                      <g
+                        key={spot.key}
+                        className={`pod-cube tone-${spot.tone}`}
+                        transform={`translate(${spot.x} ${spot.y})`}
+                      >
+                        <title>{spot.title}</title>
+                        {mode === "iso" ? (
+                          <>
+                            <polygon
+                              className="pc-l"
+                              points={polygonPoints(faces.left)}
+                            />
+                            <polygon
+                              className="pc-r"
+                              points={polygonPoints(faces.right)}
+                            />
+                            <polygon
+                              className="pc-t"
+                              points={polygonPoints(faces.top)}
+                            />
+                          </>
+                        ) : (
+                          <rect
+                            className="pc-t"
+                            x={-POD_EDGE / 2}
+                            y={-POD_EDGE / 2}
+                            width={POD_EDGE}
+                            height={POD_EDGE}
+                            rx="2"
+                          />
+                        )}
+                      </g>
+                    ))}
+                    {pods.more && (
+                      <text
+                        x={pods.more[0]}
+                        y={pods.more[1] + 3}
+                        className="pod-more"
+                        style={{ fontSize: Math.max(9, 10 / view.k) }}
+                      >
+                        +{pods.hidden}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          )}
           {blocks.map(({ env, component, tile }) => {
             const key = `${env.id}:${component.id}`;
             const dim =
@@ -819,7 +989,7 @@ export function IsoCanvas({
                 }
                 onHover={setHover}
                 onActivate={() => {
-                  if (drag.current.moved) return;
+                  if (moved()) return;
                   onSelect(
                     selected?.envId === env.id && selected.id === component.id
                       ? null
@@ -835,6 +1005,7 @@ export function IsoCanvas({
             className="floor-labels"
           >
             {[...layout.groups]
+              .filter(showGroupLabel)
               .sort((a, b) => a.depth - b.depth)
               .map((group) => {
                 const paint = containerPaint(group);
@@ -842,27 +1013,29 @@ export function IsoCanvas({
                 const iconUrl = cloudIconUrl(
                   groupIcon(env ? cloudProviderOf(env) : null, group),
                 );
-                const fontSize = Math.max(11, 10 / view.k);
+                const fontSize = floorFont;
                 const iconSize = Math.round(fontSize * 1.3);
+                const room = group.w - 16 - (iconUrl ? iconSize + 4 : 0);
                 return (
                   <g key={`label-${group.key}`}>
                     {iconUrl && (
                       <image
                         href={iconUrl}
                         x={group.x + 8}
-                        y={group.y + 17 - iconSize + 2}
+                        y={floorBase(group.y) - iconSize + 2}
                         width={iconSize}
                         height={iconSize}
                       />
                     )}
                     <text
                       x={group.x + 8 + (iconUrl ? iconSize + 4 : 0)}
-                      y={group.y + 17}
+                      y={floorBase(group.y)}
                       className="floor-label"
                       fill={paint.ink}
                       style={{ fontSize }}
                     >
-                      {group.label}
+                      <title>{group.label}</title>
+                      {fitText(group.label, room, fontSize)}
                     </text>
                   </g>
                 );
@@ -876,19 +1049,55 @@ export function IsoCanvas({
               const dim =
                 (pathMode && !pathKeys.has(key)) ||
                 (searching && !matchesQuery(component, query));
-              const text = nameText(component.name, placed.key === "long");
+              const text = nameText(
+                component.name,
+                placed.key.split(":")[1] as NameSize,
+              );
+              const tone = componentTone(component.status);
               return (
-                <text
+                <g
                   key={`label-${key}`}
-                  x={placed.rect.x + placed.rect.w / 2}
-                  y={placed.rect.y + fs * 1.05}
-                  textAnchor="middle"
-                  className={`block-label${dim ? " dim" : ""}`}
-                  style={{ fontSize: fs }}
+                  className={`block-label-g${dim ? " dim" : ""}`}
                 >
-                  <title>{component.name}</title>
-                  {text}
-                </text>
+                  <circle
+                    cx={placed.rect.x + 3 + fs * 0.35}
+                    cy={placed.rect.y + fs * 0.7}
+                    r={fs * 0.3}
+                    className={`label-dot tone-${tone}`}
+                  />
+                  <text
+                    x={placed.rect.x + 3 + dotRoom}
+                    y={placed.rect.y + fs * 1.05}
+                    className="block-label"
+                    style={{ fontSize: fs }}
+                  >
+                    <title>{component.name}</title>
+                    {text}
+                    {countText(component) && (
+                      <tspan
+                        dx={fs * 0.4}
+                        className={`label-count${
+                          (podSummary(component)?.ready ?? 0) <
+                          (podSummary(component)?.total ?? 0)
+                            ? " short"
+                            : ""
+                        }`}
+                        style={{ fontSize: fs * 0.9 }}
+                      >
+                        {countText(component)}
+                      </tspan>
+                    )}
+                    {primaryEndpoint(component) && (
+                      <tspan
+                        dx={fs * 0.3}
+                        className="label-ext"
+                        style={{ fontSize: fs * 0.9 }}
+                      >
+                        ↗
+                      </tspan>
+                    )}
+                  </text>
+                </g>
               );
             })}
             {pathMode &&
@@ -1005,35 +1214,87 @@ export function IsoCanvas({
         (() => {
           const spot = markerSpots.find((s) => s.m.key === openMarker);
           if (!spot) return null;
-          const left = Math.min(
-            Math.max(8, view.x + spot.cx * view.k - 16),
-            Math.max(8, width - 320),
+          const POP_W = 380;
+          const rows = [...spot.m.controls].sort(
+            (x, y) =>
+              SEVERITY_ORDER.indexOf(x.severity) -
+              SEVERITY_ORDER.indexOf(y.severity),
           );
-          const top = view.y + spot.cy * view.k + 16;
+          const env = environments.find((e) => e.id === spot.m.envId);
+          const component = env?.components.find(
+            (c) => c.id === spot.m.componentId,
+          );
+          const estimate = 120 + Math.min(rows.length, 5) * 58;
+          const anchorY = view.y + spot.cy * view.k;
+          const left = Math.min(
+            Math.max(8, view.x + spot.cx * view.k - 24),
+            Math.max(8, width - POP_W - 8),
+          );
+          const top =
+            anchorY + 16 + estimate > height && anchorY - 16 - estimate > 0
+              ? anchorY - 16 - estimate
+              : Math.min(anchorY + 16, Math.max(8, height - estimate - 8));
           return (
             <div
               className="marker-pop"
               role="dialog"
-              aria-label="이 위치의 보안 문제"
-              style={{ left, top }}
+              aria-label={`${component?.name ?? env?.name ?? ""} 실패한 통제`}
+              style={{ left, top, width: POP_W }}
             >
-              <ul>
-                {markerRows(spot.m).map((row) => (
-                  <li key={row.id}>
-                    <span className="marker-pop-title">
-                      <i
-                        className={`dot sev-dot-${row.severity}`}
-                        aria-hidden="true"
-                      />
-                      {row.title}
-                    </span>
-                    <span className="marker-pop-meta">
-                      {STATUS_LABELS[row.status]}
-                      <a href={controlHash(row.id)}>자세히 보기 →</a>
-                    </span>
+              <header className="mp-head">
+                <div>
+                  <h3>{component?.name ?? env?.name}</h3>
+                  <p>
+                    실패한 통제 <b>{rows.length}</b>
+                    {component ? `, ${env?.name ?? ""}` : ", 환경 전체 설정"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="mp-close"
+                  aria-label="닫기"
+                  onClick={() => setOpenMarker(null)}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </header>
+              <ul className="mp-rows">
+                {rows.map((control) => (
+                  <li key={control.id}>
+                    <a href={controlHash(control.id)}>
+                      <CategoryIcon category={control.category} />
+                      <span className="rule-text">
+                        <span className="rule-title">{control.title}</span>
+                        <span className="rule-sub">
+                          {control.id}, {CATEGORY_LABELS[control.category]}
+                        </span>
+                      </span>
+                      <SeverityMeter severity={control.severity} />
+                    </a>
                   </li>
                 ))}
               </ul>
+              <footer className="mp-foot">
+                {component && env ? (
+                  <button
+                    type="button"
+                    className="pk-button weak"
+                    onClick={() => {
+                      setOpenMarker(null);
+                      onSelect({ envId: env.id, id: component.id });
+                    }}
+                  >
+                    구성 요소 상세 열기
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <a className="text-link" href="#security">
+                  보안에서 모두 보기
+                </a>
+              </footer>
             </div>
           );
         })()}
