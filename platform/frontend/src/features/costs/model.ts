@@ -1,4 +1,4 @@
-import type { ChangeKind, CostBasis, CostLine } from "../../api/costs";
+import type { CostBasis, CostLine } from "../../api/costs";
 
 const USD = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -38,13 +38,6 @@ export const CATEGORY_LABELS: Record<string, string> = {
   onprem: "온프렘",
 };
 
-export const CHANGE_LABELS: Record<ChangeKind, string> = {
-  added: "신규",
-  removed: "감소",
-  replaced: "관리형 전환",
-  moved: "이동",
-};
-
 export function percent(part: number | null, whole: number | null) {
   if (part === null || whole === null || whole <= 0) return null;
   return Math.round((part / whole) * 100);
@@ -63,7 +56,7 @@ export const BASIS_LABELS: Record<CostBasis, string> = {
   list_price: "공식 단가",
   owner_input: "운영자 입력",
   measured: "측정값",
-  not_priced: "단가 없음",
+  not_priced: "가격 정보 없음",
 };
 
 export function quantityText(line: CostLine) {

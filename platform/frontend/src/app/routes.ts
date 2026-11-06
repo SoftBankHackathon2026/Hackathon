@@ -4,7 +4,7 @@ export type Route =
   | { view: "prepare" }
   | { view: "environments"; select?: { envId: string; id: string } }
   | { view: "security"; control?: string }
-  | { view: "costs" }
+  | { view: "costs"; tab?: string }
   | { view: "team" };
 
 export function readRoute(hash = "#"): Route {
@@ -27,7 +27,10 @@ export function readRoute(hash = "#"): Route {
     return id
       ? { view: "security", control: decodeURIComponent(id) }
       : { view: "security" };
-  if (head === "costs") return { view: "costs" };
+  if (head === "costs")
+    return id
+      ? { view: "costs", tab: decodeURIComponent(id) }
+      : { view: "costs" };
   if (head === "team") return { view: "team" };
   return { view: "migrations" };
 }
@@ -49,7 +52,7 @@ export function routeTitle(route: Route, teamName: string) {
     case "migration":
       return route.id;
     case "prepare":
-      return "마이그레이션 준비";
+      return "새 이전 준비";
     case "environments":
       return "환경";
     case "security":

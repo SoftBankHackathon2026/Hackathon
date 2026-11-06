@@ -1834,3 +1834,400 @@ th[aria-sort="descending"] .pk-sort-mark {
   }
 }
 
+/* ── 31. 비용(개요 위젯, Infracost 방식 비교표, 자원별 변화) ── */
+.text-warn {
+  color: var(--warning-contrast);
+}
+.w-cost-total {
+  grid-column: span 5;
+}
+.w-cost-cats {
+  grid-column: span 7;
+}
+.w-cost-moves {
+  grid-column: span 12;
+}
+.w-cost-top {
+  grid-column: span 7;
+}
+.w-cost-basis {
+  grid-column: span 5;
+}
+.w-cost-cats .pk-widget-body {
+  display: flex;
+  flex-direction: column;
+}
+.w-cost-cats .cat-legend {
+  margin-top: auto;
+}
+.w-cost-cats .cat-rows {
+  margin-bottom: 14px;
+}
+@media (max-width: 1100px) {
+  .w-cost-total,
+  .w-cost-cats,
+  .w-cost-top,
+  .w-cost-basis {
+    grid-column: span 12;
+  }
+}
+.cost-big {
+  margin: 4px 0 12px;
+  font: var(--type-number);
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.cost-big small,
+.cost-env-total small {
+  margin-left: 2px;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cost-split {
+  display: flex;
+  gap: 24px;
+  margin: 0 0 14px;
+}
+.cost-split dt {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cost-split dd {
+  margin: 2px 0 0;
+  font: var(--type-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.share-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--grey-100, #f2f4f6);
+}
+.share-bar i {
+  display: block;
+  min-width: 2px;
+}
+.share-legend,
+.cat-legend,
+.cat-rows,
+.top-res,
+.basis-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.share-legend {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+}
+.share-legend li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 44px;
+  gap: 10px;
+  align-items: center;
+  min-height: 30px;
+  font: var(--type-body);
+}
+.share-legend i,
+.cat-legend i,
+.cat-chip i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.share-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-legend b,
+.cat-rows b,
+.top-res b {
+  font: var(--type-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.share-pct {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.cost-route,
+.cost-env-cell,
+.cost-env-name {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font: var(--type-strong);
+}
+.cost-route-arrow {
+  margin: 0 2px;
+  color: var(--text-tertiary);
+}
+.cost-env-cell {
+  gap: 10px;
+}
+.shell .pk-table tr.clickable {
+  cursor: pointer;
+}
+.shell .pk-table tr.clickable:hover td {
+  background: var(--surface-subtle, #f9fafb);
+}
+.cat-rows {
+  display: grid;
+  gap: 4px;
+}
+.cat-rows li {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 84px;
+  gap: 12px;
+  align-items: center;
+  min-height: 34px;
+}
+.cat-env {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--type-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-track {
+  display: block;
+  min-width: 0;
+}
+.cat-stack {
+  display: flex;
+  gap: 1px;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.cat-stack i {
+  display: block;
+  min-width: 2px;
+}
+.cat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+.cat-legend li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.cat-legend b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.cat-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+.top-res {
+  display: grid;
+}
+.top-res li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 76px;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  border-top: 1px solid var(--divider);
+}
+.top-res li:first-child {
+  border-top: 0;
+}
+.top-res .rule-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.top-res-track {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--grey-100, #f2f4f6);
+}
+.top-res-track i {
+  display: block;
+  height: 100%;
+}
+.basis-grid {
+  display: grid;
+  gap: 16px;
+}
+.basis-grid .basis-counts {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--divider);
+}
+@media (max-width: 900px) {
+  .basis-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.basis-counts {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.basis-counts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.basis-counts dt {
+  color: var(--text-secondary);
+  font: var(--type-body);
+}
+.basis-counts dd {
+  margin: 0;
+  font: var(--type-strong);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.basis-list {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font: var(--type-body);
+}
+.basis-list li {
+  position: relative;
+  padding-left: 14px;
+}
+.basis-list li::before {
+  position: absolute;
+  top: 0.65em;
+  left: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  content: "";
+}
+.basis-list li.gap {
+  color: var(--warning-contrast);
+}
+.basis-list li.gap::before {
+  background: var(--warning);
+}
+
+/* 이전 영향: 비교표 + 옆 사실 */
+.compare-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .compare-wrap {
+    grid-template-columns: 1fr;
+  }
+}
+.compare-table td {
+  height: 56px;
+}
+.compare-table tfoot td {
+  height: 48px;
+}
+.compare-table td.strong,
+.cost-table td.strong {
+  font-weight: 700;
+}
+.compare-facts {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-subtle, #f9fafb);
+}
+.compare-facts > div {
+  padding: 14px 16px;
+}
+.compare-facts > div + div {
+  border-top: 1px solid var(--border);
+}
+.compare-facts dt {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.compare-facts dd {
+  margin: 4px 0 0;
+  font: var(--type-title);
+  font-variant-numeric: tabular-nums;
+}
+.compare-facts p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font: var(--type-label);
+  line-height: 1.6;
+}
+.change-kind {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--grey-100, #f2f4f6);
+  color: var(--text-secondary);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.change-kind.kind-replaced {
+  background: #eef0fd;
+  color: #4a3fb8;
+}
+.change-kind.kind-added {
+  background: var(--danger-soft, #ffeeee);
+  color: var(--danger-contrast);
+}
+.change-table td {
+  vertical-align: top;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.change-table .sub,
+.cost-table .sub {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+/* 환경별: 환경마다 표 열 폭을 같게 */
+.cost-envs .cost-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.cost-envs .cost-table th:nth-child(2) {
+  width: 120px;
+}
+.cost-envs .cost-table th:nth-child(3),
+.cost-envs .cost-table th:nth-child(4),
+.cost-envs .cost-table th:nth-child(5) {
+  width: 96px;
+}
+.cost-envs .cost-table th:nth-child(6) {
+  width: 72px;
+}
+.cost-envs .cost-table td.cost-wrap {
+  overflow-wrap: anywhere;
+}
+
