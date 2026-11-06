@@ -503,6 +503,16 @@
 .connection-notice {
   color: var(--text-secondary);
 }
+/* 연결 서비스를 쓸 수 없을 때 화면 위 안내: 미리보기 안내와 같은 칸, 주의 색 */
+.connection-page .connection-unavailable {
+  max-width: none;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+  color: var(--warning-contrast);
+}
 .connection-error {
   color: var(--danger-contrast);
 }
