@@ -404,6 +404,77 @@ th[aria-sort="descending"] .pk-sort-mark {
   color: var(--accent-contrast);
 }
 
+/* ── 12. 이전 흐름: 작업 칩 ── */
+.shell a.flow-job:not(.rail-item):not(.rail-brand):not(.skip-link) {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: var(--type-label);
+  font-weight: 600;
+  text-decoration: none;
+}
+.shell a.flow-job:hover {
+  background: var(--accent-soft);
+}
+.flow-job > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--other);
+}
+.flow-job.tone-running > i {
+  background: var(--info);
+}
+.flow-job.tone-ok > i {
+  background: var(--success);
+}
+.flow-job.tone-warn > i {
+  background: var(--warning);
+}
+.flow-job.tone-bad > i {
+  background: var(--danger);
+}
+.flow-job > span {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+/* ── 13. 단계 진행 막대 ─────────────────────────────── */
+.stage-bar {
+  display: inline-grid;
+  gap: 4px;
+  min-width: 140px;
+}
+.stage-cells {
+  display: flex;
+  gap: 2px;
+}
+.stage-cells i {
+  flex: 1;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--surface-sunken);
+}
+.stage-cells i.done {
+  background: var(--success);
+}
+.stage-cells i.running {
+  background: var(--info);
+}
+.stage-cells i.warn {
+  background: var(--warning);
+}
+.stage-cells i.bad {
+  background: var(--danger);
+}
+.stage-text {
+  font: var(--type-label);
+  color: var(--text-strong);
+}
+
 /* ── 14. 사이드 패널 보조 ───────────────────────────── */
 .fp-head h2 .pk-label {
   margin-top: 4px;
@@ -716,6 +787,287 @@ th[aria-sort="descending"] .pk-sort-mark {
   white-space: normal;
 }
 
+/* ── 24. 개요 대시보드(위젯 격자) ────────────────────── */
+.sec-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+.w-sev {
+  grid-column: span 3;
+}
+.w-scores {
+  grid-column: span 4;
+}
+.w-top {
+  grid-column: span 5;
+}
+.w-exposed {
+  grid-column: span 8;
+}
+.w-parity {
+  grid-column: span 4;
+}
+.w-cat {
+  grid-column: span 5;
+}
+.w-std {
+  grid-column: span 7;
+}
+@media (max-width: 1280px) {
+  .w-sev,
+  .w-scores,
+  .w-parity,
+  .w-cat {
+    grid-column: span 6;
+  }
+  .w-top,
+  .w-exposed,
+  .w-std {
+    grid-column: span 12;
+  }
+}
+.pk-widget {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+.pk-widget-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.pk-widget-head h2 {
+  margin: 0;
+  font: var(--type-subtitle);
+}
+.pk-widget-head p {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.pk-widget-body {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 20px 16px;
+}
+/* 심각도별 문제: 큰 숫자(옆 짧은 막대는 25번) */
+.sev-stack {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell .sev-stack-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 10px;
+  align-items: baseline;
+  width: 100%;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-left: 3px solid var(--sev-medium);
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.shell .sev-stack-item:hover {
+  background: var(--surface-weak);
+}
+.sev-stack-item b {
+  color: var(--text);
+  font: var(--type-number);
+  font-variant-numeric: tabular-nums;
+}
+.sev-stack-item span {
+  font: var(--type-label);
+}
+.sev-stack-item.sev-critical {
+  border-left-color: #9b1c1c;
+}
+.sev-stack-item.sev-high {
+  border-left-color: var(--danger);
+}
+.sev-stack-item.sev-medium {
+  border-left-color: var(--warning);
+}
+.sev-stack-item.sev-low {
+  border-left-color: var(--border-strong);
+}
+.sev-stack-item.zero b {
+  color: var(--text-disabled);
+}
+/* 위젯 안 목록 행 */
+.w-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.w-list li + li {
+  border-top: 1px solid var(--divider);
+}
+.shell .w-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.shell .w-row:hover {
+  background: var(--surface-weak);
+}
+.w-parity .w-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.w-table td {
+  height: 48px;
+}
+.w-controls {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  max-width: 260px;
+  font: var(--type-strong);
+}
+.w-controls .sub {
+  overflow: hidden;
+  font: var(--type-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+/* 전환 영향 숫자 */
+.w-parity-nums {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.w-parity-nums > div {
+  display: grid;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--surface-weak);
+}
+.w-parity-nums b {
+  font: var(--type-number);
+  font-variant-numeric: tabular-nums;
+}
+.w-parity-nums span {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.w-parity-nums .bad b {
+  color: var(--danger-contrast);
+}
+.w-parity-nums .ok b {
+  color: var(--success-contrast);
+}
+/* 분류별 문제 */
+.cat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell .cat-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.shell .cat-item:hover {
+  background: var(--surface-weak);
+}
+.cat-item b {
+  font: var(--type-number);
+  font-variant-numeric: tabular-nums;
+}
+.cat-item small {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cat-item .cat-name {
+  color: var(--text-secondary);
+  font: var(--type-body);
+}
+.cat-item.zero b {
+  color: var(--text-disabled);
+}
+/* 표준별 준수율 */
+.w-std-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.w-std-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 260px);
+  gap: 16px;
+  align-items: center;
+  padding: 8px 0;
+}
+.w-std-list li + li {
+  border-top: 1px solid var(--divider);
+}
+/* 환경별 점수 위젯용 */
+.env-scores.compact li {
+  grid-template-columns: minmax(0, 1fr) 32px 64px;
+  grid-template-areas:
+    "name score band"
+    "track track track";
+  gap: 6px 10px;
+  height: auto;
+  padding: 10px 0;
+}
+.env-scores.compact .pk-path {
+  grid-area: name;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.env-scores.compact .env-score-track {
+  grid-area: track;
+}
+.env-scores.compact .env-score {
+  grid-area: score;
+}
+.env-scores.compact .env-score-counts {
+  display: none;
+}
+
 /* ── 25. 가장자리 색 띠 쓰지 않기 ─────────────────────
  * 카드·행·안내 상자의 한쪽 가장자리에만 색 띠를 두지 않는다(흔한 AI 느낌 장식).
  * 상태는 숫자 색과 라벨 앞 작은 점으로만 알린다. */
@@ -808,5 +1160,240 @@ th[aria-sort="descending"] .pk-sort-mark {
 .shell .page-head .pk-filter select {
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+/* ── 29. 작업 진행 화살표(AWS MGN 수명 주기 방식) ── */
+.chev {
+  display: inline-grid;
+  gap: 5px;
+  min-width: 200px;
+}
+.chev-row {
+  display: flex;
+}
+.chev-row i {
+  flex: 1;
+  height: 10px;
+  margin-right: -3px;
+  background: var(--surface-sunken);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 5px) 0,
+    100% 50%,
+    calc(100% - 5px) 100%,
+    0 100%,
+    5px 50%
+  );
+}
+.chev-row i:first-child {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 5px) 0,
+    100% 50%,
+    calc(100% - 5px) 100%,
+    0 100%
+  );
+  border-radius: 3px 0 0 3px;
+}
+.chev-row i.done {
+  background: var(--success);
+}
+.chev-row i.now {
+  background: var(--info);
+}
+.chev-row i.now.tone-warn {
+  background: var(--warning);
+}
+.chev-row i.now.tone-bad {
+  background: var(--danger);
+}
+.chev-row i.now.tone-idle {
+  background: var(--border-strong);
+}
+.chev-text {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  font: var(--type-label);
+}
+.chev-text b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* ── 30. 이전 흐름(한 패널 6열 + 흐름 띠, Wiz 노출 관리 개요 방식) ── */
+.fl {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 0 -24px -8px;
+}
+.fl-cell {
+  min-width: 0;
+  padding: 0 18px;
+  border-left: 1px solid var(--divider);
+}
+.fl-cell.first {
+  border-left: 0;
+  padding-left: 24px;
+}
+.fl-cell:nth-child(6n) {
+  padding-right: 24px;
+}
+.fl-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  padding-top: 4px;
+}
+.fl-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-tertiary);
+}
+.fl-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.has-jobs.fl-head .fl-icon {
+  background: var(--accent-soft);
+  color: var(--accent-contrast);
+}
+.needs-human.fl-head .fl-icon {
+  background: var(--warning-soft);
+  color: var(--warning-contrast);
+}
+.fl-title {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  font: var(--type-subtitle);
+}
+.fl-no {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-weight: 700;
+}
+.fl-flag {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  color: var(--text-tertiary);
+  font: var(--type-tag);
+}
+.fl-num {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding-top: 12px;
+}
+.fl-num b {
+  color: var(--text-disabled);
+  font: var(--type-number);
+  font-size: 28px;
+  line-height: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.has-jobs.fl-num b {
+  color: var(--accent-contrast);
+}
+.needs-human.fl-num b {
+  color: var(--warning-contrast);
+}
+.fl-num small {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.fl-band {
+  grid-column: 1 / -1;
+  height: 44px;
+  margin: 6px 0;
+}
+.fl-band-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.fl-band-svg path {
+  fill: var(--accent);
+  fill-opacity: 0.16;
+  stroke: var(--accent-line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.fl-body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.fl-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font: var(--type-label);
+  line-height: 18px;
+}
+.fl-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.fl-facts > div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-top: 1px solid var(--divider);
+}
+.fl-facts dt {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.fl-facts dd {
+  margin: 0;
+  font: var(--type-strong);
+  font-variant-numeric: tabular-nums;
+}
+.fl-facts dd.tone-warn {
+  color: var(--warning-contrast);
+}
+.fl-facts dd.tone-bad {
+  color: var(--danger-contrast);
+}
+.shell a.fl-link:not(.rail-item):not(.rail-brand):not(.skip-link) {
+  color: var(--accent-contrast);
+  font: var(--type-label);
+  font-weight: 600;
+  text-decoration: none;
+}
+.fl-jobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@container dash (max-width: 980px) {
+  .fl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .fl-band {
+    display: none;
+  }
+  .fl-cell:nth-child(3n + 1) {
+    border-left: 0;
+    padding-left: 24px;
+  }
 }
 

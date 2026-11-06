@@ -68,11 +68,11 @@ test("overviewCards state failures, longest pause and verification in plain unit
   assert.deepEqual(cards[0].lines, ["a 0건", "b 0건"]);
   assert.equal(cards[1].value, "30");
   assert.equal(cards[1].unit, "초");
-  assert.deepEqual(cards[1].lines, ["a · FENCING–SWITCHING"]);
+  assert.deepEqual(cards[1].lines, ["a, FENCING–SWITCHING"]);
   assert.equal(cards[2].label, null);
   assert.deepEqual(cards[2].lines, ["검증 2건 중 1건 완료"]);
   const bad = overviewCards([job("a", {}, 2, 5, 3)]);
-  assert.equal(bad[0].label?.text, "확인 필요");
+  assert.equal(bad[0].label?.text, "실패 있음");
   assert.equal(bad[2].label?.tone, "bad");
   assert.equal(overviewCards([])[0].label, null);
 });

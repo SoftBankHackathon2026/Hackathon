@@ -20,14 +20,15 @@ export function CdcPath({
       <ol className="cdc-path">
         {nodes.map((node, i) => (
           <li key={node.key} className="cdc-item">
-            {i > 0 && <span className="cdc-arrow" aria-hidden="true" />}
+            {i > 0 && (
+              <svg className="cdc-arrow" viewBox="0 0 24 12" aria-hidden="true">
+                <path d="M0 6h20M15 1.5L20 6l-5 4.5" />
+              </svg>
+            )}
             <div className={`cdc-node tone-${node.tone}`}>
               <div className="cdc-head">
-                {node.flag ? (
-                  <span className="cdc-flag">{node.flag}</span>
-                ) : (
-                  <span>{node.kind}</span>
-                )}
+                <span>{node.kind}</span>
+                {node.flag && <span className="cdc-flag">{node.flag}</span>}
               </div>
               <div className="cdc-body">
                 <div className="cdc-name" title={node.name}>
@@ -41,18 +42,34 @@ export function CdcPath({
         ))}
       </ol>
       {worker && (
-        <p className="info-line">
-          쓰기 워커는{" "}
-          <StatusDot
-            tone={worker.state.toUpperCase() === "RUNNING" ? "ok" : "warn"}
-          >
-            {stateLabel(worker.state)}
-          </StatusDot>{" "}
-          상태이고, 지금은 {worker.target} DB에 기록해요. 대기 중인 쓰기{" "}
-          {formatCount(worker.queue_length)}건, 처리 속도{" "}
-          {formatRate(worker.rate_per_second)}, 응답 시간(p95){" "}
-          {formatSeconds(worker.latency.p95)}.
-        </p>
+        <dl className="kv-inline" aria-label="쓰기 워커">
+          <div>
+            <dt>쓰기 워커</dt>
+            <dd>
+              <StatusDot
+                tone={worker.state.toUpperCase() === "RUNNING" ? "ok" : "warn"}
+              >
+                {stateLabel(worker.state)}
+              </StatusDot>
+            </dd>
+          </div>
+          <div>
+            <dt>기록 대상</dt>
+            <dd>{worker.target} DB</dd>
+          </div>
+          <div>
+            <dt>대기</dt>
+            <dd>{formatCount(worker.queue_length)}건</dd>
+          </div>
+          <div>
+            <dt>처리 속도</dt>
+            <dd>{formatRate(worker.rate_per_second)}</dd>
+          </div>
+          <div>
+            <dt>응답 p95</dt>
+            <dd>{formatSeconds(worker.latency.p95)}</dd>
+          </div>
+        </dl>
       )}
     </>
   );
