@@ -58,7 +58,7 @@ spec:
             capabilities: {drop: [ALL]}
       containers:
         - name: api
-          image: ghcr.io/crystal-sbhackathon2026/review-api:3f874c80b4edb4b42aece883d0727422a7ccff47
+          image: ghcr.io/softbankhackathon2026/review-api:743fc9a4aa4156c8e9b8e63dc08b1fe9f2349a11
           ports:
             - name: http
               containerPort: 8080
@@ -153,7 +153,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: worker
-          image: ghcr.io/crystal-sbhackathon2026/review-worker:3f874c80b4edb4b42aece883d0727422a7ccff47
+          image: ghcr.io/softbankhackathon2026/review-worker:743fc9a4aa4156c8e9b8e63dc08b1fe9f2349a11
           ports:
             - name: metrics
               containerPort: 9100
