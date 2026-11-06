@@ -9,7 +9,7 @@
   align-items: center;
   gap: 10px;
   color: var(--rail);
-  font-size: 15px;
+  font-size: var(--fs-lg);
 }
 .login-mark {
   display: grid;

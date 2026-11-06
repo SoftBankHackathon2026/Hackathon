@@ -1,7 +1,7 @@
 .members {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .members tr:last-child td {
   border-bottom: 0;

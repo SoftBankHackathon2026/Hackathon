@@ -1,75 +1,134 @@
 :root {
+  /* Oneport 디자인 토큰 — 메인 B 인디고, Pretendard.
+     구조·밀도·상호작용은 Datadog(인프라 콘솔): 촘촘한 표, 행 → 오른쪽 상세 패널, 왼쪽 패싯, 브랜드색 내비.
+     면과 회색은 토스 TDS(라이트) grey50–900: 회색 바탕 위 테두리 없는 흰 면. 컴포넌트는 아래 역할 토큰만 쓴다. */
   --sidebar-width: 236px;
-  --font-body: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --radius-control: 4px;
-  --radius-card: 6px;
+  /* 글자 크기는 7단계뿐: 11 태그 · 12 라벨 · 13 본문 · 14 소제목 · 18 섹션 제목 · 22 숫자 · 24 화면 제목.
+     컴포넌트는 크기 대신 아래 역할(--type-*)을 쓴다. 규칙은 styles/system.css 가 마지막에 고정한다. */
+  --fs-tag: 11px;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 14px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+  --fs-num: 22px;
+  --type-display: 700 24px/32px var(--font-body);
+  --type-title: 700 18px/26px var(--font-body);
+  --type-subtitle: 700 14px/20px var(--font-body);
+  --type-body: 400 13px/20px var(--font-body);
+  --type-strong: 600 13px/20px var(--font-body);
+  --type-label: 500 12px/16px var(--font-body);
+  --type-number: 700 22px/28px var(--font-body);
+  --type-tag: 700 11px/18px var(--font-body);
+  /* 간격 */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 48px;
+  /* 반경: 컨트롤 10 / 안쪽 카드 14 / 패널 20. 선 대신 면과 둥근 모서리로 나눈다(TDS) */
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-panel: 20px;
+  --radius-badge: 6px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* 배경·선·글자 */
+  /* TDS grey: 50 #f9fafb · 100 #f2f4f6 · 200 #e5e8eb · 300 #d1d6db · 400 #b0b8c1
+     500 #8b95a1 · 600 #6b7684 · 700 #4e5968 · 800 #333d4b · 900 #191f28 */
   --surface: #ffffff;
-  --surface-canvas: #f7f7f7;
-  --surface-subtle: #f2f2f2;
-  --surface-sunken: #e8e8e8;
-  --border: #e5e5e5;
-  --border-strong: #cfcfcf;
-  --text: #171717;
-  --text-secondary: #525252;
-  --text-tertiary: #8a8a8a;
+  --surface-canvas: #f2f4f6;
+  --surface-weak: #f9fafb;
+  --surface-subtle: #f2f4f6;
+  --surface-sunken: #e5e8eb;
+  --divider: #f2f4f6;
+  --border: #e5e8eb;
+  --border-strong: #b0b8c1;
+  --text: #191f28;
+  --text-strong: #333d4b;
+  --text-secondary: #4e5968;
+  --text-tertiary: #6b7684;
+  --text-disabled: #b0b8c1;
   --text-knockout: #ffffff;
 
-  --accent: #0f5c63;
-  --accent-hover: #0b4a50;
-  --accent-contrast: #0b4a50;
-  --accent-soft: #e6f0f0;
-  --accent-line: #b5d3d5;
-  --focus-ring: rgba(15, 92, 99, 0.35);
+  /* 인터랙션(인디고): 버튼·링크·선택·포커스에만 */
+  --accent: #6153db;
+  --accent-hover: #4f42b9;
+  --accent-contrast: #4f42b9;
+  --accent-soft: #eeedfc;
+  --accent-line: #c9c6f5;
+  --focus-ring: rgba(97, 83, 219, 0.4);
 
-  --success: #2f7d32;
-  --success-contrast: #24622a;
-  --success-soft: #e8f3e8;
-  --success-line: #b9d9ba;
-  --warning: #b26b00;
-  --warning-contrast: #8a5300;
-  --warning-soft: #fbf1df;
-  --warning-line: #e8cfa0;
-  --danger: #c2362b;
-  --danger-contrast: #a02a20;
-  --danger-soft: #fbe9e7;
-  --danger-line: #ebb6b1;
-  --other: #8a8a8a;
-  --other-contrast: #525252;
-  --other-soft: #f2f2f2;
+  /* 상태: base 는 채움, contrast 는 글자, soft 는 옅은 배경 */
+  --success: #319751;
+  --success-contrast: #21763c;
+  --success-soft: #e9f6ed;
+  --success-line: #b6dfc2;
+  --warning: #e8a127;
+  --warning-contrast: #915c08;
+  --warning-soft: #fdf3e0;
+  --warning-line: #f0d29a;
+  --danger: #c9302d;
+  --danger-contrast: #b32322;
+  --danger-soft: #fcebea;
+  --danger-line: #f0bcba;
+  --info: #0f74c5;
+  --info-contrast: #0b5fa3;
+  --other: #8b95a1;
+  --other-contrast: #6b7684;
+  --other-soft: #f2f4f6;
 
-  --sev-critical: #c2362b;
-  --sev-critical-ink: #a02a20;
-  --sev-critical-soft: #fbe9e7;
-  --sev-critical-line: #ebb6b1;
-  --sev-high: #d9661f;
-  --sev-high-ink: #9a4710;
-  --sev-high-soft: #fcebdd;
-  --sev-high-line: #f0c19f;
-  --sev-medium: #b8860b;
-  --sev-medium-ink: #7a5a08;
-  --sev-medium-soft: #f8efd3;
-  --sev-medium-line: #e3cf8e;
-  --sev-low: #8a8a8a;
-  --sev-low-ink: #525252;
-  --sev-low-soft: #f2f2f2;
-  --sev-low-line: #d4d4d4;
+  /* 심각도: 치명·높음만 색 글자, 중간·낮음은 무채 */
+  --sev-critical: #c9302d;
+  --sev-critical-ink: #b32322;
+  --sev-critical-soft: #fcebea;
+  --sev-critical-line: #f0bcba;
+  --sev-high: #dd6f23;
+  --sev-high-ink: #a64d10;
+  --sev-high-soft: #fdeee3;
+  --sev-high-line: #f3c7a6;
+  --sev-medium: #8b95a1;
+  --sev-medium-ink: #4e5968;
+  --sev-medium-soft: #f2f4f6;
+  --sev-medium-line: #e5e8eb;
+  --sev-low: #b0b8c1;
+  --sev-low-ink: #6b7684;
+  --sev-low-soft: #f2f4f6;
+  --sev-low-line: #e5e8eb;
 
-  --series-source: #6b6b6b;
-  --series-target: #0f5c63;
-  --series-queue: #6fa3a7;
-  --series-max: #525252;
+  /* 데이터 시각화: 인디고와 분리한 범주색(흰 배경 대비 3:1 이상), 순서 고정 */
+  --dataviz-1: #2784d5;
+  --dataviz-2: #dd6f23;
+  --dataviz-3: #009b8f;
+  --dataviz-4: #c34189;
+  --dataviz-5: #918a21;
+  --dataviz-other: #8b95a1;
+  --dataviz-rest: #d1d6db;
+  --dataviz-grid: #f2f4f6;
+  --dataviz-axis: #b0b8c1;
+  --series-source: var(--dataviz-other);
+  --series-target: var(--dataviz-1);
+  --series-queue: var(--dataviz-3);
+  --series-max: var(--text-secondary);
 
-  --nav: #1c1c1c;
-  --nav-hover: #2c2c2c;
-  --nav-text: #b3b3b3;
+  /* 앱 프레임은 브랜드 인디고(Datadog 의 보라 내비처럼). 화면 안에서는 인디고를 아낀다 */
+  --nav: #1a1740;
+  --nav-hover: #282754;
+  --nav-selected: #36346f;
+  --nav-text: #b4b5cb;
   --nav-active: #ffffff;
-  --tooltip: #1c1c1c;
-  --tooltip-text: #ececec;
-  --shadow-md: 0 6px 20px rgb(0 0 0 / 0.14);
-  --scrim: rgb(0 0 0 / 0.36);
+  --tooltip: #191f28;
+  --tooltip-text: #f2f4f6;
+  --shadow-md: 0 6px 20px rgb(20 20 40 / 0.14);
+  --scrim: rgb(10 10 20 / 0.36);
 
   --canvas: var(--surface-canvas);
   --card: var(--surface);

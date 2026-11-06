@@ -97,7 +97,7 @@ export function AppShell({
         <header className="page-head">
           <div className="head-main">
             {!hideTitle && (
-              <div className="page-title">
+              <nav className="page-where" aria-label="현재 위치">
                 {crumb && (
                   <>
                     <button className="page-crumb" onClick={crumb.onClick}>
@@ -108,8 +108,8 @@ export function AppShell({
                     </span>
                   </>
                 )}
-                <h1>{title}</h1>
-              </div>
+                <span aria-current="page">{title}</span>
+              </nav>
             )}
             <div className="page-tabs" ref={setTabs} />
           </div>

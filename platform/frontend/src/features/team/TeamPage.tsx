@@ -2,6 +2,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import type { Account, Role } from "../../api/types";
+import { PageHeader, Section } from "../../components/PageKit";
 import { roleHelp, roleLabel } from "./roles";
 import { teamQueryOptions, useSetRole } from "./queries";
 
@@ -20,8 +21,9 @@ export function TeamPage({ account }: { account: Account }) {
     }
   }
   return (
-    <div className="team-page">
-      <p className="notice-line">
+    <div className="pk-page">
+      <PageHeader title="팀" />
+      <p className="pk-empty">
         {owner
           ? "새로 가입한 팀원은 보기 전용으로 시작해요. 권한은 관리자가 바꿀 수 있어요."
           : "권한을 바꾸려면 팀 관리자에게 요청하세요."}
@@ -31,8 +33,8 @@ export function TeamPage({ account }: { account: Account }) {
           {error}
         </p>
       )}
-      <section className="card">
-        <table className="members">
+      <Section title="팀원" meta={data.members.length}>
+        <table className="pk-table">
           <thead>
             <tr>
               <th>이메일</th>
@@ -78,7 +80,7 @@ export function TeamPage({ account }: { account: Account }) {
             ))}
           </tbody>
         </table>
-      </section>
+      </Section>
     </div>
   );
 }

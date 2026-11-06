@@ -1,0 +1,812 @@
+/*
+ * Oneport 디자인 시스템 — 역할 규칙.
+ * 이 파일은 마지막에 불러와서, 화면마다 따로 만든 클래스가 있어도 같은 역할은 같은 모양이 되게 고정한다.
+ * 글자: 24 화면 제목 · 18 섹션 제목 · 14 소제목 · 13 본문/표 · 12 라벨 · 11 태그 · 22 큰 숫자.
+ * 자세한 규칙: docs/DESIGN-SYSTEM.md
+ */
+
+/* ── 1. 화면 바탕과 본문 ─────────────────────────────── */
+.pk-page {
+  gap: 16px;
+  font: var(--type-body);
+  color: var(--text);
+}
+
+/* ── 2. 위쪽 고정 막대: 현재 위치 + 갱신 상태만 ───────────── */
+.page-where {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font: var(--type-body);
+}
+.shell .page-where .page-crumb {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: var(--type-body);
+}
+.page-where [aria-current="page"] {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.refresh {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-secondary);
+  font: var(--type-body);
+  white-space: nowrap;
+}
+.refresh > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--other);
+}
+.refresh-live > i {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+}
+.refresh-warn > i {
+  background: var(--warning);
+}
+.refresh-sim {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  color: var(--text-tertiary);
+  font: var(--type-tag);
+}
+
+/* ── 3. 화면 머리(PageHeader) ─────────────────────────── */
+.pk-header {
+  display: grid;
+  gap: 4px;
+  border-bottom: 0;
+}
+.pk-header.has-tabs {
+  border-bottom: 1px solid var(--border);
+}
+.shell .pk-crumb:not(.rail-item):not(.rail-brand):not(.skip-link) {
+  justify-self: start;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-decoration: none;
+}
+.shell .pk-crumb:not(.rail-item):not(.rail-brand):not(.skip-link):hover {
+  color: var(--text);
+}
+.pk-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  min-height: 36px;
+}
+.pk-header h1,
+.pk-title-row h1 {
+  margin: 0;
+  padding: 0;
+  font: var(--type-display);
+  letter-spacing: -0.4px;
+}
+.pk-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+.pk-header-meta {
+  color: var(--text-secondary);
+  font: var(--type-body);
+}
+.pk-header .pk-tabs {
+  margin-top: 8px;
+}
+.shell .pk-tabs button {
+  margin: 0;
+  font: var(--type-subtitle);
+  font-weight: 600;
+}
+.shell .pk-tabs button[aria-current="page"] {
+  font-weight: 700;
+}
+
+/* 주요 동작 버튼(화면 머리 오른쪽): fill / weak 두 가지뿐 */
+.shell .pk-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: auto;
+  height: 34px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--text-knockout);
+  font: var(--type-strong);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.shell .pk-button:hover {
+  background: var(--accent-hover);
+}
+.shell .pk-button.weak {
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+.shell .pk-button.weak:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+.shell a.pk-button:not(.rail-item):not(.rail-brand):not(.skip-link) {
+  color: var(--text-knockout);
+}
+
+/* 위험 알림 한 줄(문제가 있을 때만) */
+.pk-alert {
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  background: var(--danger-soft);
+  color: var(--danger-contrast);
+  font: var(--type-body);
+}
+.pk-alert strong {
+  font-weight: 700;
+}
+
+/* ── 4. 섹션(Section, DashSection 공통) ───────────────── */
+.pk-section-head h2,
+.pk-section > summary h2 {
+  margin: 0;
+  font: var(--type-title);
+  letter-spacing: -0.2px;
+}
+.pk-section-meta {
+  color: var(--text-tertiary);
+  font: var(--type-body);
+}
+.pk-section-help {
+  font: var(--type-body);
+}
+.pk-collapsible > summary {
+  align-items: center;
+  padding-bottom: 20px;
+  list-style: none;
+  cursor: pointer;
+}
+.pk-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+.pk-collapsible[open] > summary {
+  padding-bottom: 0;
+}
+.pk-chevron {
+  width: 7px;
+  height: 7px;
+  margin: 0 4px 2px 2px;
+  border-right: 1.5px solid var(--text-tertiary);
+  border-bottom: 1.5px solid var(--text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform 120ms;
+}
+.pk-collapsible[open] .pk-chevron {
+  transform: rotate(45deg);
+}
+
+/* 섹션 안 소제목(h3): 14 굵게 하나로 */
+.pk-section-body h3,
+.sub-head,
+.graph-head h3 {
+  margin: 0;
+  color: var(--text);
+  font: var(--type-subtitle);
+}
+.graph-head {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* ── 5. 표: 한 종류 ─────────────────────────────────── */
+.pk-table {
+  font: var(--type-body);
+}
+.pk-table th {
+  font: var(--type-label);
+  color: var(--text-tertiary);
+}
+.pk-table td {
+  font: var(--type-body);
+}
+.pk-table td.strong,
+.pk-table .strong {
+  font-weight: 600;
+}
+.pk-table tfoot td {
+  height: 40px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  font-weight: 700;
+}
+/* 정렬 가능한 머리 */
+.shell .pk-sort {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.pk-table th.num .pk-sort {
+  flex-direction: row-reverse;
+}
+.shell .pk-sort:hover {
+  color: var(--text);
+}
+.pk-sort-mark {
+  width: 8px;
+  color: var(--text-disabled);
+  font-size: 10px;
+  line-height: 1;
+}
+th[aria-sort="ascending"] .pk-sort,
+th[aria-sort="descending"] .pk-sort {
+  color: var(--text);
+}
+th[aria-sort="ascending"] .pk-sort-mark,
+th[aria-sort="descending"] .pk-sort-mark {
+  color: var(--accent);
+}
+/* 머리 고정: 섹션 안에서 스크롤해도 표 머리가 위쪽 막대 아래 붙는다 */
+.pk-table.sticky thead th {
+  position: sticky;
+  top: 48px;
+  z-index: 2;
+  background: var(--surface);
+}
+
+/* ── 6. 라벨·키값 ───────────────────────────────────── */
+.pk-summary dt,
+.kv-inline dt,
+.fp-facts dt,
+.cdc-head {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.kv-inline dd,
+.fp-facts dd {
+  font: var(--type-strong);
+}
+.fp-group h3 {
+  font: var(--type-label);
+  font-weight: 700;
+}
+
+/* ── 7. 큰 숫자: 22 굵게 하나로 ─────────────────────── */
+.pk-summary-value,
+.cost-env-total,
+.pk-card-value span {
+  font: var(--type-number);
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+}
+.cost-env-total small {
+  font: var(--type-body);
+  color: var(--text-tertiary);
+}
+/* 표 안 강조 숫자(점수 등)는 13 굵게 */
+.pk-score,
+.pk-table td.num.pk-score-cell {
+  font: var(--type-strong);
+  font-weight: 700;
+}
+
+/* ── 8. 태그 ───────────────────────────────────────── */
+.sev-tag,
+.cdc-flag,
+.badge-weak,
+.pill {
+  font: var(--type-tag);
+}
+
+/* ── 9. 빈 상태·보조 문장 ───────────────────────────── */
+.pk-empty,
+.empty-line,
+.info-line,
+.chart-empty,
+.pk-count,
+.ux-muted {
+  color: var(--text-tertiary);
+  font: var(--type-body);
+}
+
+/* ── 10. 환경 화면 왼쪽 목록 ────────────────────────── */
+.ux-name {
+  font: var(--type-subtitle);
+}
+.ux-label {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-weight: 700;
+}
+
+/* ── 11. 먼저 볼 것(AttentionStrip) ─────────────────── */
+.att {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell .att-tile {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.shell .att-tile:hover {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.att-value {
+  font: var(--type-number);
+  font-variant-numeric: tabular-nums;
+}
+.att-label {
+  font: var(--type-strong);
+}
+.att-note {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-tile.dim .att-value {
+  color: var(--text-disabled);
+}
+.att-tile.tone-bad::before {
+  background: var(--danger);
+}
+.att-tile.tone-bad .att-value {
+  color: var(--danger-contrast);
+}
+.att-tile.tone-warn::before {
+  background: var(--warning);
+}
+.att-tile.tone-warn .att-value {
+  color: var(--warning-contrast);
+}
+.att-tile.tone-running::before {
+  background: var(--accent);
+}
+.att-tile.tone-running .att-value {
+  color: var(--accent-contrast);
+}
+
+/* ── 14. 사이드 패널 보조 ───────────────────────────── */
+.fp-head h2 .pk-label {
+  margin-top: 4px;
+  font: var(--type-body);
+}
+.fp-actions {
+  margin-top: 14px;
+}
+.fp-group-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.fp-stages {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fp-stages li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kv-inline.bare {
+  padding-top: 0;
+  border-top: 0;
+}
+.text-bad {
+  color: var(--danger-contrast);
+}
+
+/* ── 15. 패싯(왼쪽 필터 목록) ───────────────────────── */
+.shell .pk-facet-search {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 7px 10px 7px 30px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%236b7684' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5L14 14'/%3E%3C/svg%3E")
+    no-repeat 10px center / 14px;
+  font: var(--type-body);
+}
+.pk-option.zero .pk-option-label,
+.pk-option.zero .pk-option-count {
+  color: var(--text-disabled);
+}
+
+/* ── 16. 타일 보조: 단위·막대·분포 ───────────────────── */
+.att-value small {
+  margin-left: 3px;
+  color: var(--text-tertiary);
+  font: var(--type-body);
+}
+.att-label {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-note b {
+  font-weight: 700;
+}
+.att-tile.tone-ok .att-value {
+  color: var(--success-contrast);
+}
+.att-tile.tone-ok::before {
+  background: var(--success);
+}
+.att-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-subtle);
+}
+.att-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--info);
+}
+.att-meter.tone-bad > span {
+  background: var(--danger);
+}
+.att-meter.tone-ok > span {
+  background: var(--success);
+}
+.dist {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+}
+.dist-track {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+}
+.dist-track .seg-pass,
+.dist-legend .lg-pass i {
+  background: var(--success);
+}
+.dist-track .seg-fail,
+.dist-legend .lg-fail i {
+  background: var(--danger);
+}
+.dist-track .seg-unknown,
+.dist-legend .lg-unknown i {
+  background: var(--border-strong);
+}
+.dist-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.dist-legend span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.dist-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.dist-legend b {
+  color: var(--text);
+  font-weight: 700;
+}
+.dist-legend .lg-fail b {
+  color: var(--danger-contrast);
+}
+
+/* ── 17. 표 합계: 표 위 오른쪽에 크게 + 맨 아래 띠 ──────── */
+.pk-subhead {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.pk-subhead h3 {
+  margin: 0;
+  font: var(--type-subtitle);
+}
+.pk-total {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.pk-total b {
+  color: var(--text);
+  font: var(--type-title);
+  font-variant-numeric: tabular-nums;
+}
+.pk-total b.up {
+  color: var(--danger-contrast);
+}
+.pk-total b.down {
+  color: var(--success-contrast);
+}
+.pk-table tfoot td {
+  background: var(--surface-weak);
+  border-top: 1.5px solid var(--border-strong);
+  color: var(--text);
+  font: var(--type-subtitle);
+}
+.pk-table tfoot td:first-child {
+  padding-left: 12px;
+}
+.pk-table tfoot td:last-child {
+  padding-right: 12px;
+}
+.pk-table tfoot td.num {
+  font-variant-numeric: tabular-nums;
+}
+.pk-table tfoot .sub {
+  font: var(--type-label);
+}
+.pk-more-row td {
+  text-align: center;
+}
+.shell .cost-more {
+  width: auto;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent-contrast);
+  font: var(--type-strong);
+}
+.shell .cost-more:hover {
+  background: var(--accent-soft);
+}
+
+/* ── 18. 고친 것 ───────────────────────────────────── */
+/* 패싯 옆 목록은 넘침을 막지 않는다(머리 고정이 화면 기준으로 붙도록) */
+.pk-list-main {
+  overflow: visible;
+}
+.shell input.pk-facet-search:not([type="checkbox"]):not([type="radio"]) {
+  border: 0;
+  background-color: var(--surface-subtle);
+  padding-left: 30px;
+}
+
+/* 타일 바탕: 회색 바탕 위에서는 흰 면, 흰 섹션 안에서는 옅은 면 + 선 */
+.shell .att-tile {
+  position: relative;
+  overflow: hidden;
+}
+.att-tile::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: transparent;
+}
+.shell .pk-section-body .att-tile {
+  background: var(--surface-weak);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.shell .pk-section-body .att-tile:hover,
+.shell .att-tile:hover {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.shell input.pk-facet-search:not([type="checkbox"]):not([type="radio"]) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%236b7684' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5L14 14'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 10px center;
+  background-size: 14px;
+}
+
+.shell input.pk-table-search:not([type="checkbox"]):not([type="radio"]) {
+  width: min(320px, 100%);
+  margin: 0;
+}
+.fp-group-body > .fp-resources {
+  margin-left: 0;
+}
+.shell a.pk-button.weak:not(.rail-item):not(.rail-brand):not(.skip-link) {
+  color: var(--text-secondary);
+}
+
+/* 준비 단계 표시: 이전 흐름과 같은 번호 원, 가로로 */
+.prep-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.prep-steps li {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-tertiary);
+  font: var(--type-strong);
+}
+.prep-steps li[aria-current="step"] {
+  color: var(--text);
+  font-weight: 700;
+}
+.prep-step-no {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font: var(--type-tag);
+}
+.prep-steps li[aria-current="step"] .prep-step-no {
+  background: var(--accent);
+  color: var(--text-knockout);
+}
+.att-note {
+  display: -webkit-box;
+  white-space: normal;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ux-components {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0 0;
+}
+.ux-page.embedded .ux-main {
+  min-width: 0;
+  padding-right: 24px;
+}
+.ux-components .pk-table td.sub {
+  white-space: normal;
+}
+
+/* ── 25. 가장자리 색 띠 쓰지 않기 ─────────────────────
+ * 카드·행·안내 상자의 한쪽 가장자리에만 색 띠를 두지 않는다(흔한 AI 느낌 장식).
+ * 상태는 숫자 색과 라벨 앞 작은 점으로만 알린다. */
+.att-tile::before {
+  display: none;
+}
+.att-tile:is(.tone-bad, .tone-warn, .tone-running, .tone-ok) .att-label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.att-tile:is(.tone-bad, .tone-warn, .tone-running, .tone-ok)
+  .att-label::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--other);
+}
+.att-tile.tone-bad .att-label::before {
+  background: var(--danger);
+}
+.att-tile.tone-warn .att-label::before {
+  background: var(--warning);
+}
+.att-tile.tone-running .att-label::before {
+  background: var(--accent);
+}
+.att-tile.tone-ok .att-label::before {
+  background: var(--success);
+}
+.pk-table tbody tr.selected td:first-child {
+  box-shadow: none;
+  padding-left: 0;
+}
+.fp-group p.fp-remedy {
+  box-shadow: none;
+}
+/* 심각도별 문제: 가장자리 띠 대신 숫자 옆 짧은 막대 */
+.shell .sev-stack-item {
+  position: relative;
+  padding-left: 16px;
+  border-left: 0;
+  border-radius: 6px;
+}
+.sev-stack-item::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.sev-stack-item.sev-critical::before {
+  background: #9b1c1c;
+}
+.sev-stack-item.sev-high::before {
+  background: var(--danger);
+}
+.sev-stack-item.sev-medium::before {
+  background: var(--warning);
+}
+
+/* ── 28. 위쪽 고정 막대 높이 고정(모든 화면 48px 한 줄) ─── */
+.shell .page-head {
+  flex-wrap: nowrap;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 20px;
+}
+.shell .page-head .head-main {
+  min-width: 0;
+  overflow: hidden;
+}
+.shell .page-head .head-tools,
+.shell .page-head .page-actions {
+  flex-wrap: nowrap;
+}
+.shell .page-where .page-crumb {
+  height: auto;
+  min-height: 0;
+  line-height: 20px;
+}
+.shell .page-head .pk-filter {
+  min-height: 30px;
+}
+.shell .page-head .pk-filter select {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
