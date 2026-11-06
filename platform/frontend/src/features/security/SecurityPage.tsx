@@ -1,4 +1,5 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { controlHash } from "../../app/routes";
 import { useEffect, useState } from "react";
 import { FilterTiles } from "../../components/FilterTiles";
 import {
@@ -36,20 +37,19 @@ export function SecurityPage({ control }: { control?: string }) {
   const fleet = useQuery(fleetQueryOptions()).data;
   const fleetEnvs = fleet?.environments ?? [];
   const [tab, setTab] = useState<Tab>(control ? "findings" : "overview");
-  // 열 문제 요청. 같은 문제를 다시 열어도 패널이 열리도록 번호를 올린다.
-  const [focusReq, setFocusReq] = useState({ id: control, n: 0 });
   const { filters, set, reset } = useFindingFilters(posture, control);
+  // 열린 문제는 주소(#security/<ID>)가 정한다. 개요/표준에서 고르면 주소를 바꿔 연다.
   const openControl = (id: string) => {
+    window.location.hash = controlHash(id);
+  };
+  useEffect(() => {
+    if (!control) return;
     const patch = revealFilters(
       filters,
-      posture.controls.find((c) => c.id === id),
+      posture.controls.find((c) => c.id === control),
     );
     if (patch) set(patch);
     setTab("findings");
-    setFocusReq((prev) => ({ id, n: prev.n + 1 }));
-  };
-  useEffect(() => {
-    if (control) openControl(control);
     // 주소의 문제가 바뀔 때만 연다
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [control]);
@@ -212,11 +212,10 @@ export function SecurityPage({ control }: { control?: string }) {
               />
               <div className="pk-list-main">
                 <FindingsTable
-                  key={`${focusReq.id ?? ""}-${focusReq.n}`}
                   posture={posture}
                   fleetEnvs={fleetEnvs}
                   filters={filters}
-                  focus={focusReq.id}
+                  focus={control}
                 />
               </div>
             </div>
