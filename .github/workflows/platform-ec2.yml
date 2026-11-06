@@ -3,6 +3,7 @@
 # 준비 (platform/deploy/ec2/README.md)
 #   - 저장소 변수 ONEPORT_DEPLOY_ROLE_ARN : GitHub OIDC 로 맡는 배포 역할. 계정 번호가 들어가므로 코드에 적지 않는다
 #   - EC2 는 태그 Name=oneport-platform, project=oneport 로 찾는다
+#   - 변수가 비어 있으면 두 job 모두 건너뛴다 (OIDC 공급자를 만들기 전)
 name: platform-ec2
 
 on:
@@ -31,6 +32,7 @@ env:
 jobs:
   images:
     name: image ${{ matrix.image }}
+    if: vars.ONEPORT_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
