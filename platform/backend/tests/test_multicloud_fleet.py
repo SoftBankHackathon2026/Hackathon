@@ -241,6 +241,9 @@ def test_live_config_without_components_inherits_default_layout(monkeypatch, tmp
     path.write_text(json.dumps(raw))
     monkeypatch.setenv("ONEPORT_FLEET_CONFIG", str(path))
     config = load_fleet_config()
-    assert [c.id for c in config.environment("gcp").components] == [c.id for c in GCP.components]
+    assert [c.id for c in config.environment("gcp").components] == [
+        c.id for c in GCP.components if not (c.workload or c.argo_app)
+    ]
     assert config.environment("gcp").boundary == GCP.boundary
+    assert config.environment("gcp").cluster_path == GCP.cluster_path
     assert config.environment("custom").components == []

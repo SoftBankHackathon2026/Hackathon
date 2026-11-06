@@ -179,6 +179,7 @@ AWS_COMPONENTS = [
         "data",
         "postgres",
         managed=True,
+        endpoint_hints=["oneaction-review-db."],
         placement=["VPC 10.0.0.0/16", "data 서브넷"],
     ),
     component(
@@ -187,10 +188,17 @@ AWS_COMPONENTS = [
         "data",
         "kafka",
         managed=True,
+        endpoint_hints=[".kafka.ap-northeast-2.amazonaws.com"],
         placement=["VPC 10.0.0.0/16", "data 서브넷"],
     ),
     component(
-        "s3", "S3 oneaction-review-docs", "data", "object_storage", managed=True, placement=[]
+        "s3",
+        "S3 oneaction-review-docs",
+        "data",
+        "object_storage",
+        managed=True,
+        placement=[],
+        endpoint_hints=["oneaction-review-docs-"],
     ),
     component(
         "tailscale-aws",
@@ -328,6 +336,7 @@ ONPREM = EnvironmentConfig(
     role="legacy",
     context="hackathon",
     app_namespace="hackathon",
+    cluster_path=[K3S],
     data_services=[
         DataService(kind="postgres", name="postgres (PostgreSQL 16)", managed=False),
         DataService(kind="kafka", name="kafka (KRaft 3.9.1)", managed=False),
@@ -361,6 +370,7 @@ AWS = EnvironmentConfig(
     role="target",
     context="oneaction",
     app_namespace="platform",
+    cluster_path=[VPC, EKS_SUBNET, EKS],
     data_services=[
         DataService(kind="postgres", name="RDS oneaction-review-db", managed=True),
         DataService(kind="kafka", name="MSK oneaction-review", managed=True),
@@ -394,6 +404,7 @@ GCP = EnvironmentConfig(
     role="target",
     context="oneaction-gke",
     app_namespace="platform",
+    cluster_path=[GCP_VPC, GKE_SUBNET, GKE],
     data_services=[
         DataService(kind="postgres", name="Cloud SQL oneaction-dev-review", managed=True),
         DataService(kind="kafka", name="Managed Kafka oneaction-dev-review", managed=True),

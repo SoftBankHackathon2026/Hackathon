@@ -251,7 +251,8 @@ def test_ingested_cutover_report_drives_live_dashboard(store, monkeypatch, tmp_p
 
 
 def test_component_status_and_issues_follow_workload_readiness():
-    from controlplane.services.fleet import component_view, environment_issues
+    from controlplane.domain.topology import component_view
+    from controlplane.services.fleet import environment_issues
 
     component = ONPREM.components[0]
     degraded = ClusterFacts(

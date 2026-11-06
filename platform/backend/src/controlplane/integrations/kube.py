@@ -6,15 +6,20 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
-from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, Workload
+from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, InventoryItem, Workload
+from controlplane.integrations.kube_inventory import (
+    ClusterObjects,
+    IngressSpec,
+    ServiceSpec,
+    WorkloadSpec,
+    build_inventory,
+)
 from controlplane.schemas.migrations import AppState
 
 ARGOPROJ = ("argoproj.io", "v1alpha1")
 EXTERNAL_SECRETS = ("external-secrets.io", "v1beta1")
 APP_HEALTH = {"Healthy", "Progressing", "Degraded", "Suspended", "Missing"}
 APP_SYNC = {"Synced", "OutOfSync"}
-# 닿지 않는 클러스터 하나가 수집기 전체를 OS 기본 TCP 시간(수 분) 동안 붙잡지 않게 한다.
-# (연결, 읽기) 초. Kubernetes 클라이언트는 호출마다 _request_timeout=None 을 넘기므로 호출 단위로 채운다.
 REQUEST_TIMEOUT = (3.0, 10.0)
 
 
@@ -117,6 +122,7 @@ class ClusterReader:
     def __init__(self, env: EnvironmentConfig) -> None:
         self._env = env
         api = api_client(env)
+        self._serialize = api.sanitize_for_serialization
         self._core = client.CoreV1Api(api)
         self._net = client.NetworkingV1Api(api)
         self._rbac = client.RbacAuthorizationV1Api(api)
@@ -181,6 +187,48 @@ class ClusterReader:
                 found[component.workload] = ready
         return found
 
+    def _workload_specs(self) -> list[WorkloadSpec] | None:
+        try:
+            listed = {
+                "deployment": self._apps_api.list_deployment_for_all_namespaces().items,
+                "statefulset": self._apps_api.list_stateful_set_for_all_namespaces().items,
+                "daemonset": self._apps_api.list_daemon_set_for_all_namespaces().items,
+            }
+        except ApiException:
+            return None
+        specs = [
+            WorkloadSpec.from_k8s(kind, self._serialize(obj))
+            for kind, objs in listed.items()
+            for obj in objs
+        ]
+        rollouts = _optional(lambda: self._custom.list_cluster_custom_object(*ARGOPROJ, "rollouts"))
+        specs += [
+            WorkloadSpec.from_k8s("rollout", obj) for obj in (rollouts or {}).get("items", [])
+        ]
+        return specs
+
+    def _configmap_values(self) -> dict[tuple[str, str], list[str]]:
+        configmaps = _optional(lambda: self._core.list_config_map_for_all_namespaces().items)
+        return {
+            (cm.metadata.namespace, cm.metadata.name): [str(v) for v in (cm.data or {}).values()]
+            for cm in configmaps or []
+        }
+
+    def _inventory(self) -> list[InventoryItem] | None:
+        workloads = self._workload_specs()
+        if workloads is None:
+            return None
+        services = _optional(lambda: self._core.list_service_for_all_namespaces().items) or []
+        ingresses = _optional(lambda: self._net.list_ingress_for_all_namespaces().items) or []
+        objects = ClusterObjects(
+            workloads=workloads,
+            services=[ServiceSpec.from_k8s(self._serialize(s)) for s in services],
+            ingresses=[IngressSpec.from_k8s(self._serialize(i)) for i in ingresses],
+            configmaps=self._configmap_values(),
+        )
+        hints = {c.id: c.endpoint_hints for c in self._env.components if c.endpoint_hints}
+        return build_inventory(objects, hints)
+
     def read(self) -> ClusterFacts:
         namespace = self._env.app_namespace
         observed = datetime.now(UTC)
@@ -208,4 +256,5 @@ class ClusterReader:
             resource_quota_namespaces={namespace} if quotas else set(),
             apps=self._apps(),
             workload_ready=self._workload_ready(),
+            inventory=self._inventory(),
         )

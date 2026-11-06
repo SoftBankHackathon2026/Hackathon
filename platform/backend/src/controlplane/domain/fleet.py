@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from controlplane.domain.migration import Direction, Stage
 from controlplane.schemas.migrations import (
@@ -47,6 +47,12 @@ class ComponentConfig(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     note: str | None = None
     placement: list[str] = Field(default_factory=list)
+    endpoint_hints: list[str] = Field(default_factory=list)
+
+    @field_validator("endpoint_hints")
+    @classmethod
+    def lowercase_hints(cls, hints: list[str]) -> list[str]:
+        return [hint.lower() for hint in hints]
 
 
 class EnvironmentConfig(BaseModel):
@@ -64,6 +70,7 @@ class EnvironmentConfig(BaseModel):
     in_cluster: bool = False
     app_namespace: str
     argocd_namespace: str = "argocd"
+    cluster_path: list[str] = Field(default_factory=list)
     data_services: list[DataService] = Field(default_factory=list)
     components: list[ComponentConfig] = Field(default_factory=list)
     boundary: list[str] = Field(default_factory=list)
@@ -147,6 +154,24 @@ class Workload:
 
 
 @dataclass(frozen=True)
+class InventoryItem:
+    namespace: str
+    kind: str
+    name: str
+    ready: int
+    desired: int
+    images: list[str] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)
+    uses: list[str] = field(default_factory=list)
+    uses_external: list[str] = field(default_factory=list)
+    ingress_classes: list[str] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        return f"{self.namespace}/{self.name}"
+
+
+@dataclass(frozen=True)
 class ClusterFacts:
     observed_at: datetime | None
     connected: bool
@@ -161,6 +186,7 @@ class ClusterFacts:
     resource_quota_namespaces: set[str] = field(default_factory=set)
     apps: list[AppState] = field(default_factory=list)
     workload_ready: dict[str, tuple[int, int]] = field(default_factory=dict)
+    inventory: list[InventoryItem] | None = None
 
 
 @dataclass(frozen=True)

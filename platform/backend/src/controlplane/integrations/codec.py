@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
-from controlplane.domain.fleet import ClusterFacts, WorkerSample, Workload
+from controlplane.domain.fleet import ClusterFacts, InventoryItem, WorkerSample, Workload
 from controlplane.domain.migration import Stage
 from controlplane.schemas.migrations import (
     AppState,
@@ -128,4 +128,7 @@ def facts_from_json(payload: Row) -> ClusterFacts:
         workload_ready={
             k: (int(v[0]), int(v[1])) for k, v in (payload.get("workload_ready") or {}).items()
         },
+        inventory=None
+        if payload.get("inventory") is None
+        else [InventoryItem(**item) for item in payload["inventory"]],
     )
