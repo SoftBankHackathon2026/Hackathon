@@ -10,7 +10,7 @@ export function brandSlug(
   const id = component.id.toLowerCase();
   if (id.includes("cloudflared")) return "cloudflare";
   if (id.includes("traefik")) return "traefikproxy";
-  if (id === "argocd" || id.startsWith("argo-")) return "argo";
+  if (id.startsWith("argocd") || id.startsWith("argo-")) return "argo";
   if (id.includes("prometheus")) return "prometheus";
   switch (component.kind) {
     case "postgres":

@@ -466,6 +466,7 @@ test("iconFor prefers brand marks and falls back to line glyphs", () => {
   );
   assert.equal(brandSlug({ id: "traefik", kind: "ingress" }), "traefikproxy");
   assert.equal(brandSlug({ id: "argocd", kind: "gitops" }), "argo");
+  assert.equal(brandSlug({ id: "argocd-platform", kind: "gitops" }), "argo");
   assert.equal(brandSlug({ id: "argo-rollouts", kind: "rollout" }), "argo");
   assert.equal(brandSlug({ id: "rds", kind: "postgres" }), "postgresql");
   assert.equal(

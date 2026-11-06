@@ -162,14 +162,16 @@ class _Links:
 
     @classmethod
     def of(cls, groups: list[_Group]) -> "_Links":
-        present = {group.id for group in groups}
-        entries = [g.id for g in groups if g.product.kind == "ingress"]
+        entries = [g for g in groups if g.product.kind == "ingress"]
+        entry_by_class = {}
+        for product in PRODUCTS:
+            ids = [g.id for g in entries if g.product.id == product.id]
+            if len(ids) == 1:
+                entry_by_class.update(dict.fromkeys(product.ingress_classes, ids[0]))
         return cls(
             owner={item.key: group.id for group in groups for item in group.items},
-            entry_by_class={
-                name: p.id for p in PRODUCTS for name in p.ingress_classes if p.id in present
-            },
-            sole_entry=entries[0] if len(entries) == 1 else None,
+            entry_by_class=entry_by_class,
+            sole_entry=entries[0].id if len(entries) == 1 else None,
         )
 
     def depends_on(self, group: _Group) -> list[str]:

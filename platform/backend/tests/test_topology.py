@@ -196,3 +196,20 @@ def test_workload_scaled_to_zero_is_idle_not_an_outage():
     batch = next(c for c in view.components if c.id == "batch")
     assert batch.status == "idle"
     assert view.issues == []
+
+
+def test_ingress_links_survive_a_product_running_in_two_namespaces():
+    objects = ClusterObjects(
+        workloads=[
+            workload("deployment", "kube-system", "traefik"),
+            workload("deployment", "shop", "ingress-nginx-controller"),
+            workload("deployment", "edge", "ingress-nginx-controller"),
+            workload("deployment", "shop", "api"),
+        ],
+        services=[service("shop", "api", "api")],
+        ingresses=[traefik_ingress("shop", "api")],
+        configmaps={},
+    )
+    found = live_components(ONPREM, build_inventory(objects, {}))
+    assert {"ingress-nginx-shop", "ingress-nginx-edge"} <= found.keys()
+    assert found["api"].depends_on == ["traefik"]
