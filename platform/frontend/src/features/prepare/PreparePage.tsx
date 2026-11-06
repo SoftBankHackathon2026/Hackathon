@@ -191,7 +191,7 @@ export function PreparePage({
         </li>
       </ol>
       {!gateway.available && (
-        <p className="connection-notice" role="status">
+        <p className="connection-notice connection-unavailable" role="status">
           {gateway.reason}
         </p>
       )}
