@@ -1977,6 +1977,189 @@ th[aria-sort="descending"] .pk-sort-mark {
   margin-top: 8px;
 }
 
+/* ── 27. 환경: 지도 조절 버튼 · 리소스 트리 ──────────── */
+.shell .pk-page .zoom-controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 1px 2px rgb(25 31 40 / 0.06);
+}
+.shell .pk-page .zoom-controls button {
+  display: grid;
+  place-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font: var(--type-strong);
+  line-height: 1;
+  text-align: center;
+}
+.shell .pk-page .zoom-controls button:hover {
+  background: var(--surface-weak);
+  color: var(--text);
+}
+.shell .pk-page .zoom-controls button svg {
+  margin: 0 auto;
+}
+/* 리소스 트리(Argo CD 방식) */
+.tree-frame {
+  padding: 16px;
+}
+.tree-note {
+  margin: 0 0 12px;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.rtree-list {
+  display: grid;
+  gap: 16px;
+}
+.rtree {
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.rtree-scroll {
+  overflow-x: auto;
+  padding: 16px;
+}
+.rtree-canvas {
+  position: relative;
+}
+.rtree-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.rtree-edges path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.2;
+}
+.shell .pk-page .rtree-node {
+  position: absolute;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    0 1px 2px rgb(25 31 40 / 0.04);
+  color: var(--text);
+  text-align: left;
+}
+.shell .pk-page .rtree-node:hover:not(:disabled) {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 2px 6px rgb(25 31 40 / 0.08);
+}
+.shell .pk-page .rtree-node.group {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  background: var(--surface-weak);
+}
+.shell .pk-page .rtree-node.kind-env {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1.5px var(--text-strong);
+  cursor: default;
+  opacity: 1;
+}
+.shell .pk-page .rtree-node.active {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.rtree-node .rule-title {
+  font-size: 13px;
+}
+.rtree-glyph {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.kind-namespace .rtree-glyph {
+  stroke-dasharray: 3 2.5;
+}
+.rtree-status {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  max-width: 76px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.rtree-status i,
+.rtree-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--other);
+}
+.rtree-status.tone-ok i,
+.rtree-dot.tone-ok {
+  background: var(--success);
+}
+.rtree-status.tone-warn i,
+.rtree-dot.tone-warn {
+  background: var(--warning);
+}
+.rtree-status.tone-bad i,
+.rtree-dot.tone-bad {
+  background: var(--danger);
+}
+.rtree-status.tone-bad {
+  color: var(--danger-contrast);
+  font-weight: 600;
+}
+.rtree-status.tone-idle i,
+.rtree-dot.tone-idle {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-tertiary);
+}
+.rtree-fold {
+  min-width: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font: var(--type-tag);
+  text-align: center;
+}
+.folded .rtree-fold {
+  background: var(--accent-soft);
+  color: var(--accent-contrast);
+}
+.shell .fp-resources button.fp-chip {
+  width: auto;
+  margin: 0;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--accent-contrast);
+  font: var(--type-label);
+  line-height: 18px;
+}
+.shell .fp-resources button.fp-chip:hover {
+  background: var(--accent-soft);
+}
+
 /* ── 28. 위쪽 고정 막대 높이 고정(모든 화면 48px 한 줄) ─── */
 .shell .page-head {
   flex-wrap: nowrap;
@@ -2637,3 +2820,651 @@ th[aria-sort="descending"] .pk-sort-mark {
   overflow-wrap: anywhere;
 }
 
+/* ── 32. 환경 다이어그램: 경계 단계 색, 이름 앞 상태 점, 구성 요소 패널(Cloudcraft 방식) ── */
+.floor-label {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.block-label {
+  font-weight: 600;
+}
+.block-label-g.dim {
+  opacity: 0.25;
+}
+.label-dot {
+  stroke: var(--card, #fff);
+  stroke-width: 1.5px;
+}
+.label-dot.tone-ok {
+  fill: var(--success);
+}
+.label-dot.tone-warn {
+  fill: var(--warning);
+}
+.label-dot.tone-bad {
+  fill: var(--danger);
+}
+.label-dot.tone-running {
+  fill: var(--accent, #6153db);
+}
+.label-dot.tone-idle {
+  fill: #b0b8c1;
+}
+.boundary-key {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 80px);
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--text-secondary);
+  font: var(--type-label);
+  list-style: none;
+}
+.boundary-key li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+.boundary-key li + li::before {
+  margin-right: 8px;
+  color: var(--text-tertiary);
+  content: "›";
+}
+.boundary-key i {
+  width: 12px;
+  height: 9px;
+  border-width: 1.5px;
+  border-radius: 2px;
+}
+
+/* 구성 요소 패널 */
+.cp-env {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.cp-trail {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-trail li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 24px;
+  font: var(--type-body);
+}
+.cp-trail li:nth-child(2) {
+  padding-left: 12px;
+}
+.cp-trail li:nth-child(3) {
+  padding-left: 24px;
+}
+.cp-trail li:nth-child(4) {
+  padding-left: 36px;
+}
+.cp-trail li:nth-child(5) {
+  padding-left: 48px;
+}
+.cp-trail li:nth-child(n + 6) {
+  padding-left: 60px;
+}
+.cp-trail li:last-child {
+  font: var(--type-strong);
+}
+.cp-trail i {
+  flex: none;
+  width: 12px;
+  height: 9px;
+  border: 1.5px solid;
+  border-radius: 2px;
+}
+.cp-ready {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 22px;
+}
+.cp-ready-track {
+  flex: 1;
+  max-width: 160px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-subtle);
+}
+.cp-ready-track i {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+.cp-ready-track i.tone-warn {
+  background: var(--warning);
+}
+.cp-ready-track i.tone-bad {
+  background: var(--danger);
+}
+.cp-ready b {
+  font-variant-numeric: tabular-nums;
+}
+.cp-note {
+  color: var(--text-secondary);
+}
+.cp-conn h4 {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.cp-conn h4 b {
+  color: var(--text-primary);
+}
+.cp-conn ul + h4,
+.cp-conn p + h4 {
+  margin-top: 12px;
+}
+.cp-links,
+.cp-jobs,
+.cp-controls,
+.cp-cost-lines {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell .cp-links button,
+.cp-links a {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: var(--type-strong);
+  text-align: left;
+  text-decoration: none;
+}
+.shell .cp-links button:hover,
+.cp-links a:hover {
+  background: var(--surface-subtle);
+}
+.cp-sub {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.cp-jobs li {
+  display: grid;
+  gap: 2px;
+  padding: 4px 0;
+}
+.cp-job-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.cp-jobs a,
+.cp-controls a {
+  color: var(--text-primary);
+  font: var(--type-strong);
+}
+.cp-controls li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 30px;
+}
+.cp-cost {
+  margin: 0;
+  font: var(--type-title);
+  font-variant-numeric: tabular-nums;
+}
+.cp-cost small {
+  margin-left: 2px;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cp-cost-lines {
+  margin-top: 6px;
+}
+.cp-cost-lines li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.cp-cost-lines b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 보안 표식 팝오버: 어느 구성 요소인지 + 실패한 통제(보안 화면과 같은 규칙 행) + 다음 행동 */
+.marker-pop {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.mp-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.mp-head h3 {
+  margin: 0;
+  font: var(--type-subtitle);
+}
+.mp-head p {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.mp-head p b {
+  color: var(--danger-contrast);
+}
+.shell .marker-pop .mp-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.shell .marker-pop .mp-close:hover {
+  background: var(--surface-subtle);
+}
+.mp-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.mp-rows {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 8px;
+  overflow-y: auto;
+  list-style: none;
+}
+.mp-rows a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 54px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.mp-rows a:hover {
+  background: var(--surface-subtle);
+}
+.mp-rows .rule-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-foot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--divider);
+}
+
+/* 파드(Cloudcraft 처럼 기본은 숨김, "파드 보기"로 켬): 파드 하나 = 작은 블록 하나, 상태색 */
+.pod-cube .pc-t {
+  fill: #6fcf8b;
+}
+.pod-cube .pc-l {
+  fill: #4fb06d;
+}
+.pod-cube .pc-r {
+  fill: #3e9159;
+}
+.pod-cube.tone-warn .pc-t {
+  fill: #f5c25c;
+}
+.pod-cube.tone-warn .pc-l {
+  fill: #dca43c;
+}
+.pod-cube.tone-warn .pc-r {
+  fill: #bd8828;
+}
+.pod-cube.tone-bad .pc-t {
+  fill: #ec6a62;
+}
+.pod-cube.tone-bad .pc-l {
+  fill: #d04c45;
+}
+.pod-cube.tone-bad .pc-r {
+  fill: #ae3a34;
+}
+.pod-cube.tone-idle .pc-t,
+.pod-cube.tone-running .pc-t {
+  fill: #d1d6db;
+}
+.pod-cube.tone-idle .pc-l,
+.pod-cube.tone-running .pc-l {
+  fill: #b0b8c1;
+}
+.pod-cube.tone-idle .pc-r,
+.pod-cube.tone-running .pc-r {
+  fill: #959ea8;
+}
+.pod-more {
+  fill: var(--text-secondary);
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--card, #fff);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+.label-count {
+  fill: var(--text-tertiary);
+  font-weight: 600;
+}
+.label-count.short {
+  fill: var(--danger-contrast);
+}
+.shell .tool-toggle {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  height: 32px;
+  min-height: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.shell .tool-toggle.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-contrast);
+}
+.tool-switch {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  border-radius: 7px;
+  background: #d1d6db;
+  transition: background 0.15s;
+}
+.tool-switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  content: "";
+  transition: transform 0.15s;
+}
+.tool-toggle.on .tool-switch {
+  background: var(--accent);
+}
+.tool-toggle.on .tool-switch::after {
+  transform: translateX(10px);
+}
+
+/* 패널: 파드 */
+.cp-pods-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 22px;
+}
+.cp-pod-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+}
+.cp-pod-cells i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #4fb06d;
+}
+.cp-pod-cells i.tone-warn {
+  background: var(--warning);
+}
+.cp-pod-cells i.tone-bad {
+  background: var(--danger);
+}
+.cp-pod-cells i.tone-idle,
+.cp-pod-cells i.tone-running {
+  background: #c4cad1;
+}
+.cp-pod-cells em {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-style: normal;
+}
+.cp-pods-head b {
+  font-variant-numeric: tabular-nums;
+}
+.cp-pods {
+  display: grid;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-pods li {
+  padding: 8px 0;
+  border-top: 1px solid var(--divider);
+}
+.cp-pod-main {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+.cp-pod-name {
+  display: inline-block;
+  max-width: 230px;
+  overflow: hidden;
+  font: var(--type-strong);
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.cp-pod-restarts {
+  flex: none;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-variant-numeric: tabular-nums;
+}
+.fp-group p.cp-pod-sub {
+  margin: 2px 0 0 14px;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  line-height: 18px;
+}
+
+/* 접속 주소: 패널 머리 "열기", 패널 목록, 표 열, 다이어그램 이름 뒤 ↗ */
+.ext-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fp-actions .pk-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.cp-endpoints {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cp-ep-main {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+.shell .cp-ep-url {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent-contrast);
+  font: var(--type-strong);
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.shell .cp-ep-url:hover {
+  text-decoration: underline;
+}
+.shell .cp-ep-url.plain {
+  color: var(--text-primary);
+}
+.shell .cp-ep-copy {
+  flex: none;
+  height: 24px;
+  min-height: 0;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.shell .cp-ep-copy:hover {
+  background: var(--surface-subtle);
+}
+.fp-group p.cp-ep-sub {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  line-height: 18px;
+}
+.shell .ep-open {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--accent-contrast);
+  font: var(--type-strong);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.shell .ep-open:hover {
+  text-decoration: underline;
+}
+.label-ext {
+  fill: var(--accent-contrast);
+  font-weight: 700;
+}
+.shell .pk-table td.one-line {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-endpoints + .cp-endpoints.inside,
+.fp-muted + .cp-endpoints.inside {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--divider);
+}
+.shell .cp-more {
+  min-height: 0;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-contrast);
+  font: var(--type-label);
+  font-weight: 600;
+}
+.shell .cp-more:hover {
+  text-decoration: underline;
+}
+/* 패널 안 긴 주소, 파드 이름: 남는 너비만큼만 쓰고 말줄임(전체는 title) */
+.fp-group-body,
+.cp-endpoints li,
+.cp-pods li {
+  min-width: 0;
+}
+.shell .cp-ep-url {
+  flex: 1 1 auto;
+}
+.cp-ep-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-pod-main > .status {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.cp-pod-name {
+  max-width: 100%;
+}
+/* 환경 화면 본문: 한 열이 내용(다이어그램, 툴바)에 맞춰 늘어나 가로 스크롤이 생기지 않게 */
+.ux-main {
+  grid-template-columns: minmax(0, 1fr);
+}
+.canvas-block,
+.canvas-frame {
+  min-width: 0;
+}

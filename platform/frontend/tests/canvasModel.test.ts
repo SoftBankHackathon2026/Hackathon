@@ -159,7 +159,7 @@ test("crossLinks pairs the two link tiles and labels them with the CIDR", () => 
   assert.equal(links.length, 1);
   assert.equal(links[0].from.id, "ts-a");
   assert.equal(links[0].to.id, "ts-b");
-  assert.equal(links[0].label, "Tailscale · 10.0.0.0/16");
+  assert.equal(links[0].label, "Tailscale, 10.0.0.0/16");
   assert.deepEqual(crossLinks([onprem]), []);
 });
 
@@ -343,7 +343,7 @@ test("routes and links are straight segments between tile centers", () => {
   assert.ok(from);
   assert.deepEqual(route.points[0], tileCenter(from));
   assert.equal(layout.links.length, 1);
-  assert.equal(layout.links[0].label, "Tailscale · 10.0.0.0/16");
+  assert.equal(layout.links[0].label, "Tailscale, 10.0.0.0/16");
   assert.deepEqual(
     layout.links[0].labelAt,
     pointAlong(

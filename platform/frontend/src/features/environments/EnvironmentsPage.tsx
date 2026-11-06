@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { SourceTag } from "../../components/Badge";
+import { RefreshStatus } from "../../components/RefreshStatus";
 import { PageActions } from "../../components/PageSlots";
 import {
   FilterSelect,
@@ -8,7 +8,6 @@ import {
   ScopeFilterRow,
 } from "../../components/PageKit";
 import { StatusDot } from "../../components/StatusDot";
-import { formatAgo } from "../../lib/format";
 import { fleetQueryOptions } from "../migrations/queries";
 import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
@@ -41,8 +40,7 @@ export function EnvironmentsPage({
   return (
     <div className="pk-page">
       <PageActions>
-        <SourceTag source={fleet.source} />
-        <span className="updated-at">기준 {formatAgo(fleet.generated_at)}</span>
+        <RefreshStatus source={fleet.source} at={fleet.generated_at} />
       </PageActions>
       <PageHeader
         title="환경"
@@ -82,9 +80,9 @@ export function EnvironmentsPage({
             </section>
           ))}
           <section className="ux-block ux-divided">
-            <h2 className="ux-label">현재 문제</h2>
+            <h2 className="ux-label">경고</h2>
             {issues.length === 0 ? (
-              <p className="ux-muted">확인된 문제가 없어요.</p>
+              <p className="ux-muted">경고가 없어요.</p>
             ) : (
               <ul className="ux-issues">
                 {issues.map(({ env, issue }, i) => (
@@ -96,7 +94,7 @@ export function EnvironmentsPage({
                     </StatusDot>
                     <span className="ux-small">
                       {env.name}
-                      {issue.detail ? ` · ${issue.detail}` : ""}
+                      {issue.detail ? `, ${issue.detail}` : ""}
                     </span>
                   </li>
                 ))}
@@ -112,7 +110,9 @@ export function EnvironmentsPage({
             initialSelect={select}
             height={Math.max(520, Math.round(viewport * 0.7))}
           />
-          <ComponentsList environments={environments} />
+          <section className="ux-components" aria-label="구성 요소">
+            <ComponentsList environments={environments} />
+          </section>
         </div>
       </div>
     </div>

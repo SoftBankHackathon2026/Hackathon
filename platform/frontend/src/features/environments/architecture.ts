@@ -29,7 +29,7 @@ export type ArchLayout = {
 
 const CAPTIONS: Record<ComponentLayer, string> = {
   entry: "진입점",
-  platform: "배포·운영",
+  platform: "배포/운영",
   app: "앱",
   migration: "이전 도구",
   data: "데이터",

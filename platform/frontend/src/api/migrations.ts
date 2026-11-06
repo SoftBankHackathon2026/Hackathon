@@ -43,6 +43,54 @@ export type EnvComponent = {
   detail: string;
   depends_on: string[];
   placement?: string[];
+  /**
+   * 이 구성 요소(워크로드)에 속한 파드. 클러스터 워크로드만 채우고 관리형 서비스는 비운다.
+   * 백엔드가 아직 보내지 않으면 undefined: 화면은 detail 의 "준비 x/y" 로 수만 그린다.
+   */
+  pods?: ComponentPod[];
+  /**
+   * 브라우저나 클라이언트로 접속할 수 있는 주소(인그레스, 로드 밸런서, 노드 포트).
+   * 백엔드가 아직 보내지 않거나 노출된 주소가 없으면 undefined/빈 배열: 화면은 접속 주소를 그리지 않는다.
+   */
+  endpoints?: ComponentEndpoint[];
+};
+export type EndpointSource =
+  "ingress" | "load_balancer" | "node_port" | "cluster_ip";
+export type ComponentEndpoint = {
+  /** 열 수 있는 전체 주소(스킴 포함). 예: https://app.example.com, http://192.0.2.10:30002 */
+  url: string;
+  /** 어디서 나온 주소인가: Ingress/HTTPRoute, Service type=LoadBalancer, NodePort, ClusterIP(클러스터 안에서만) */
+  source: EndpointSource;
+  /** public: 인터넷에서 접속 가능, private: 사내망/VPN/Tailscale 안에서만 */
+  exposure: "public" | "private";
+  /** 짧은 용도 이름(선택). 예: 웹 UI, API, 메트릭 */
+  label?: string | null;
+};
+/** Kubernetes Pod 의 status.phase 그대로. */
+export type PodPhase =
+  "Running" | "Pending" | "Succeeded" | "Failed" | "Unknown";
+export type ComponentPod = {
+  /** metadata.name */
+  name: string;
+  phase: PodPhase;
+  /** Ready 조건(모든 컨테이너 준비) */
+  ready: boolean;
+  /** 대기/종료 사유(컨테이너 state.waiting.reason 또는 terminated.reason). 예: CrashLoopBackOff, ImagePullBackOff, OOMKilled */
+  reason?: string | null;
+  /** 컨테이너 재시작 횟수 합 */
+  restarts: number;
+  /** spec.nodeName */
+  node: string | null;
+  /** status.startTime (ISO 8601) */
+  started_at: string | null;
+  containers: PodContainer[];
+};
+export type PodContainer = {
+  name: string;
+  ready: boolean;
+  restarts: number;
+  /** 이미지 이름:태그(다이제스트는 빼도 됨) */
+  image?: string;
 };
 export type EnvIssue = {
   severity: "critical" | "warning";

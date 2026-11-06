@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import type { FleetEnvironment, MigrationSummary } from "../../api/migrations";
 import type { Severity } from "../../api/security";
 import { Segmented } from "../../components/Segmented";
-import { envShortName } from "../migrations/fleetView";
 import { migrationQueryOptions } from "../migrations/queries";
 import { STATUS_LABELS, stageTitle } from "../migrations/stages";
 import { postureQueryOptions } from "../security/queries";
-import { ArchitectureDiagram } from "./ArchitectureDiagram";
+import { ComponentPanel } from "./ComponentPanel";
+import { ResourceTree } from "./ResourceTree";
 import {
   IsoCanvas,
   type Overlay,
@@ -16,9 +16,9 @@ import {
 } from "./IsoCanvas";
 import type { ViewMode } from "./iso";
 import {
+  BoundaryKey,
   InfraLegend,
   PathLegend,
-  ResourceCard,
   SecurityBar,
 } from "./CanvasPanels";
 import { layoutCanvas } from "./canvasLayout";
@@ -53,6 +53,7 @@ export function ArchitectureCanvas({
   const [overlay, setOverlay] = useState<Overlay>("infra");
   const [grouping, setGrouping] = useState<Grouping>("boundary");
   const [mode, setMode] = useState<ViewMode>("iso");
+  const [showPods, setShowPods] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<TileRef | null>(
     initialSelect ?? null,
@@ -120,13 +121,6 @@ export function ArchitectureCanvas({
     : undefined;
   const selectedComponent =
     selectedEnv?.components.find((c) => c.id === selected?.id) ?? null;
-  const selectedMarker = (() => {
-    if (!selectedEnv || !selectedComponent) return undefined;
-    return buildMarkers(selectedEnv, controls, { group: null, hidden: [] }).get(
-      `tile:${selectedEnv.id}:${selectedComponent.id}`,
-    );
-  })();
-
   return (
     <div className="canvas-block">
       <div className="canvas-toolbar">
@@ -155,7 +149,7 @@ export function ArchitectureCanvas({
                 >
                   {migrations.map((m) => (
                     <option key={m.job_id} value={m.job_id}>
-                      {m.job_id} · {STATUS_LABELS[m.status]}
+                      {m.job_id}, {STATUS_LABELS[m.status]}
                     </option>
                   ))}
                 </select>
@@ -174,6 +168,17 @@ export function ArchitectureCanvas({
             />
           </span>
           {grouping === "boundary" && (
+            <button
+              type="button"
+              className={`tool-toggle${showPods ? " on" : ""}`}
+              aria-pressed={showPods}
+              onClick={() => setShowPods((v) => !v)}
+            >
+              <span className="tool-switch" aria-hidden="true" />
+              파드 보기
+            </button>
+          )}
+          {grouping === "boundary" && (
             <input
               type="search"
               aria-label="다이어그램에서 찾기"
@@ -185,31 +190,28 @@ export function ArchitectureCanvas({
         </div>
       </div>
       {grouping === "layer" ? (
-        <>
+        <div className="canvas-frame tree-frame" data-panel-owner>
           {overlay !== "infra" && (
-            <p className="info-line">
-              이전 경로와 보안은 인프라 경계 기준에서만 볼 수 있어요.
+            <p className="tree-note">
+              이전 경로와 보안은 인프라 경계 보기에서 볼 수 있어요.
             </p>
           )}
-          <div className="layer-grid">
-            {environments.map((env) => {
-              const other = environments.find((e) => e.id !== env.id);
-              return (
-                <section key={env.id} className="layer-env">
-                  <h3 className="graph-head">{env.name}</h3>
-                  <ArchitectureDiagram
-                    env={env}
-                    otherName={
-                      other ? envShortName(environments, other.id) : null
-                    }
-                  />
-                </section>
-              );
-            })}
-          </div>
-        </>
+          <ResourceTree
+            environments={environments}
+            selected={selected}
+            onSelect={setSelected}
+          />
+          {selectedEnv && selectedComponent && (
+            <ComponentPanel
+              env={selectedEnv}
+              component={selectedComponent}
+              onClose={() => setSelected(null)}
+              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
+            />
+          )}
+        </div>
       ) : (
-        <div className="canvas-frame">
+        <div className="canvas-frame" data-panel-owner>
           <IsoCanvas
             layout={layout}
             environments={environments}
@@ -222,6 +224,7 @@ export function ArchitectureCanvas({
             markers={markers}
             path={path}
             height={height}
+            showPods={showPods}
           />
           {overlay === "infra" && <InfraLegend environments={environments} />}
           {overlay === "path" && <PathLegend />}
@@ -245,14 +248,13 @@ export function ArchitectureCanvas({
               }
             />
           )}
+          {overlay === "infra" && <BoundaryKey environments={environments} />}
           {selectedEnv && selectedComponent && (
-            <ResourceCard
+            <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              overlay={overlay}
-              marker={selectedMarker}
-              onSelect={setSelected}
               onClose={() => setSelected(null)}
+              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
             />
           )}
         </div>

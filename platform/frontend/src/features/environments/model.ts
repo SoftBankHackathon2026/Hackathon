@@ -20,7 +20,7 @@ export const LAYER_ORDER: ComponentLayer[] = [
 
 export const LAYER_LABELS: Record<ComponentLayer, string> = {
   entry: "진입점",
-  platform: "배포·운영",
+  platform: "배포/운영",
   app: "앱",
   migration: "이전 도구",
   data: "데이터",
@@ -29,10 +29,10 @@ export const LAYER_LABELS: Record<ComponentLayer, string> = {
 
 export const COMPONENT_STATUS_LABELS: Record<ComponentStatus, string> = {
   healthy: "정상",
-  degraded: "일부만 준비됨",
+  degraded: "일부 파드만 준비됨",
   down: "중단",
-  idle: "꺼 둠",
-  unknown: "상태 미수집",
+  idle: "복제본 0개",
+  unknown: "상태 정보 없음",
 };
 
 const KIND_LABELS: Record<string, string> = {
@@ -101,9 +101,9 @@ export function dependents(components: EnvComponent[], id: string) {
 }
 
 export function nodeDetail(component: EnvComponent) {
-  if (component.status === "unknown") return "상태 미수집";
+  if (component.status === "unknown") return "상태 정보 없음";
   if (component.status === "healthy") return detailText(component.detail);
-  return `${COMPONENT_STATUS_LABELS[component.status]} · ${detailText(component.detail)}`;
+  return `${COMPONENT_STATUS_LABELS[component.status]}, ${detailText(component.detail)}`;
 }
 
 export function shortName(environments: FleetEnvironment[], id: string) {
@@ -128,7 +128,10 @@ export function envSummaryLine(
     return { line: { tone: "bad", text: first.title }, note };
   if (trouble > 0)
     return {
-      line: { tone: "bad", text: `${trouble}개 구성 요소에 문제가 있어요` },
+      line: {
+        tone: "bad",
+        text: `비정상 구성 요소 ${trouble}개`,
+      },
       note,
     };
   if (first) return { line: { tone: "warn", text: first.title }, note };
@@ -139,8 +142,8 @@ export function detailText(detail: string) {
   if (!detail) return "";
   const ready = /^준비 (\d+)\/(\d+)$/.exec(detail);
   if (ready) return `복제본 ${ready[2]}개 중 ${ready[1]}개 준비됨`;
-  if (detail === "Synced · Healthy") return "정상 동작 중";
-  if (detail === "Unknown · Unknown") return "상태 미수집";
+  if (detail === "Synced, Healthy") return "정상 동작 중";
+  if (detail === "Unknown, Unknown") return "상태 정보 없음";
   return detail
     .replace(
       "관리형 서비스 상태는 아직 수집하지 않음",
@@ -168,7 +171,7 @@ export function envRailRows(
       tone: line.tone === "none" ? undefined : line.tone,
     },
     { label: "구성 요소", value: `${summary.healthy} / ${summary.total} 정상` },
-    { label: "플랫폼", value: `${PLATFORM_LABELS[env.kind]} · ${env.region}` },
+    { label: "플랫폼", value: `${PLATFORM_LABELS[env.kind]}, ${env.region}` },
     {
       label: "앱",
       value: String(env.components.filter((c) => c.layer === "app").length),

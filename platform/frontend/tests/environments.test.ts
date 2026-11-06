@@ -97,12 +97,12 @@ test("labels and tones are quiet unless something is wrong", () => {
   assert.equal(componentTone("down"), "bad");
   assert.equal(
     nodeDetail(component("a", "app", { status: "unknown" })),
-    "상태 미수집",
+    "상태 정보 없음",
   );
   assert.equal(nodeDetail(component("a", "app")), "복제본 1개 중 1개 준비됨");
   assert.equal(
     nodeDetail(component("a", "app", { status: "down" })),
-    "중단 · 복제본 1개 중 1개 준비됨",
+    "중단, 복제본 1개 중 1개 준비됨",
   );
 });
 
@@ -150,12 +150,12 @@ test("layout keeps a minimum width so columns never collide", () => {
 
 test("detailText turns controller jargon into plain Korean", () => {
   assert.equal(detailText("준비 2/2"), "복제본 2개 중 2개 준비됨");
-  assert.equal(detailText("Synced · Healthy"), "정상 동작 중");
-  assert.equal(detailText("Unknown · Unknown"), "상태 미수집");
+  assert.equal(detailText("Synced, Healthy"), "정상 동작 중");
+  assert.equal(detailText("Unknown, Unknown"), "상태 정보 없음");
   assert.equal(detailText("상태를 읽지 못함"), "상태를 읽지 못했어요");
   assert.equal(
-    detailText("관리형 서비스 상태는 아직 수집하지 않음 · HTTP 80"),
-    "관리형 서비스라 상태를 수집하지 않아요 · HTTP 80",
+    detailText("관리형 서비스 상태는 아직 수집하지 않음, HTTP 80"),
+    "관리형 서비스라 상태를 수집하지 않아요, HTTP 80",
   );
   assert.equal(detailText(""), "");
 });
@@ -182,7 +182,7 @@ test("envRailRows summarizes an environment in six plain rows", () => {
   );
   assert.equal(rows[0].value, "정상 운영 중");
   assert.equal(rows[1].value, "3 / 4 정상");
-  assert.equal(rows[2].value, "k3s · busan-local");
+  assert.equal(rows[2].value, "k3s, busan-local");
   assert.equal(rows[3].value, "1");
   assert.equal(rows[4].value, "PostgreSQL, Kafka");
   assert.equal(rows[5].value, "방금");
