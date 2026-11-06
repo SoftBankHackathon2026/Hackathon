@@ -8,8 +8,7 @@ import {
   PREVIEW_SCENARIOS,
   type PreviewScenario,
 } from "./previewGateway";
-import type { ConnectionSnapshot, ConnectionTarget } from "./connectionTypes";
-import { targetValid } from "./model";
+import type { CollectionContext, ConnectionSnapshot } from "./connectionTypes";
 
 export function ConnectionPreviewApp() {
   const [gateway] = useState(() => createPreviewGateway(sessionStorage));
@@ -59,7 +58,7 @@ function PreviewControls({
 }: {
   gateway: ReturnType<typeof createPreviewGateway>;
   snapshot: ConnectionSnapshot | null;
-  target: ConnectionTarget;
+  target: CollectionContext;
   onCreated: (id: string) => void;
 }) {
   const [scenario, setScenario] = useState<PreviewScenario>("pending"),
@@ -113,17 +112,6 @@ function PreviewControls({
             터널 확인 재현
           </button>
         )}
-        {s?.job === "RUNNING" && (
-          <button
-            className="secondary"
-            disabled={busy}
-            onClick={() =>
-              void perform(() => gateway.simulate(s.id, "complete"))
-            }
-          >
-            작업 검증 재현
-          </button>
-        )}
       </div>
       <details>
         <summary>다른 상태 살펴보기</summary>
@@ -143,7 +131,7 @@ function PreviewControls({
         <div className="connection-actions">
           <button
             className="secondary"
-            disabled={busy || (!s && !targetValid(target))}
+            disabled={busy || (!s && !Boolean(target.organization.trim()))}
             onClick={() =>
               void perform(async () => {
                 const request =
@@ -161,8 +149,8 @@ function PreviewControls({
             선택한 상태 불러오기
           </button>
         </div>
-        {!s && !targetValid(target) && (
-          <p>환경의 필수 항목을 먼저 입력하세요.</p>
+        {!s && !Boolean(target.organization.trim()) && (
+          <p>조직을 먼저 확인하세요.</p>
         )}
       </details>
       {error && (

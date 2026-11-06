@@ -1,6 +1,47 @@
 .connection-page {
   --connection-muted: var(--text-secondary);
 }
+
+.connection-discovered label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  margin: 8px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  font-weight: 400;
+}
+.connection-discovered label.selected {
+  border-color: var(--accent);
+}
+.connection-discovered label strong {
+  display: block;
+  font-weight: 600;
+}
+.connection-discovered label small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.connection-discovered label:hover {
+  background: var(--surface-subtle);
+}
+.connection-collected {
+  margin: 24px 0;
+}
+.connection-collected-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.connection-collected-heading span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-left: auto;
+}
 .connection-page .connection-preview-banner {
   display: flex;
   align-items: center;
@@ -163,7 +204,7 @@
 }
 .connection-page .connection-progress {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   list-style: none;
   padding: 0;
   margin: 0 0 32px;

@@ -1,87 +1,123 @@
+import { useState } from "react";
 import { Icon } from "../../components/Icon";
-import type { ConnectionTarget } from "./connectionTypes";
-import { PROVIDERS, SCOPES } from "./model";
+import type { ConnectionSnapshot, ConnectionTarget } from "./connectionTypes";
+import { canRegister, emptyTarget, PROVIDERS, targetValid } from "./model";
 
 export function ConnectionTargetForm({
-  value,
-  onChange,
-  onContinue,
+  snapshot: s,
+  busy,
+  onRegister,
 }: {
-  value: ConnectionTarget;
-  onChange: (value: ConnectionTarget) => void;
-  onContinue: () => void;
+  snapshot: ConnectionSnapshot;
+  busy: boolean;
+  onRegister: (sourceId: string, target: ConnectionTarget) => void;
 }) {
-  const set = (patch: Partial<ConnectionTarget>) =>
-    onChange({ ...value, ...patch });
+  const [selectedId, setSelectedId] = useState(
+    s.collected.length === 1 ? s.collected[0].id : "",
+  );
+  const selected = s.collected.find((e) => e.id === selectedId);
+  const [draft, setDraft] = useState(() => ({
+    project: "",
+    name: s.collected.length === 1 ? s.collected[0].name : "",
+    role: "source" as "source" | "target",
+  }));
+  const target: ConnectionTarget = {
+    ...emptyTarget(s.organization),
+    ...draft,
+    kind: selected?.kind ?? "kubernetes",
+    region: selected?.region ?? "",
+  };
   return (
     <form
       className="connection-target"
       onSubmit={(e) => {
         e.preventDefault();
-        onContinue();
+        if (selected && canRegister(s) && targetValid(target))
+          onRegister(selected.id, target);
       }}
     >
       <header className="connection-title">
-        <h2>어떤 환경을 연결할까요?</h2>
+        <h2>수집한 환경을 등록하세요</h2>
         <p>
-          출발 환경이나 도착 환경을 선택하세요. 연결할 단말에서 명령 한 줄을
-          실행하면 돼요.
+          확인된 환경정보에 이름과 역할을 지정해요. 마이그레이션 범위와 실행
+          계획은 앱 선택에서 검토해요.
         </p>
       </header>
-      <fieldset className="connection-provider">
-        <legend>환경 종류</legend>
-        <div>
-          {PROVIDERS.map((p) => (
-            <label
-              className={value.kind === p.value ? "selected" : ""}
-              key={p.value}
-            >
-              <input
-                type="radio"
-                name="provider"
-                value={p.value}
-                checked={value.kind === p.value}
-                onChange={() =>
-                  set({
-                    kind: p.value,
-                    region:
-                      p.value === "aws"
-                        ? "ap-northeast-2"
-                        : p.value === "gcp"
-                          ? "asia-northeast3"
-                          : "",
-                    expectedIdentity: "",
-                  })
-                }
-              />
-              <Icon name={p.icon} size={22} />
-              <span>
-                <strong>{p.title}</strong>
-                <small>{p.detail}</small>
-              </span>
-            </label>
-          ))}
+      {s.collected.length > 1 && (
+        <label>
+          등록할 환경
+          <select
+            value={selectedId}
+            required
+            disabled={busy}
+            onChange={(e) => {
+              setSelectedId(e.target.value);
+              const next = s.collected.find((c) => c.id === e.target.value);
+              setDraft((d) => ({ ...d, name: next?.name ?? "" }));
+            }}
+          >
+            <option value="">수집한 환경을 선택하세요</option>
+            {s.collected.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {selected && (
+        <div className="connection-collected">
+          <div className="connection-collected-heading">
+            <Icon
+              name={selected.kind === "kubernetes" ? "layers" : "cloud"}
+              size={20}
+            />
+            <strong>
+              {PROVIDERS.find((p) => p.value === selected.kind)?.title}
+            </strong>
+            <span>수집된 정보</span>
+          </div>
+          <dl className="connection-facts">
+            <div>
+              <dt>계정·클러스터</dt>
+              <dd>{selected.identity}</dd>
+            </div>
+            {selected.context && (
+              <div>
+                <dt>선택한 문맥</dt>
+                <dd>{selected.context}</dd>
+              </div>
+            )}
+            {selected.region && (
+              <div>
+                <dt>리전</dt>
+                <dd>{selected.region}</dd>
+              </div>
+            )}
+            {selected.facts.map((f) => (
+              <div key={f.label}>
+                <dt>{f.label}</dt>
+                <dd>{f.value}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
-      </fieldset>
+      )}
       <div className="connection-fields">
         <label>
           조직
-          <input
-            required
-            maxLength={80}
-            value={value.organization}
-            onChange={(e) => set({ organization: e.target.value })}
-            placeholder="소속 조직"
-            autoComplete="organization"
-          />
+          <input value={s.organization} readOnly />
         </label>
         <label>
           프로젝트
           <input
             required
             maxLength={80}
-            value={value.project}
-            onChange={(e) => set({ project: e.target.value })}
+            value={draft.project}
+            disabled={busy}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, project: e.target.value }))
+            }
             placeholder="예: 주문 서비스 이관"
           />
         </label>
@@ -90,92 +126,47 @@ export function ConnectionTargetForm({
           <input
             required
             maxLength={80}
-            value={value.name}
-            onChange={(e) => set({ name: e.target.value })}
-            placeholder={
-              value.kind === "kubernetes"
-                ? "예: busan-production"
-                : value.kind === "aws"
-                  ? "예: aws-seoul"
-                  : "예: gcp-seoul"
-            }
+            value={draft.name}
+            disabled={busy}
+            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+            placeholder="환경을 구분할 이름"
           />
         </label>
         <label>
           환경 역할
           <select
-            value={value.role}
+            value={draft.role}
+            disabled={busy}
             onChange={(e) =>
-              set({ role: e.target.value as ConnectionTarget["role"] })
+              setDraft((d) => ({
+                ...d,
+                role: e.target.value as "source" | "target",
+              }))
             }
           >
             <option value="source">출발 환경</option>
             <option value="target">도착 환경</option>
           </select>
         </label>
-        {value.kind !== "kubernetes" && (
-          <>
-            <label>
-              리전
-              <input
-                required
-                maxLength={64}
-                value={value.region}
-                onChange={(e) => set({ region: e.target.value })}
-              />
-            </label>
-            <label>
-              예상 {value.kind === "aws" ? "계정 ID" : "프로젝트 ID"}{" "}
-              <span className="connection-optional">(선택)</span>
-              <input
-                maxLength={128}
-                value={value.expectedIdentity}
-                onChange={(e) => set({ expectedIdentity: e.target.value })}
-                placeholder={
-                  value.kind === "aws" ? "12자리 계정 번호" : "프로젝트 식별자"
-                }
-              />
-              <small>터널 연결 후 실제 대상과 대조해요.</small>
-            </label>
-          </>
-        )}
       </div>
-      <fieldset className="connection-scopes">
-        <legend>요청할 접근 범위</legend>
-        <p>
-          실제 자원과 권한은 연결 후 계획에서 검토해요. 비밀 원문은 화면에
-          표시하지 않아요.
+      {!s.permissions.registerEnvironment && (
+        <p role="status">
+          환경을 등록할 권한이 없어요. 조직 관리자에게 문의하세요.
         </p>
-        {SCOPES.map((scope) => (
-          <label key={scope.value}>
-            <input
-              type="checkbox"
-              checked={value.scopes.includes(scope.value)}
-              disabled={scope.value === "inventory.read"}
-              onChange={(e) =>
-                set({
-                  scopes: e.target.checked
-                    ? [...value.scopes, scope.value]
-                    : value.scopes.filter((s) => s !== scope.value),
-                })
-              }
-            />
-            <span>
-              {scope.label}
-              {scope.value === "inventory.read" && <small>필수</small>}
-              <small>{scope.detail}</small>
-            </span>
-          </label>
-        ))}
-        <p className="connection-note">
-          이관을 위한 생성·수정 권한은 별도 계획으로 승인해요.
-        </p>
-      </fieldset>
+      )}
       <footer className="connection-actions">
-        <button type="submit" className="primary">
-          실행 준비 확인 <Icon name="arrow" size={16} />
+        <button
+          type="submit"
+          className="primary"
+          disabled={
+            busy || !selected || !canRegister(s) || !targetValid(target)
+          }
+        >
+          환경 등록 <Icon name="arrow" size={16} />
         </button>
-        <span>아직 권한이나 설치 내용은 변경하지 않아요.</span>
+        <span>
+          이 단계에서는 설치·권한 변경이나 데이터 이관을 실행하지 않아요.
+        </span>
       </footer>
     </form>
   );

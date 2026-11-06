@@ -1,34 +1,28 @@
 export type Provider = "kubernetes" | "aws" | "gcp";
-export type Scope =
-  "inventory.read" | "data.read" | "secrets.read" | "decrypt.use";
-export type ConnectionTarget = {
-  organization: string;
+export type CollectionContext = { organization: string };
+export type ConnectionTarget = CollectionContext & {
   project: string;
   name: string;
   kind: Provider;
   role: "source" | "target";
   region: string;
-  expectedIdentity: string;
-  scopes: Scope[];
 };
-export type ConnectionPlan = {
+export type DiscoveredEnvironment = {
   id: string;
-  digest: string;
-  targetIdentity: string;
-  expiresAt: number;
-  title: string;
-  version: string;
-  definition: string;
-  privileges: string[];
-  changes: string[];
-  restart: string;
-  recovery: string;
-  artifacts: { name: string; digest: string }[];
+  kind: Provider;
+  name: string;
+  identity: string;
+  region: string;
+  context?: string;
+};
+export type CollectedEnvironment = DiscoveredEnvironment & {
+  facts: { label: string; value: string }[];
 };
 export type ConnectionSnapshot = {
   id: string;
   revision: number;
-  target: ConnectionTarget;
+  organization: string;
+  target: ConnectionTarget | null;
   serverNow: number;
   observedAt: number;
   registrationExpiresAt: number;
@@ -36,11 +30,17 @@ export type ConnectionSnapshot = {
   registration: "ISSUED" | "CONSUMED" | "EXPIRED" | "CANCELLED";
   device: "NONE" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "REVOKED";
   tunnel: "NONE" | "CONNECTING" | "READY" | "REKEYING" | "DEGRADED";
-  planState: "NONE" | "PENDING" | "APPROVED";
-  job: "NONE" | "RUNNING" | "SUCCEEDED" | "PARTIAL_FAILURE" | "UNKNOWN_RESULT";
+  collection: "WAITING" | "COLLECTED";
+  discovered: DiscoveredEnvironment[];
+  collected: CollectedEnvironment[];
+  collectedAt?: number;
+  inventoryDigest?: string;
+  selectedEnvironmentId?: string;
+  environmentId?: string;
+  registeredAt?: number;
   permissions: {
     approveDevice: boolean;
-    approvePlan: boolean;
+    registerEnvironment: boolean;
     revoke: boolean;
   };
   candidate?: {
@@ -53,17 +53,6 @@ export type ConnectionSnapshot = {
   };
   attemptsLeft: number;
   tunnelChecks: number;
-  targetIdentity?: string;
-  contexts: string[];
-  selectedContext?: string;
-  plan?: ConnectionPlan;
-  jobs: {
-    name: string;
-    state: "waiting" | "running" | "done" | "failed" | "unknown";
-    detail: string;
-  }[];
-  environmentId?: string;
-  verifiedAt?: number;
   epoch: number;
   keyExpiresAt?: number;
   cleanup?: {
@@ -77,7 +66,8 @@ export type ConnectionSnapshot = {
   events: { at: number; message: string }[];
 };
 
-// Browser-facing proposal; missing read/cancel endpoints are never assumed.
+// UI proposal only. Missing production session/read/cancel/collection contracts
+// remain disabled; inventory collection never grants migration or install rights.
 export type ConnectionGateway = {
   mode: "unavailable" | "preview";
   available: boolean;
@@ -85,7 +75,7 @@ export type ConnectionGateway = {
   list: () => readonly ConnectionSnapshot[];
   subscribe: (listener: () => void) => () => void;
   create: (
-    target: ConnectionTarget,
+    context: CollectionContext,
     publicKey: string,
     operationId: string,
   ) => Promise<ConnectionSnapshot>;
@@ -96,8 +86,13 @@ export type ConnectionGateway = {
     code: string,
   ) => Promise<void>;
   reject: (id: string) => Promise<void>;
-  inspect: (id: string, context?: string) => Promise<void>;
-  approvePlan: (id: string, digest: string) => Promise<void>;
+  collect: (id: string, discoveredId: string) => Promise<void>;
+  register: (
+    id: string,
+    collectedId: string,
+    inventoryDigest: string,
+    target: ConnectionTarget,
+  ) => Promise<void>;
   reconnect: (id: string) => Promise<void>;
   revoke: (id: string) => Promise<void>;
 };
