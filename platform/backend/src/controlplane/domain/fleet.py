@@ -170,10 +170,19 @@ class PodFact:
     node: str | None = None
     reason: str | None = None
     started_at: datetime | None = None
+    host_ip: str | None = None
 
     @property
     def restarts(self) -> int:
         return sum(container.restarts for container in self.containers)
+
+
+@dataclass(frozen=True)
+class EndpointFact:
+    url: str
+    source: str
+    exposure: str
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +198,7 @@ class InventoryItem:
     uses_external: list[str] = field(default_factory=list)
     ingress_classes: list[str] = field(default_factory=list)
     pods: list[PodFact] | None = None
+    endpoints: list[EndpointFact] = field(default_factory=list)
 
     @property
     def key(self) -> str:

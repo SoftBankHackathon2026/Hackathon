@@ -8,7 +8,13 @@ from controlplane.domain.fleet import (
     InventoryItem,
     PodFact,
 )
-from controlplane.schemas.migrations import AppState, ComponentView, ContainerView, PodView
+from controlplane.schemas.migrations import (
+    AppState,
+    ComponentView,
+    ContainerView,
+    EndpointView,
+    PodView,
+)
 
 APP_HEALTH_STATUS = {
     "Healthy": "healthy",
@@ -20,6 +26,7 @@ APP_HEALTH_STATUS = {
 SYSTEM_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease", "local-path-storage"}
 SYSTEM_PREFIXES = ("gke-", "gmp-", "kube-")
 STORE_ROLE_SUFFIXES = ("-broker", "-controller", "-primary", "-replica", "-server")
+ENDPOINT_ORDER = ("ingress", "load_balancer", "node_port", "cluster_ip")
 
 
 @dataclass(frozen=True)
@@ -175,6 +182,12 @@ def _group_pods(items: list[InventoryItem]) -> list[PodView] | None:
     return sorted((_pod_view(pod) for pods in listed for pod in pods), key=lambda pod: pod.name)
 
 
+def _group_endpoints(items: list[InventoryItem]) -> list[EndpointView]:
+    unique = dict.fromkeys(e for item in items for e in item.endpoints)
+    ordered = sorted(unique, key=lambda e: ENDPOINT_ORDER.index(e.source))
+    return [EndpointView(**asdict(endpoint)) for endpoint in ordered]
+
+
 @dataclass(frozen=True)
 class _Links:
     owner: dict[str, str]
@@ -228,6 +241,7 @@ def discovered_components(
                 depends_on=links.depends_on(group),
                 placement=[*cluster_path, f"ns {group.namespace}"],
                 pods=_group_pods(group.items),
+                endpoints=_group_endpoints(group.items),
             )
         )
     return views

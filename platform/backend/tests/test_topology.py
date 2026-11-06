@@ -13,6 +13,7 @@ from controlplane.integrations import kube
 from controlplane.integrations.codec import facts_from_json, facts_to_json
 from controlplane.integrations.config import with_default_layout
 from controlplane.integrations.defaults import AWS, ONPREM
+from controlplane.integrations.kube_endpoints import exposure_of
 from controlplane.integrations.kube_inventory import (
     ClusterObjects,
     ConfigValue,
@@ -430,3 +431,173 @@ def test_a_pod_stuck_in_an_init_container_shows_that_reason():
 def test_an_unexpected_pod_phase_is_reported_as_unknown():
     odd = pod("shop", "api-1", ("ReplicaSet", "api-7d9f"), phase="Evicting")
     assert pod_fact(odd).phase == "Unknown"
+
+
+def exposed_service(ns, name, app, kind, ports, *, lb=(), headless=False):
+    return ServiceSpec.from_k8s(
+        {
+            "metadata": {"namespace": ns, "name": name},
+            "spec": {
+                "type": kind,
+                "selector": {"app": app},
+                "clusterIP": "None" if headless else "10.43.0.9",
+                "ports": [
+                    {"name": n, "port": port, **({"nodePort": node} if node else {})}
+                    for n, port, node in ports
+                ],
+            },
+            "status": {"loadBalancer": {"ingress": [{"ip": ip} for ip in lb]}},
+        }
+    )
+
+
+def on_node(ns, name, owner, host_ip, *, ready=True):
+    found = pod(ns, name, owner, ready=ready)
+    found["status"]["hostIP"] = host_ip
+    return found
+
+
+def test_components_list_where_they_can_be_reached():
+    argocd_ingress = IngressSpec.from_k8s(
+        {
+            "metadata": {"namespace": "argocd"},
+            "spec": {
+                "ingressClassName": "traefik",
+                "tls": [{"hosts": ["argo.example.com"]}],
+                "rules": [
+                    {
+                        "host": "argo.example.com",
+                        "http": {
+                            "paths": [
+                                {"path": "/", "backend": {"service": {"name": "argocd-server"}}}
+                            ]
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    objects = ClusterObjects(
+        workloads=[
+            workload("deployment", "argocd", "argocd-server"),
+            workload("deployment", "kube-system", "traefik"),
+            workload("deployment", "harbor", "harbor-core"),
+            workload("statefulset", "shop", "db", image="postgres:16"),
+        ],
+        services=[
+            service("argocd", "argocd-server", "argocd-server"),
+            exposed_service(
+                "kube-system",
+                "traefik",
+                "traefik",
+                "LoadBalancer",
+                [("web", 80, 30772), ("websecure", 443, 30812)],
+                lb=["192.0.2.10", "192.0.2.7"],
+            ),
+            exposed_service("harbor", "harbor", "harbor-core", "NodePort", [("http", 80, 30002)]),
+            exposed_service(
+                "shop",
+                "db",
+                "db",
+                "ClusterIP",
+                [("tcp-postgres", 5432, None), ("metrics", 9187, None)],
+            ),
+            exposed_service(
+                "shop", "db-hl", "db", "ClusterIP", [("tcp", 5432, None)], headless=True
+            ),
+        ],
+        ingresses=[argocd_ingress],
+        configmaps={},
+        pods=pods_by_workload(
+            [
+                on_node(
+                    "harbor",
+                    "harbor-core-7c-a",
+                    ("ReplicaSet", "harbor-core-7c"),
+                    "192.0.2.5",
+                    ready=False,
+                ),
+                on_node(
+                    "harbor", "harbor-core-7c-b", ("ReplicaSet", "harbor-core-7c"), "192.0.2.7"
+                ),
+            ]
+        ),
+    )
+    found = live_components(ONPREM, build_inventory(objects, {}))
+
+    def reach(component):
+        return [(e.url, e.source, e.exposure) for e in found[component].endpoints]
+
+    assert reach("argocd") == [("https://argo.example.com", "ingress", "public")]
+    assert reach("traefik")[:2] == [
+        ("http://192.0.2.10", "load_balancer", "private"),
+        ("https://192.0.2.10", "load_balancer", "private"),
+    ]
+    assert reach("harbor")[0] == ("http://192.0.2.7:30002", "node_port", "private")
+    assert reach("db") == [("tcp://db.shop.svc.cluster.local:5432", "cluster_ip", "private")]
+    assert found["harbor"].endpoints[0].label == "harbor"
+
+
+def test_a_load_balancer_ingress_without_a_host_uses_the_balancer_address():
+    alb = IngressSpec.from_k8s(
+        {
+            "metadata": {
+                "namespace": "shop",
+                "annotations": {"alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS": 443}]'},
+            },
+            "spec": {
+                "ingressClassName": "alb",
+                "rules": [
+                    {"http": {"paths": [{"path": "/api", "backend": {"service": {"name": "api"}}}]}}
+                ],
+            },
+            "status": {
+                "loadBalancer": {
+                    "ingress": [{"hostname": "internal-shop-1.ap-northeast-2.elb.amazonaws.com"}]
+                }
+            },
+        }
+    )
+    endpoint = alb.endpoint(alb.routes[0])
+    assert endpoint.url == "https://internal-shop-1.ap-northeast-2.elb.amazonaws.com/api"
+    assert endpoint.exposure == "private"
+
+
+def test_a_node_port_is_listed_only_when_a_node_running_it_is_known():
+    harbor = exposed_service("harbor", "harbor", "harbor-core", "NodePort", [("http", 80, 30002)])
+    assert [e.source for e in harbor.endpoints(None)] == ["cluster_ip"]
+
+
+@pytest.mark.parametrize(
+    ("host", "exposure"),
+    [
+        ("8.8.8.8", "public"),
+        ("100.101.102.103", "private"),
+        ("argo.example.com", "public"),
+        ("harbor", "private"),
+        ("node-1.tail1234.ts.net", "private"),
+        ("internal-shop-1.ap-northeast-2.elb.amazonaws.com", "private"),
+        ("shop-1.ap-northeast-2.elb.amazonaws.com", "public"),
+    ],
+)
+def test_exposure_follows_the_address(host, exposure):
+    assert exposure_of(host) == exposure
+
+
+def test_endpoints_survive_the_journal():
+    objects = ClusterObjects(
+        workloads=[workload("deployment", "harbor", "harbor-core")],
+        services=[
+            exposed_service("harbor", "harbor", "harbor-core", "NodePort", [("http", 80, 30002)])
+        ],
+        ingresses=[],
+        configmaps={},
+        pods=pods_by_workload(
+            [on_node("harbor", "harbor-core-7c-b", ("ReplicaSet", "harbor-core-7c"), "192.0.2.7")]
+        ),
+    )
+    inventory = build_inventory(objects, {})
+    payload = facts_to_json(ClusterFacts(observed_at=NOW, connected=True, inventory=inventory))
+    json.dumps(payload)
+    assert facts_from_json(payload).inventory == inventory
+    assert inventory[0].endpoints[0].url == "http://192.0.2.7:30002"

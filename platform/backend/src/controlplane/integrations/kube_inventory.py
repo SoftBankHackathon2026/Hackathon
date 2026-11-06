@@ -1,9 +1,10 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Self, get_args
 
-from controlplane.domain.fleet import ContainerFact, InventoryItem, PodFact
+from controlplane.domain.fleet import ContainerFact, EndpointFact, InventoryItem, PodFact
+from controlplane.integrations.kube_endpoints import exposure_of, port_scheme, url_of
 from controlplane.schemas.migrations import PodPhase
 
 KubeObject = dict[str, Any]
@@ -25,6 +26,7 @@ EMBEDDED_PAIR = re.compile(
 )
 SERVICE_DOMAINS = ("", ".svc", ".svc.cluster.local")
 REGISTRY_KEYS = {"fleet.json"}
+INTERNAL_PORT = re.compile(r"metrics|webhook")
 POD_OWNER_KINDS = {"ReplicaSet", "StatefulSet", "DaemonSet"}
 POD_PHASES = set(get_args(PodPhase))
 
@@ -149,6 +151,7 @@ def pod_fact(obj: KubeObject) -> PodFact:
         node=field_at(obj, "spec", "nodeName"),
         reason=_pod_reason(obj),
         started_at=datetime.fromisoformat(started) if started else None,
+        host_ip=field_at(obj, "status", "hostIP"),
     )
 
 
@@ -199,10 +202,38 @@ class WorkloadSpec:
 
 
 @dataclass(frozen=True)
+class ServicePort:
+    port: int
+    name: str
+    node_port: int | None = None
+
+    @classmethod
+    def from_k8s(cls, obj: KubeObject) -> Self:
+        return cls(
+            port=int(obj.get("port") or 0),
+            name=obj.get("appProtocol") or obj.get("name") or "",
+            node_port=obj.get("nodePort"),
+        )
+
+
+def _lb_addresses(obj: KubeObject) -> list[str]:
+    found = items_at(obj, "status", "loadBalancer", "ingress")
+    return [
+        entry.get("hostname") or entry.get("ip")
+        for entry in found
+        if entry.get("hostname") or entry.get("ip")
+    ]
+
+
+@dataclass(frozen=True)
 class ServiceSpec:
     namespace: str
     name: str
     selector: dict[str, str]
+    type: str = "ClusterIP"
+    headless: bool = False
+    ports: list[ServicePort] = field(default_factory=list)
+    lb_addresses: list[str] = field(default_factory=list)
 
     @classmethod
     def from_k8s(cls, obj: KubeObject) -> Self:
@@ -210,7 +241,36 @@ class ServiceSpec:
             namespace=field_at(obj, "metadata", "namespace") or "",
             name=field_at(obj, "metadata", "name") or "",
             selector=mapping_at(obj, "spec", "selector"),
+            type=field_at(obj, "spec", "type") or "ClusterIP",
+            headless=field_at(obj, "spec", "clusterIP") == "None",
+            ports=[ServicePort.from_k8s(port) for port in items_at(obj, "spec", "ports")],
+            lb_addresses=_lb_addresses(obj),
         )
+
+    def _exposed(self, port: ServicePort, node_address: str | None) -> EndpointFact | None:
+        scheme = port_scheme(port.port, port.name)
+        if self.type == "LoadBalancer" and self.lb_addresses:
+            host = self.lb_addresses[0]
+            return EndpointFact(
+                url_of(scheme, host, port.port), "load_balancer", exposure_of(host), self.name
+            )
+        if self.type in ("NodePort", "LoadBalancer") and port.node_port and node_address:
+            url = url_of(scheme, node_address, port.node_port)
+            return EndpointFact(url, "node_port", exposure_of(node_address), self.name)
+        return None
+
+    def endpoints(self, node_address: str | None) -> list[EndpointFact]:
+        found = []
+        for port in self.ports:
+            if INTERNAL_PORT.search(f"{self.name} {port.name}"):
+                continue
+            exposed = self._exposed(port, node_address)
+            if exposed is not None:
+                found.append(exposed)
+            if not self.headless:
+                url = url_of(port_scheme(port.port, port.name), self.hosts[-1], port.port)
+                found.append(EndpointFact(url, "cluster_ip", "private", self.name))
+        return found
 
     def selects(self, workload: WorkloadSpec) -> bool:
         if not self.selector or workload.namespace != self.namespace:
@@ -223,24 +283,67 @@ class ServiceSpec:
 
 
 @dataclass(frozen=True)
+class IngressRoute:
+    service: str
+    host: str = ""
+    path: str = ""
+
+
+def _routes(obj: KubeObject) -> list[IngressRoute]:
+    default = field_at(obj, "spec", "defaultBackend", "service", "name")
+    routes = [IngressRoute(default)] if default else []
+    for rule in items_at(obj, "spec", "rules"):
+        for path in items_at(rule, "http", "paths"):
+            service = field_at(path, "backend", "service", "name")
+            if service:
+                routes.append(IngressRoute(service, rule.get("host") or "", path.get("path") or ""))
+    return routes
+
+
+def _serves_https(obj: KubeObject) -> bool:
+    listen_ports = field_at(
+        obj, "metadata", "annotations", "alb.ingress.kubernetes.io/listen-ports"
+    )
+    default_cert = any(not tls.get("hosts") for tls in items_at(obj, "spec", "tls"))
+    return default_cert or "HTTPS" in (listen_ports or "")
+
+
+@dataclass(frozen=True)
 class IngressSpec:
     namespace: str
     ingress_class: str
-    services: list[str]
+    routes: list[IngressRoute]
+    tls_hosts: list[str] = field(default_factory=list)
+    lb_addresses: list[str] = field(default_factory=list)
+    https: bool = False
 
     @classmethod
     def from_k8s(cls, obj: KubeObject) -> Self:
-        backends = [field_at(obj, "spec", "defaultBackend")]
-        for rule in items_at(obj, "spec", "rules"):
-            backends += [path.get("backend") for path in items_at(rule, "http", "paths")]
-        names = [field_at(backend or {}, "service", "name") for backend in backends]
         ingress_class = field_at(obj, "spec", "ingressClassName") or field_at(
             obj, "metadata", "annotations", "kubernetes.io/ingress.class"
         )
         return cls(
             namespace=field_at(obj, "metadata", "namespace") or "",
             ingress_class=ingress_class or "",
-            services=[name for name in names if name],
+            routes=_routes(obj),
+            tls_hosts=[h for tls in items_at(obj, "spec", "tls") for h in tls.get("hosts") or []],
+            lb_addresses=_lb_addresses(obj),
+            https=_serves_https(obj),
+        )
+
+    @property
+    def services(self) -> list[str]:
+        return [route.service for route in self.routes]
+
+    def endpoint(self, route: IngressRoute) -> EndpointFact | None:
+        named = route.host and "*" not in route.host
+        host = route.host if named else next(iter(self.lb_addresses), None)
+        if not host:
+            return None
+        scheme = "https" if self.https or host in self.tls_hosts else "http"
+        path = "" if route.path in ("", "/") else route.path
+        return EndpointFact(
+            url_of(scheme, host, path=path), "ingress", exposure_of(host), route.service
         )
 
 
@@ -254,6 +357,11 @@ class ClusterObjects:
 
     def pods_of(self, workload: WorkloadSpec) -> list[PodFact] | None:
         return None if self.pods is None else self.pods.get(workload.key, [])
+
+    def node_address(self, keys: list[str]) -> str | None:
+        pods = [p for key in keys for p in (self.pods or {}).get(key, []) if p.host_ip]
+        pods.sort(key=lambda pod: (not pod.ready, pod.host_ip))
+        return pods[0].host_ip if pods else None
 
     def values_of(self, workload: WorkloadSpec) -> list[ConfigValue]:
         mounted = [
@@ -292,6 +400,25 @@ def _ingress_classes(objects: ClusterObjects, index: ServiceIndex) -> dict[str, 
     return classes
 
 
+def _endpoints(objects: ClusterObjects, index: ServiceIndex) -> dict[str, list[EndpointFact]]:
+    found: dict[str, list[EndpointFact]] = {}
+
+    def attach(namespace: str, service: str, endpoint: EndpointFact) -> None:
+        for key in index.by_name.get((namespace, service), []):
+            found.setdefault(key, []).append(endpoint)
+
+    for ingress in objects.ingresses:
+        for route in ingress.routes:
+            endpoint = ingress.endpoint(route)
+            if endpoint is not None:
+                attach(ingress.namespace, route.service, endpoint)
+    for service in objects.services:
+        node = objects.node_address(index.by_name.get((service.namespace, service.name), []))
+        for endpoint in service.endpoints(node):
+            attach(service.namespace, service.name, endpoint)
+    return found
+
+
 def _calls(workload: WorkloadSpec, values: list[ConfigValue], index: ServiceIndex) -> list[str]:
     found: set[str] = set()
     for item in values:
@@ -314,6 +441,7 @@ def _external_calls(values: list[ConfigValue], hints: dict[str, list[str]]) -> l
 def build_inventory(objects: ClusterObjects, hints: dict[str, list[str]]) -> list[InventoryItem]:
     index = ServiceIndex.build(objects)
     classes = _ingress_classes(objects, index)
+    endpoints = _endpoints(objects, index)
     items = []
     for workload in objects.workloads:
         values = objects.values_of(workload)
@@ -330,6 +458,7 @@ def build_inventory(objects: ClusterObjects, hints: dict[str, list[str]]) -> lis
                 uses_external=_external_calls(values, hints),
                 ingress_classes=sorted(classes.get(workload.key, set())),
                 pods=objects.pods_of(workload),
+                endpoints=endpoints.get(workload.key, []),
             )
         )
     return items

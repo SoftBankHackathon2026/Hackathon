@@ -5,6 +5,7 @@ from typing import Any
 from controlplane.domain.fleet import (
     ClusterFacts,
     ContainerFact,
+    EndpointFact,
     InventoryItem,
     PodFact,
     WorkerSample,
@@ -135,7 +136,11 @@ def _item_to_json(item: InventoryItem) -> Row:
 def _item_from_json(payload: Row) -> InventoryItem:
     pods = payload.get("pods")
     return InventoryItem(
-        **{**payload, "pods": None if pods is None else [_pod_from_json(pod) for pod in pods]}
+        **{
+            **payload,
+            "pods": None if pods is None else [_pod_from_json(pod) for pod in pods],
+            "endpoints": [EndpointFact(**e) for e in payload.get("endpoints") or []],
+        }
     )
 
 

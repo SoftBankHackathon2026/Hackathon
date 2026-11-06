@@ -46,6 +46,16 @@ class PodView(BaseModel):
     containers: list[ContainerView] = Field(default_factory=list)
 
 
+EndpointSource = Literal["ingress", "load_balancer", "node_port", "cluster_ip"]
+
+
+class EndpointView(BaseModel):
+    url: str
+    source: EndpointSource
+    exposure: Literal["public", "private"]
+    label: str | None = None
+
+
 class ComponentView(BaseModel):
     id: str
     name: str
@@ -57,6 +67,7 @@ class ComponentView(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     placement: list[str] = Field(default_factory=list)
     pods: list[PodView] | None = Field(default=None, exclude_if=lambda pods: pods is None)
+    endpoints: list[EndpointView] = Field(default_factory=list)
 
 
 class EnvironmentIssue(BaseModel):
