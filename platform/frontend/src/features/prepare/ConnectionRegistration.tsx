@@ -39,7 +39,7 @@ export function CollectionSource({
             <span>
               <strong>{source.name}</strong>
               <small>
-                {PROVIDERS.find((p) => p.value === source.kind)?.title} ·{" "}
+                {PROVIDERS.find((p) => p.value === source.kind)?.title},{" "}
                 {source.context ? "문맥 " + source.context : source.identity}
               </small>
             </span>
@@ -47,7 +47,7 @@ export function CollectionSource({
         ))}
       </fieldset>
       <p className="connection-note">
-        선택한 대상의 자원 설정만 조회해요. 데이터·비밀 읽기와 설치·권한 변경은
+        선택한 대상의 자원 설정만 조회해요. 데이터/비밀 읽기와 설치/권한 변경은
         앱 선택 이후 별도 검토가 필요해요.
       </p>
       <div className="connection-actions">
@@ -84,7 +84,7 @@ export function RegisteredEnvironment({
           <dd>{s.target?.name}</dd>
         </div>
         <div>
-          <dt>조직·프로젝트</dt>
+          <dt>조직/프로젝트</dt>
           <dd>
             {s.organization} / {s.target?.project}
           </dd>
@@ -121,7 +121,7 @@ export function RegisteredEnvironment({
           다음: 앱 선택
         </button>
         <p>
-          앱 선택은 준비 중이에요. 마이그레이션 범위·데이터 접근·설치 및 실행
+          앱 선택은 준비 중이에요. 마이그레이션 범위, 데이터 접근, 설치 및 실행
           계획은 이 단계에서 이어서 검토하게 돼요.
         </p>
       </div>

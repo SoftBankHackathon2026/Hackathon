@@ -79,7 +79,7 @@ export function ConnectionTargetForm({
           </div>
           <dl className="connection-facts">
             <div>
-              <dt>계정·클러스터</dt>
+              <dt>계정/클러스터</dt>
               <dd>{selected.identity}</dd>
             </div>
             {selected.context && (
@@ -165,7 +165,7 @@ export function ConnectionTargetForm({
           환경 등록 <Icon name="arrow" size={16} />
         </button>
         <span>
-          이 단계에서는 설치·권한 변경이나 데이터 이관을 실행하지 않아요.
+          이 단계에서는 설치/권한 변경이나 데이터 이관을 실행하지 않아요.
         </span>
       </footer>
     </form>

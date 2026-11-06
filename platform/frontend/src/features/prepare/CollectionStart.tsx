@@ -38,13 +38,11 @@ export function CollectionStart({
         <dl>
           <div>
             <dt>운영체제</dt>
-            <dd>Ubuntu 24.04 LTS · amd64 또는 arm64</dd>
+            <dd>Ubuntu 24.04 LTS, amd64 또는 arm64</dd>
           </div>
           <div>
             <dt>도구</dt>
-            <dd>
-              Bash · curl · systemd · 환경에 맞는 kubectl, aws 또는 gcloud
-            </dd>
+            <dd>Bash, curl, systemd, 환경에 맞는 kubectl/aws/gcloud</dd>
           </div>
           <div>
             <dt>관리 권한</dt>
@@ -52,10 +50,10 @@ export function CollectionStart({
           </div>
           <div>
             <dt>외부 통신</dt>
-            <dd>TCP 443·8443, UDP 51820</dd>
+            <dd>TCP 443, 8443, UDP 51820</dd>
           </div>
         </dl>
-        <p>실제 도구·권한·시계·통신 상태는 단말에서 확인해요.</p>
+        <p>실제 도구, 권한, 시계, 통신 상태는 단말에서 확인해요.</p>
       </div>
       <label className="connection-check">
         <input

@@ -20,7 +20,7 @@ export const PREVIEW_SCENARIOS = [
   ["rekeying", "키 교체"],
   ["degraded", "연결 장애"],
   ["blocked", "인증 제한"],
-  ["revoked", "해제·정리 미확인"],
+  ["revoked", "해제/정리 미확인"],
 ] as const;
 export type PreviewScenario = (typeof PREVIEW_SCENARIOS)[number][0];
 const STORAGE = "oneport.connection-preview.v2";
@@ -53,8 +53,8 @@ const facts = (source: DiscoveredEnvironment): CollectedEnvironment => ({
   facts:
     source.kind === "kubernetes"
       ? [
-          { label: "Kubernetes", value: "v1.35.4 · k3s" },
-          { label: "노드", value: "3대 · 12코어 · 메모리 24GiB" },
+          { label: "Kubernetes", value: "v1.35.4, k3s" },
+          { label: "노드", value: "3대, 12코어, 메모리 24GiB" },
           { label: "네임스페이스", value: "8개" },
           { label: "저장소", value: "local-path" },
         ]
@@ -63,8 +63,8 @@ const facts = (source: DiscoveredEnvironment): CollectedEnvironment => ({
             label: "실행 도구",
             value:
               source.kind === "aws"
-                ? "aws · 기존 로그인 확인"
-                : "gcloud · 기존 로그인 확인",
+                ? "aws, 기존 로그인 확인"
+                : "gcloud, 기존 로그인 확인",
           },
           {
             label: "클러스터",
@@ -314,7 +314,7 @@ export function createPreviewGateway(
         target.region !== source.region
       )
         throw new Error(
-          "수집 결과·조직·환경정보 또는 연결 상태가 달라졌어요. 다시 확인하세요.",
+          "수집 결과, 조직, 환경정보 또는 연결 상태가 달라졌어요. 다시 확인하세요.",
         );
       patch(
         id,
@@ -353,7 +353,7 @@ export function createPreviewGateway(
             local: false,
           },
         },
-        "서버 권한과 터널을 차단했어요. 고객 권한·단말 정리는 미확인이에요.",
+        "서버 권한과 터널을 차단했어요. 고객 권한/단말 정리는 미확인이에요.",
       );
     },
   };

@@ -172,15 +172,7 @@ export function PreparePage({
   const status = snapshot ? connectionStatus(snapshot) : null;
   return (
     <div className="pk-page connection-page">
-      <PageHeader
-        title="마이그레이션"
-        tabs={[
-          { id: "overview", label: "개요" },
-          { id: "prepare", label: "준비" },
-        ]}
-        active="prepare"
-        onTab={(id) => id === "overview" && onNavigate("#migrations")}
-      />
+      <PageHeader title="마이그레이션 준비" />
       {gateway.mode === "preview" && (
         <div className="connection-preview-banner">
           <Icon name="code" size={18} />
@@ -244,7 +236,7 @@ export function PreparePage({
                           ? s.target.role === "source"
                             ? "출발 환경"
                             : "도착 환경"
-                          : "환경 이름·역할 미등록"}
+                          : "환경 이름, 역할 미등록"}
                       </span>
                       <StatusDot tone={state.tone}>{state.label}</StatusDot>
                     </button>
@@ -402,10 +394,10 @@ export function PreparePage({
                   <section className="connection-management">
                     <h3>연결 관리</h3>
                     <p>
-                      마지막 확인 {formatTime(snapshot.observedAt)} · 키{" "}
+                      마지막 확인 {formatTime(snapshot.observedAt)}, 키{" "}
                       {snapshot.epoch}세대
                       {snapshot.keyExpiresAt
-                        ? " · 만료 " + formatTime(snapshot.keyExpiresAt)
+                        ? ", 만료 " + formatTime(snapshot.keyExpiresAt)
                         : ""}
                     </p>
                     <div className="connection-actions">
@@ -477,7 +469,7 @@ export function PreparePage({
                 {snapshot && (
                   <details className="connection-details connection-history">
                     <summary>
-                      수집·등록 기록 <span>{snapshot.events.length}건</span>
+                      수집/등록 기록 <span>{snapshot.events.length}건</span>
                     </summary>
                     <ol>
                       {snapshot.events
