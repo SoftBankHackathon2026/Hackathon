@@ -1,7 +1,13 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+from kubernetes.config import ConfigException
+from urllib3.exceptions import MaxRetryError
 
 from controlplane.domain.fleet import ClusterFacts, EnvironmentSnapshot
 from controlplane.domain.topology import environment_components
+from controlplane.integrations import kube
 from controlplane.integrations.codec import facts_from_json, facts_to_json
 from controlplane.integrations.config import with_default_layout
 from controlplane.integrations.defaults import AWS, ONPREM
@@ -12,6 +18,7 @@ from controlplane.integrations.kube_inventory import (
     WorkloadSpec,
     build_inventory,
 )
+from controlplane.services.fleet import environment_view
 
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
 
@@ -130,3 +137,29 @@ def test_without_inventory_the_configured_components_are_drawn():
     facts = ClusterFacts(observed_at=NOW, connected=True)
     views = environment_components(EnvironmentSnapshot(ONPREM, facts))
     assert [v.id for v in views] == [c.id for c in ONPREM.components]
+
+
+def test_connected_cluster_that_lists_nothing_explains_the_missing_read_access():
+    env = with_default_layout(AWS.model_copy(update={"components": []}))
+    view = environment_view(EnvironmentSnapshot(env, ClusterFacts(observed_at=NOW, connected=True)))
+    assert [i.title for i in view.issues] == ["클러스터 구성 상태를 읽지 못했어요"]
+
+
+def test_reader_reports_disconnected_when_the_cluster_drops_mid_read(monkeypatch):
+    monkeypatch.setattr(kube, "api_client", lambda env: kube.client.ApiClient())
+    reader = kube.ClusterReader(ONPREM)
+    reader._core = SimpleNamespace(
+        read_namespace=lambda ns: SimpleNamespace(metadata=SimpleNamespace(labels={}))
+    )
+
+    def dropped(namespace):
+        raise MaxRetryError(None, "/apis/networking.k8s.io")
+
+    reader._net = SimpleNamespace(list_namespaced_network_policy=dropped)
+    assert reader.read().connected is False
+
+
+def test_reader_without_kubeconfig_does_not_fall_back_to_the_default_one(monkeypatch):
+    monkeypatch.setattr(kube.config, "new_client_from_config", lambda **kw: kube.client.ApiClient())
+    with pytest.raises(ConfigException):
+        kube.api_client(ONPREM.model_copy(update={"kubeconfig": None, "in_cluster": False}))

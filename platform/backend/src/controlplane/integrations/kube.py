@@ -113,6 +113,8 @@ def api_client(env: EnvironmentConfig) -> client.ApiClient:
         configuration = client.Configuration()
         config.load_incluster_config(client_configuration=configuration)
         api = client.ApiClient(configuration)
+    elif env.kubeconfig is None:
+        raise config.ConfigException(f"{env.id}: kubeconfig 나 in_cluster 를 지정해야 해요")
     else:
         api = config.new_client_from_config(config_file=env.kubeconfig, context=env.context)
     return with_request_timeout(api)
@@ -230,12 +232,15 @@ class ClusterReader:
         return build_inventory(objects, hints)
 
     def read(self) -> ClusterFacts:
-        namespace = self._env.app_namespace
         observed = datetime.now(UTC)
         try:
-            labels = self._core.read_namespace(namespace).metadata.labels or {}
+            return self._read(observed)
         except (ApiException, HTTPError, OSError):
             return ClusterFacts(observed_at=observed, connected=False)
+
+    def _read(self, observed: datetime) -> ClusterFacts:
+        namespace = self._env.app_namespace
+        labels = self._core.read_namespace(namespace).metadata.labels or {}
         policies = self._net.list_namespaced_network_policy(namespace).items
         quotas = self._core.list_namespaced_resource_quota(namespace).items
         roles = _optional(lambda: self._rbac.list_namespaced_role(namespace).items)

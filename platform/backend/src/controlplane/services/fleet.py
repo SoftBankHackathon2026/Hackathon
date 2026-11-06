@@ -14,8 +14,16 @@ from controlplane.services.migrations import MigrationService
 READ_ACCESS_HINT = {
     "onprem": "플랫폼 읽기 계정(hackathon-user kubeconfig)이 필요해요.",
     "aws": "플랫폼 읽기 권한이 필요해요. EKS 안에서 실행하면 ServiceAccount RBAC, 밖이면 EKS access entry예요.",
-    "gcp": "플랫폼 읽기 권한이 필요해요. GKE RBAC와 Workload Identity 연동 kubeconfig예요.",
+    "gcp": "플랫폼 읽기 권한이 필요해요. GKE 에 deploy/reader 를 적용하고 그 토큰 kubeconfig 를 넣어요.",
 }
+
+
+def _nothing_read_from_cluster(
+    snapshot: EnvironmentSnapshot, components: list[ComponentView]
+) -> bool:
+    if snapshot.cluster.inventory is not None:
+        return False
+    return all(view.status == "unknown" for view in components)
 
 
 def environment_issues(
@@ -38,14 +46,7 @@ def environment_issues(
         for c in components
         if c.status in ("down", "degraded")
     ]
-    observable = [c for c in snapshot.config.components if c.workload or c.argo_app]
-    if (
-        snapshot.cluster.inventory is None
-        and observable
-        and all(
-            view.status == "unknown" for view in components if view.id in {c.id for c in observable}
-        )
-    ):
+    if _nothing_read_from_cluster(snapshot, components):
         issues.append(
             EnvironmentIssue(
                 severity="warning",
