@@ -4,12 +4,17 @@
 
   uv run --project platform/backend --extra aws python platform/scripts/fetch_cloud_prices.py aws ap-northeast-2
 
+  uv run --project platform/backend python platform/scripts/fetch_cloud_prices.py gcp asia-northeast3
+
 AWS: Price List Query API(pricing:GetProducts, us-east-1 엔드포인트). 온디맨드·Linux·공유 테넌시 기준.
+GCP: Cloud Billing Catalog API(services.skus.list). 애플리케이션 기본 자격 증명으로 읽는다
+     (gcloud auth application-default login). 온디맨드 SKU 기준.
 """
 
 import argparse
 import json
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -188,12 +193,146 @@ def fetch_aws(region: str) -> dict:
     }
 
 
+GCP_SERVICES = {
+    "compute": "6F81-5844-456A",  # Compute Engine
+    "sql": "9662-B51E-5089",  # Cloud SQL
+    "gke": "CCD8-9BF1-090E",  # Kubernetes Engine
+    "storage": "95FF-2EF5-5EA1",  # Cloud Storage
+    "kafka": "9544-7B1C-811D",  # Managed Service for Apache Kafka
+    "network": "E505-1604-58F8",  # Networking
+}
+GCP_REGION_NAMES = {"asia-northeast3": "Seoul"}
+GCP_FAMILIES = {"e2": "E2", "n2": "N2", "n2d": "N2D AMD"}
+GCP_STANDARD = [("e2", (2, 4, 8)), ("n2", (2, 4, 8)), ("n2d", (2, 4, 8))]
+GCP_SQL_SIZES = [(1, 3840), (2, 7680), (4, 15360)]
+
+
+def _gcp_skus(service: str) -> list[dict]:
+    import google.auth
+    import google.auth.transport.requests
+    import httpx
+
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-billing.readonly"])
+    credentials.refresh(google.auth.transport.requests.Request())
+    skus, token = [], ""
+    with httpx.Client(timeout=60) as client:
+        while True:
+            for attempt in range(6):
+                response = client.get(
+                    f"https://cloudbilling.googleapis.com/v1/services/{service}/skus",
+                    params={"pageSize": 5000, "currencyCode": "USD", "pageToken": token},
+                    headers={"Authorization": f"Bearer {credentials.token}"},
+                )
+                if response.status_code != 429:
+                    break
+                time.sleep(5 * 2**attempt)  # 분당 호출 한도
+            page = response.raise_for_status().json()
+            skus += page.get("skus", [])
+            token = page.get("nextPageToken")
+            if not token:
+                return skus
+
+
+def _gcp_unit(sku: dict) -> float:
+    rates = sku["pricingInfo"][0]["pricingExpression"]["tieredRates"]
+    for rate in rates:
+        price = int(rate["unitPrice"].get("units") or 0) + rate["unitPrice"].get("nanos", 0) / 1e9
+        if price > 0:
+            return price
+    return 0.0
+
+
+def _gcp_find(skus: list[dict], description: str, region: str) -> float:
+    for sku in skus:
+        if (
+            sku["description"].strip() == description
+            and sku["category"].get("usageType") == "OnDemand"
+            and (region in sku["serviceRegions"] or "global" in sku["serviceRegions"])
+        ):
+            return _gcp_unit(sku)
+    raise LookupError(description)
+
+
+def fetch_gcp(region: str) -> dict:
+    name = GCP_REGION_NAMES[region]
+    skus = {key: _gcp_skus(sid) for key, sid in GCP_SERVICES.items()}
+    rates = {
+        family: {
+            "vcpu_hourly": _gcp_find(skus["compute"], f"{label} Instance Core running in {name}", region),
+            "memory_gib_hourly": _gcp_find(skus["compute"], f"{label} Instance Ram running in {name}", region),
+        }
+        for family, label in GCP_FAMILIES.items()
+    }
+    compute = {
+        f"{family}-standard-{vcpu}": {
+            "hourly": vcpu * rates[family]["vcpu_hourly"] + vcpu * 4 * rates[family]["memory_gib_hourly"],
+            "vcpu": vcpu,
+            "memory_gib": vcpu * 4,
+        }
+        for family, sizes in GCP_STANDARD
+        for vcpu in sizes
+    }
+    sql = {
+        "vcpu_hourly": _gcp_find(skus["sql"], f"Cloud SQL for PostgreSQL: Zonal - vCPU in {name}", region),
+        "memory_gib_hourly": _gcp_find(skus["sql"], f"Cloud SQL for PostgreSQL: Zonal - RAM in {name}", region),
+    }
+    postgres = {
+        f"db-custom-{vcpu}-{mib}": {
+            "hourly": vcpu * sql["vcpu_hourly"] + mib / 1024 * sql["memory_gib_hourly"],
+            "vcpu": vcpu,
+            "memory_gib": mib / 1024,
+        }
+        for vcpu, mib in GCP_SQL_SIZES
+    }
+    return {
+        "provider": "gcp",
+        "region": region,
+        "currency": "USD",
+        "source": "GCP Cloud Billing Catalog API (services.skus.list), On-Demand",
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "hours_per_month": 730,
+        "labels": {
+            "compute": "Compute Engine",
+            "kubernetes_control_plane": "GKE 클러스터 관리 요금",
+            "load_balancer": "Cloud Load Balancing 전달 규칙",
+            "nat_gateway": "Cloud NAT IP",
+            "postgres": "Cloud SQL for PostgreSQL (Zonal)",
+            "kafka_broker": "Managed Kafka",
+            "block": "Persistent Disk Balanced",
+            "database": "Cloud SQL 스토리지",
+            "kafka": "Managed Kafka 로컬 스토리지",
+            "object": "Cloud Storage Standard",
+        },
+        "notes": {
+            "kafka_broker": "Managed Kafka 는 DCU 단위 과금이라 vCPU·메모리 → DCU 환산을 확인하기 전까지 단가 없음",
+            "nat_gateway": "Cloud NAT 는 IP 사용료만. 게이트웨이 VM 당 요금·처리 GB 제외",
+        },
+        "compute": compute,
+        "compute_rates": rates,
+        "managed": {"postgres": postgres},
+        "managed_rates": {"postgres": sql},
+        "storage_gib_month": {
+            "block": _gcp_find(skus["compute"], f"Balanced PD Capacity in {name}", region),
+            "database": _gcp_find(skus["sql"], f"Cloud SQL for PostgreSQL: Zonal - Standard storage in {name}", region),
+            "kafka": _gcp_find(skus["kafka"], f"Local Storage in {region}", region),
+            "object": _gcp_find(skus["storage"], f"Standard Storage {name}", region),
+        },
+        "hourly": {
+            "kubernetes_control_plane": _gcp_find(skus["gke"], "Regional Kubernetes Clusters", region),
+            "load_balancer": _gcp_find(
+                skus["network"], f"Cloud Load Balancer Forwarding Rule Minimum for {name} ({region})", region
+            ),
+            "nat_gateway": _gcp_find(skus["network"], "Networking Cloud NAT IP Usage", region),
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("provider", choices=["aws"])
+    parser.add_argument("provider", choices=["aws", "gcp"])
     parser.add_argument("region")
     args = parser.parse_args(argv)
-    sheet = fetch_aws(args.region)
+    sheet = fetch_aws(args.region) if args.provider == "aws" else fetch_gcp(args.region)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{args.provider}-{args.region}.json"
     out.write_text(json.dumps(sheet, indent=2, ensure_ascii=False) + "\n")

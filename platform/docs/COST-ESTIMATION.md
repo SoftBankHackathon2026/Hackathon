@@ -32,7 +32,14 @@
 AWS_PROFILE=<읽기 프로필> uv run --project platform/backend --extra aws python platform/scripts/fetch_cloud_prices.py aws ap-northeast-2
 ```
 
-필요 권한은 `pricing:GetProducts` 하나다. 파일에는 받은 시각과 출처가 남고, 화면 아래에 표시된다. GCP 가격표(Cloud Billing Catalog API)는 아직 없다.
+```sh
+gcloud auth application-default login
+uv run --project platform/backend python platform/scripts/fetch_cloud_prices.py gcp asia-northeast3
+```
+
+AWS 는 `pricing:GetProducts`, GCP 는 Cloud Billing Catalog API 읽기 권한이면 된다. 파일에는 받은 시각과 출처가 남고, 화면 아래에 표시된다.
+GCP 는 계열별 vCPU·메모리 단가(`compute_rates`, `managed_rates`)도 저장해 `e2-custom-2-4096`, `db-custom-1-3840` 같은 이름을 그대로 계산한다.
+GCP Managed Kafka 는 DCU 단위로 과금하는데 vCPU·메모리 → DCU 환산을 공식 자료로 확인하지 못해 "단가 없음"으로 둔다.
 
 ## 설정 (`ONEPORT_COST_CONFIG`)
 
@@ -42,6 +49,7 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 {
   "environments": {
     "aws": {"tags": {"Project": "oneaction"}},
+    "gcp": {"project": "<GCP 프로젝트 ID>"},
     "onprem": {
       "onprem": {
         "hardware_usd": null,
@@ -91,4 +99,7 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 - AWS 관리형 서비스: `tag:GetResources`, `rds:DescribeDBInstances`, `kafka:ListClustersV2`, `elasticloadbalancing:DescribeLoadBalancers`,
   `ec2:DescribeInstances`, `ec2:DescribeNatGateways`, `cloudwatch:GetMetricStatistics`(S3 크기). 수집기 파드에 AWS 자격 증명이 없으면
   "관리형 서비스: AWS 읽기 실패"로 남고 노드·볼륨 비용만 계산한다. EKS 에서는 Pod Identity 로 읽기 전용 역할을 붙인다.
-- GCP 관리형 서비스 수집기는 아직 없다.
+- GCP 관리형 서비스: 비용 설정의 `project` 안에서 Cloud SQL(PostgreSQL)·Managed Kafka·전달 규칙(LB)·Cloud NAT·
+  GKE 노드가 아닌 VM·Cloud Storage(크기는 Cloud Monitoring `storage/total_bytes`)를 읽는다. `tags` 는 라벨 조건이다.
+  필요한 역할: `roles/cloudsql.viewer`, `roles/managedkafka.viewer`, `roles/compute.viewer`, `roles/storage.bucketViewer`,
+  `roles/monitoring.viewer`. 클러스터 안에서는 Workload Identity 로 붙인다.

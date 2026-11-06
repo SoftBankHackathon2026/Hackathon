@@ -487,9 +487,144 @@ def test_collector_keeps_running_with_unknown_meter():
         cost_config=CostConfig(
             environments={"onprem": EnvironmentCostConfig(meter=MeterConfig(name="missing"))}
         ),
-        cost_reader=lambda env, tags, meter: collect_inventory(
+        cost_reader=lambda env, tags, meter, project: collect_inventory(
             env, tags, kube=lambda e: ([], [], []), meter=meter
         ),
     )
     collector.collect_costs(ONPREM)
     assert saved[0].gaps == ["온프렘 측정기: 읽기 실패 (KeyError)"]
+
+
+def test_gcp_machine_names_are_priced_from_unit_rates():
+    sheet = PriceSheet(
+        provider="gcp",
+        region="test-1",
+        currency="USD",
+        source="test",
+        fetched_at=NOW,
+        compute={},
+        compute_rates={"e2": {"vcpu_hourly": 0.03, "memory_gib_hourly": 0.004}},
+        managed_rates={"postgres": {"vcpu_hourly": 0.05, "memory_gib_hourly": 0.01}},
+    )
+    custom = sheet.instance("e2-custom-2-4096")
+    assert (custom.vcpu, custom.memory_gib) == (2, 4)
+    assert custom.hourly == pytest.approx(2 * 0.03 + 4 * 0.004)
+    assert sheet.instance("e2-standard-4").memory_gib == 16
+    assert sheet.instance("e2-highcpu-4").memory_gib == 4
+    assert sheet.instance("n2-standard-2") is None
+    assert sheet.instance("t3.medium") is None
+    sql = sheet.managed_price("postgres", "db-custom-1-3840")
+    assert sql.hourly == pytest.approx(0.05 + 3.75 * 0.01)
+    assert sheet.managed_price("postgres", "db-f1-micro") is None
+
+
+class FakeGcp:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def get(self, url, params=None):
+        self.calls.append(url)
+        key = max((k for k in self.responses if url.endswith(k)), key=len)
+        body = self.responses[key]
+
+        class Response:
+            def raise_for_status(self):
+                return self
+
+            def json(self):
+                return body
+
+        return Response()
+
+
+def test_gcp_managed_collector_reads_project_resources():
+    from controlplane.cost.collect import read_gcp_managed
+
+    region = "asia-northeast3"
+    fake = FakeGcp(
+        {
+            "/instances": {
+                "items": [
+                    {
+                        "name": "db",
+                        "region": region,
+                        "databaseVersion": "POSTGRES_16",
+                        "settings": {
+                            "tier": "db-custom-1-3840",
+                            "dataDiskSizeGb": "20",
+                            "availabilityType": "ZONAL",
+                            "userLabels": {"project": "x"},
+                        },
+                    },
+                    {"name": "other", "region": "us-east1", "databaseVersion": "POSTGRES_16"},
+                ]
+            },
+            "/clusters": {
+                "clusters": [
+                    {
+                        "name": "projects/p/locations/r/clusters/mq",
+                        "capacityConfig": {"vcpuCount": "3", "memoryBytes": str(3 * 2**30)},
+                    }
+                ]
+            },
+            "/aggregated/forwardingRules": {
+                "items": {
+                    "global": {
+                        "forwardingRules": [{"name": "web", "loadBalancingScheme": "EXTERNAL"}]
+                    },
+                    f"regions/{region}": {"forwardingRules": [{"name": "kafka-psc"}]},
+                }
+            },
+            "/routers": {"items": [{"nats": [{"name": "nat"}]}]},
+            "/aggregated/instances": {
+                "items": {
+                    f"zones/{region}-a": {
+                        "instances": [
+                            {
+                                "name": "node",
+                                "machineType": "z/e2-medium",
+                                "labels": {"goog-gke-node": ""},
+                            },
+                            {"name": "router", "machineType": "z/e2-small"},
+                        ]
+                    }
+                }
+            },
+            "/timeSeries": {
+                "timeSeries": [
+                    {
+                        "resource": {"labels": {"bucket_name": "docs"}},
+                        "points": [{"value": {"doubleValue": 2 * 2**30}}],
+                    }
+                ]
+            },
+            "/b": {"items": [{"name": "docs", "location": "ASIA-NORTHEAST3"}]},
+        }
+    )
+    services = read_gcp_managed("p", region, {}, client=fake)
+    by_kind = {(s.kind, s.name): s for s in services}
+    assert by_kind[("postgres", "db")].size == "db-custom-1-3840"
+    assert by_kind[("postgres", "db")].storage_gib == 20
+    assert ("postgres", "other") not in by_kind
+    assert by_kind[("kafka", "mq")].vcpu == 3 and by_kind[("kafka", "mq")].memory_gib == 3
+    assert ("load_balancer", "web") in by_kind and ("load_balancer", "kafka-psc") not in by_kind
+    assert ("nat_gateway", "nat") in by_kind
+    assert ("virtual_machine", "router") in by_kind and ("virtual_machine", "node") not in by_kind
+    assert by_kind[("object_storage", "docs")].storage_gib == 2
+    labelled = read_gcp_managed("p", region, {"project": "x"}, client=fake)
+    assert [s.name for s in labelled if s.kind == "postgres"] == ["db"]
+    assert not any(s.kind == "virtual_machine" for s in labelled)
+
+
+def test_gcp_inventory_needs_project_and_kafka_without_rate_stays_unpriced():
+    inv = collect_inventory(GCP, {}, kube=lambda env: ([], [], []))
+    assert inv.gaps == ["관리형 서비스: 비용 설정에 GCP 프로젝트가 없음"]
+    sheet = load_sheet("gcp", "asia-northeast3")
+    assert sheet is not None
+    cost = price_cloud(
+        inventory("gcp", managed=[ManagedService(kind="kafka", name="mq", vcpu=4, memory_gib=4)]),
+        sheet,
+    )
+    assert cost.lines[0].monthly is None
+    assert "DCU" in cost.lines[0].note

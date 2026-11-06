@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 from datetime import datetime
 from functools import cache
 from importlib import resources
@@ -20,6 +21,28 @@ class InstancePrice(BaseModel):
     memory_gib: float | None = None
 
 
+class UnitRates(BaseModel):
+    """vCPU·메모리 단위 요금. 사용자 지정 머신(GCP custom)처럼 이름으로 크기가 정해지는 유형에 쓴다."""
+
+    vcpu_hourly: float
+    memory_gib_hourly: float
+
+    def price(self, vcpu: float, memory_gib: float) -> InstancePrice:
+        return InstancePrice(
+            hourly=vcpu * self.vcpu_hourly + memory_gib * self.memory_gib_hourly,
+            vcpu=vcpu,
+            memory_gib=memory_gib,
+        )
+
+
+# GCP 머신 이름: <계열>-custom-<vCPU>-<메모리 MiB>, <계열>-standard|highmem|highcpu-<vCPU>
+CUSTOM = re.compile(r"^(?:db-)?(?:(?P<family>[a-z0-9]+)-)?custom-(?P<vcpu>\d+)-(?P<mib>\d+)$")
+PREDEFINED = re.compile(
+    r"^(?P<family>[a-z0-9]+)-(?P<shape>standard|highmem|highcpu)-(?P<vcpu>\d+)$"
+)
+GIB_PER_VCPU = {"standard": 4, "highmem": 8, "highcpu": 1}
+
+
 class PriceSheet(BaseModel):
     provider: str
     region: str
@@ -32,6 +55,39 @@ class PriceSheet(BaseModel):
     managed: dict[str, dict[str, InstancePrice]] = Field(default_factory=dict)
     storage_gib_month: dict[str, float] = Field(default_factory=dict)
     hourly: dict[str, float] = Field(default_factory=dict)
+    # 계열별 vCPU·메모리 단가(GCP). compute 에 없는 사용자 지정·표준 머신 이름을 이 값으로 계산한다.
+    compute_rates: dict[str, UnitRates] = Field(default_factory=dict)
+    # 관리형 서비스의 vCPU·메모리 단가(예: Cloud SQL db-custom-*).
+    managed_rates: dict[str, UnitRates] = Field(default_factory=dict)
+    # 공통 키별 주의 사항(예: 단가를 확인하지 못한 상품).
+    notes: dict[str, str] = Field(default_factory=dict)
+
+    def instance(self, name: str | None) -> InstancePrice | None:
+        """인스턴스 유형 단가. 목록에 없으면 이름에서 크기를 읽어 계열 단가로 계산한다."""
+        if not name:
+            return None
+        if name in self.compute:
+            return self.compute[name]
+        custom = CUSTOM.match(name)
+        if custom and (rates := self.compute_rates.get(custom["family"] or "")):
+            return rates.price(int(custom["vcpu"]), int(custom["mib"]) / 1024)
+        predefined = PREDEFINED.match(name)
+        if predefined and (rates := self.compute_rates.get(predefined["family"])):
+            vcpu = int(predefined["vcpu"])
+            return rates.price(vcpu, vcpu * GIB_PER_VCPU[predefined["shape"]])
+        return None
+
+    def managed_price(self, key: str, size: str | None) -> InstancePrice | None:
+        """관리형 서비스 크기 단가. 목록에 없으면 db-custom-<vCPU>-<MiB> 같은 이름을 단위 요금으로 계산한다."""
+        if not size:
+            return None
+        listed = self.managed.get(key, {}).get(size)
+        if listed is not None:
+            return listed
+        custom = CUSTOM.match(size)
+        if custom and (rates := self.managed_rates.get(key)):
+            return rates.price(int(custom["vcpu"]), int(custom["mib"]) / 1024)
+        return None
 
     @property
     def ref(self) -> PriceRef:

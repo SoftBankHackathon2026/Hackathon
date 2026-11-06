@@ -284,6 +284,136 @@ def read_aws_managed(
     return services
 
 
+GCP_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
+
+
+def _gcp_client() -> Any:
+    import google.auth
+    import google.auth.transport.requests
+    import httpx
+
+    credentials, _ = google.auth.default(scopes=[GCP_SCOPE])
+    credentials.refresh(google.auth.transport.requests.Request())
+    return httpx.Client(timeout=20, headers={"Authorization": f"Bearer {credentials.token}"})
+
+
+def _labelled(labels: dict[str, str] | None, tags: dict[str, str]) -> bool:
+    labels = labels or {}
+    return all(labels.get(k) == v for k, v in tags.items())
+
+
+def read_gcp_managed(
+    project: str, region: str, tags: dict[str, str], client: Any = None
+) -> list[ManagedService]:
+    """프로젝트 안 GCP 관리형 서비스. 라벨을 붙일 수 있는 자원은 tags 를 라벨 조건으로 거른다."""
+    http = client or _gcp_client()
+
+    def get(url: str, **params: Any) -> dict[str, Any]:
+        return http.get(url, params=params or None).raise_for_status().json()
+
+    services: list[ManagedService] = []
+    sql = get(f"https://sqladmin.googleapis.com/v1/projects/{project}/instances")
+    for db in sql.get("items", []):
+        settings = db.get("settings") or {}
+        if (
+            db.get("region") != region
+            or not str(db.get("databaseVersion", "")).startswith("POSTGRES")
+            or not _labelled(settings.get("userLabels"), tags)
+        ):
+            continue
+        services.append(
+            ManagedService(
+                kind="postgres",
+                name=db["name"],
+                size=settings.get("tier"),
+                count=2 if settings.get("availabilityType") == "REGIONAL" else 1,
+                storage_gib=float(settings.get("dataDiskSizeGb") or 0),
+            )
+        )
+    kafka = get(
+        f"https://managedkafka.googleapis.com/v1/projects/{project}/locations/{region}/clusters"
+    )
+    for cluster in kafka.get("clusters", []):
+        if not _labelled(cluster.get("labels"), tags):
+            continue
+        capacity = cluster.get("capacityConfig") or {}
+        services.append(
+            ManagedService(
+                kind="kafka",
+                name=cluster["name"].rsplit("/", 1)[-1],
+                vcpu=float(capacity.get("vcpuCount") or 0),
+                memory_gib=int(capacity.get("memoryBytes") or 0) / GIB,
+            )
+        )
+    compute = f"https://compute.googleapis.com/compute/v1/projects/{project}"
+    rules = get(f"{compute}/aggregated/forwardingRules")
+    for scope, listed in (rules.get("items") or {}).items():
+        if scope not in ("global", f"regions/{region}"):
+            continue
+        for rule in listed.get("forwardingRules", []):
+            # PSC(관리형 Kafka 엔드포인트 등)는 전달 규칙 요금이 아니라 서비스 요금에 들어간다.
+            if rule.get("loadBalancingScheme") in (
+                "EXTERNAL",
+                "EXTERNAL_MANAGED",
+                "INTERNAL_MANAGED",
+            ):
+                services.append(ManagedService(kind="load_balancer", name=rule["name"]))
+    routers = get(f"{compute}/regions/{region}/routers")
+    for router in routers.get("items", []):
+        for nat in router.get("nats", []):
+            services.append(ManagedService(kind="nat_gateway", name=nat["name"]))
+    instances = get(f"{compute}/aggregated/instances", filter='status = "RUNNING"')
+    for scope, listed in (instances.get("items") or {}).items():
+        if not scope.startswith(f"zones/{region}-"):
+            continue
+        for vm in listed.get("instances", []):
+            labels = vm.get("labels") or {}
+            if "goog-gke-node" in labels or not _labelled(labels, tags):
+                continue
+            services.append(
+                ManagedService(
+                    kind="virtual_machine",
+                    name=vm["name"],
+                    size=vm["machineType"].rsplit("/", 1)[-1],
+                )
+            )
+    sizes: dict[str, float] = {}
+    now = datetime.now(UTC)
+    try:
+        series = get(
+            f"https://monitoring.googleapis.com/v3/projects/{project}/timeSeries",
+            filter='metric.type="storage.googleapis.com/storage/total_bytes"',
+            **{
+                "interval.startTime": (now - timedelta(days=2)).isoformat(),
+                "interval.endTime": now.isoformat(),
+            },
+        )
+        for item in series.get("timeSeries", []):
+            bucket = item["resource"]["labels"].get("bucket_name", "")
+            points = item.get("points") or []
+            if points:
+                value = points[0]["value"]
+                sizes[bucket] = sizes.get(bucket, 0.0) + float(
+                    value.get("doubleValue") or value.get("int64Value") or 0
+                )
+    except Exception:  # noqa: BLE001 - 크기 지표가 없으면 0 으로 둔다
+        pass
+    buckets = get("https://storage.googleapis.com/storage/v1/b", project=project)
+    for bucket in buckets.get("items", []):
+        if bucket.get("location", "").lower() != region or not _labelled(
+            bucket.get("labels"), tags
+        ):
+            continue
+        services.append(
+            ManagedService(
+                kind="object_storage",
+                name=bucket["name"],
+                storage_gib=round(sizes.get(bucket["name"], 0.0) / GIB, 3),
+            )
+        )
+    return services
+
+
 def collect_inventory(
     env: EnvironmentConfig,
     tags: dict[str, str],
@@ -292,7 +422,9 @@ def collect_inventory(
         [EnvironmentConfig], tuple[list[Node], list[Volume], list[WorkloadDemand]]
     ] = read_kubernetes,
     aws: Callable[[str, dict[str, str]], list[ManagedService]] = read_aws_managed,
+    gcp: Callable[[str, str, dict[str, str]], list[ManagedService]] = read_gcp_managed,
     meter: OnPremMeter | None = None,
+    project: str | None = None,
 ) -> CostInventory:
     sources, gaps = [], []
     nodes: list[Node] = []
@@ -315,7 +447,15 @@ def collect_inventory(
             except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
                 gaps.append(f"관리형 서비스: AWS 읽기 실패 ({type(exc).__name__})")
     elif env.provider == "gcp":
-        gaps.append("관리형 서비스: GCP 수집기는 아직 없음")
+        if not project:
+            gaps.append("관리형 서비스: 비용 설정에 GCP 프로젝트가 없음")
+        else:
+            try:
+                managed = gcp(project, env.region, tags)
+                scope = ", ".join(f"{k}={v}" for k, v in tags.items())
+                sources.append("GCP 프로젝트" + (f" 라벨 {scope}" if scope else ""))
+            except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
+                gaps.append(f"관리형 서비스: GCP 읽기 실패 ({type(exc).__name__})")
     reading = None
     if meter is not None:
         try:

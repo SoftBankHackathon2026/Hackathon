@@ -46,6 +46,8 @@ class EnvironmentCostConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tags: dict[str, str] = Field(default_factory=dict)
+    # GCP 프로젝트 ID. GCP 관리형 서비스는 이 프로젝트 안에서 찾고 tags 를 라벨 조건으로 쓴다.
+    project: str | None = None
     onprem: OnPremSpec = Field(default_factory=OnPremSpec)
     meter: MeterConfig | None = None
     # 온프렘 스펙을 환산할 가격표. 클라우드 환경은 자기 provider·region 가격표를 쓴다.

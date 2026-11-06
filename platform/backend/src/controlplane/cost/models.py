@@ -68,6 +68,9 @@ class ManagedService(BaseModel):
     size: str | None = None
     count: int = 1
     storage_gib: float = 0
+    # 크기 이름 대신 vCPU·메모리로 정해지는 서비스(GCP Managed Kafka 등)
+    vcpu: float = 0
+    memory_gib: float = 0
 
 
 class CostInventory(BaseModel):

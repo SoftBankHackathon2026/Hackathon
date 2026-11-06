@@ -78,8 +78,10 @@ class FleetCollector:
     def collect_costs(self, env: EnvironmentConfig) -> None:
         if self._costs is None:
             return
-        tags = self._cost_config.environment(env.id).tags
-        self._costs.put(self._cost_reader(env, tags, meter=self._meter(env)))
+        settings = self._cost_config.environment(env.id)
+        self._costs.put(
+            self._cost_reader(env, settings.tags, meter=self._meter(env), project=settings.project)
+        )
 
     def collect_worker(self, job: MigrationConfig) -> None:
         if not job.worker_url:

@@ -64,6 +64,11 @@ def _priced(
     )
 
 
+def family(name: str) -> str:
+    """인스턴스 계열. AWS t3.medium → t3, GCP e2-standard-2 → e2."""
+    return name.split(".")[0] if "." in name else name.split("-")[0]
+
+
 def cheapest_fit(
     sheet: PriceSheet, vcpu: float, memory_gib: float, families: Iterable[str]
 ) -> tuple[str, InstancePrice] | None:
@@ -71,7 +76,7 @@ def cheapest_fit(
     fits = [
         (name, price)
         for name, price in sheet.compute.items()
-        if name.split(".")[0] in allowed
+        if family(name) in allowed
         and (price.vcpu or 0) >= vcpu
         and (price.memory_gib or 0) >= memory_gib
     ]
@@ -86,7 +91,7 @@ def _storage_line(sheet: PriceSheet, key: str, gib: float, category: str = "stor
 def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]:
     hourly = sheet.hourly
     if service.kind == "virtual_machine":
-        price = sheet.compute.get(service.size or "")
+        price = sheet.instance(service.size)
         return [
             _priced(
                 "compute",
@@ -98,7 +103,7 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
             )
         ]
     if service.kind == "postgres":
-        price = sheet.managed.get("postgres", {}).get(service.size or "")
+        price = sheet.managed_price("postgres", service.size)
         lines = [
             _priced(
                 "database",
@@ -113,15 +118,21 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
             lines.append(_storage_line(sheet, "database", service.storage_gib, "database"))
         return lines
     if service.kind == "kafka":
-        price = sheet.managed.get("kafka_broker", {}).get(service.size or "")
+        price = sheet.managed_price("kafka_broker", service.size)
+        rates = sheet.managed_rates.get("kafka")
+        if price is None and rates is not None and service.vcpu:
+            # 브로커 유형이 아니라 클러스터 vCPU·메모리로 과금하는 경우(GCP Managed Kafka)
+            price = rates.price(service.vcpu, service.memory_gib)
+        size = service.size or f"vCPU {service.vcpu:g} · 메모리 {service.memory_gib:g} GiB"
+        note = sheet.notes.get("kafka_broker") or "가격표에 없는 브로커 유형"
         lines = [
             _priced(
                 "messaging",
-                f"{sheet.label('kafka_broker')} {service.size} · {service.name}",
+                f"{sheet.label('kafka_broker')} {size} · {service.name}",
                 service.count,
-                "브로커",
+                "브로커" if service.size else "클러스터",
                 sheet.monthly(price.hourly) if price else None,
-                None if price else "가격표에 없는 브로커 유형",
+                None if price else note,
             )
         ]
         if service.storage_gib:
@@ -139,7 +150,9 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
             service.count,
             "개",
             sheet.monthly(price) if price is not None else None,
-            "사용량(LCU·처리 GB) 요금 제외" if key in ("load_balancer", "nat_gateway") else None,
+            (sheet.notes.get(key) or "사용량(처리 GB 등) 요금 제외")
+            if key in ("load_balancer", "nat_gateway")
+            else None,
         )
     ]
 
@@ -148,7 +161,7 @@ def price_cloud(inventory: CostInventory, sheet: PriceSheet) -> CostBreakdown:
     """클라우드 환경의 지금 월 비용: 노드 + 컨트롤 플레인 + 볼륨 + 태그로 찾은 관리형 서비스."""
     lines: list[CostLine] = []
     for itype, count in sorted(Counter(n.instance_type for n in inventory.nodes).items(), key=str):
-        price = sheet.compute.get(itype or "")
+        price = sheet.instance(itype)
         lines.append(
             _priced(
                 "compute",
@@ -291,7 +304,7 @@ def size_nodes(
     for name, price in sheet.compute.items():
         if exact is not None and name != exact:
             continue
-        if exact is None and name.split(".")[0] not in allowed:
+        if exact is None and family(name) not in allowed:
             continue
         if not price.vcpu or not price.memory_gib:
             continue
@@ -386,7 +399,7 @@ def free_capacity(inventory: CostInventory | None) -> tuple[float, float]:
 
 def _existing_type(target: CostInventory, sheet: PriceSheet) -> str | None:
     """대상 클러스터가 이미 쓰는 노드 유형(가장 많은 것). 같은 노드 그룹을 늘린다고 본다."""
-    types = Counter(n.instance_type for n in target.nodes if n.instance_type in sheet.compute)
+    types = Counter(n.instance_type for n in target.nodes if sheet.instance(n.instance_type))
     return types.most_common(1)[0][0] if types else None
 
 
@@ -439,7 +452,7 @@ def estimate_added(
                     f"{sheet.label('compute')} {name} 추가",
                     count,
                     "대",
-                    sheet.monthly(sheet.compute[name].hourly),
+                    sheet.monthly(sheet.instance(name).hourly),
                     f"부족분 vCPU {extra_cpu:.2f} · 메모리 {extra_memory:.1f} GiB"
                     + (" · 기존 노드와 같은 유형" if existing else ""),
                 )
@@ -475,9 +488,9 @@ def released_monthly(
         shares.append(sum(d.memory_gib for d in moving) / total_memory)
     share = min(1.0, sum(shares) / len(shares)) if shares else 0.0
     nodes = sum(
-        sheet.monthly(sheet.compute[n.instance_type].hourly)
+        sheet.monthly(price.hourly)
         for n in source.nodes
-        if n.instance_type in sheet.compute
+        if (price := sheet.instance(n.instance_type))
     )
     block = sheet.storage_gib_month.get("block", 0.0) * sum(
         v.gib for v in source.volumes if v.owner.split("/", 1)[0] in namespaces
