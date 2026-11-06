@@ -37,7 +37,6 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        # Secret 파일을 그룹 읽기(0440)로 마운트해 비root 프로세스가 읽게 한다. 그룹 쓰기·공개 권한은 주지 않는다.
         fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       containers:
@@ -109,7 +108,6 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        # Secret 파일을 그룹 읽기(0440)로 마운트해 비root 프로세스가 읽게 한다. 그룹 쓰기·공개 권한은 주지 않는다.
         fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       containers:

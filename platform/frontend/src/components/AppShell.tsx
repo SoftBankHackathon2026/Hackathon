@@ -81,7 +81,7 @@ export function AppShell({
           </a>
           <a
             className="rail-item"
-            href="https://github.com/softbank-hackathon-2026-term1-azalea/oneport-platform/blob/main/platform/README.md"
+            href="https://github.com/SoftBankHackathon2026/Hackathon/blob/main/platform/README.md"
             target="_blank"
             rel="noreferrer"
             aria-label="문서"

@@ -10,7 +10,6 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - platform.yaml
-  # - ingress.yaml   # 내부 ALB(월 비용 발생). 보고기·팀원이 Tailscale 로 접속해야 할 때만 켠다
 configMapGenerator:
   - name: oneport-fleet
     files: [fleet.json]
