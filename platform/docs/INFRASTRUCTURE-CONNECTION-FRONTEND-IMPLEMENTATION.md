@@ -51,7 +51,7 @@ npm run dev:connections
 
 미리보기 데이터 형식은 수집·등록 분리에 맞춰 세션 저장소 `oneport.connection-preview.v2`로 바꿨습니다. 이전 여섯 단계 미리보기 상태는 이어서 복원하지 않습니다. 이전 요청 주소가 남아 있으면 `새 환경정보 수집`을 누르세요. 기존 일반 앱의 로그인 계정·데이터베이스 자료는 변경하지 않습니다.
 
-현재 화면 캡처: [환경정보 수집](assets/connection-frontend/environment-collection.png), [환경등록](assets/connection-frontend/environment-registration.png), [모바일 환경등록](assets/connection-frontend/environment-registration-mobile.png). 모두 실제 고객 자원이 없는 개발 미리보기입니다.
+현재 화면은 개발 미리보기 `/?connection-preview=1#prepare` 에서 확인합니다. 레포에는 화면 캡처를 두지 않습니다.
 
 ## 유지한 보호 조건
 
