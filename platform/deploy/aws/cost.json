@@ -1,0 +1,9 @@
+{
+  "environments": {
+    "aws": {"tags": {"Project": "oneaction"}},
+    "onprem": {
+      "onprem": {"electricity_usd_per_kwh": 0.132},
+      "meter": {"name": "cost-exporter", "options": {"namespace": "oneport-cost"}}
+    }
+  }
+}

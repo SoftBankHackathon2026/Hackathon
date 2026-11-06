@@ -1,0 +1,15 @@
+db=postgres
+db-url=jdbc:postgresql://127.0.0.1:{{ kc.install.db_port }}/keycloak
+db-username=keycloak
+hostname={{ kc.install.base_url }}
+http-enabled=false
+https-port={{ kc.install.https_port }}
+https-certificate-file=/etc/oneport-keycloak/tls.crt
+https-certificate-key-file=/etc/oneport-keycloak/tls.key
+http-management-host=127.0.0.1
+http-management-port=9000
+http-management-scheme=http
+cache=ispn
+cache-embedded-network-bind-address=127.0.0.1
+cache-embedded-network-bind-port=7800
+http-max-queued-requests=1000

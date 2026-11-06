@@ -24,6 +24,8 @@ jobs:
           python-version: '3.12'
       - name: Install test dependencies
         run: python -m pip install '.[dev,openbao-infra]' build 'setuptools>=69' wheel ruff==0.17.4
+      - name: Install collections required by merged Keycloak regression tests
+        run: ansible-galaxy collection install -r migration/keycloak_infra/ansible/requirements.yml
       - name: Static checks
         run: ruff check --isolated --select E9,F,I migration/openbao_infra tests/openbao_infra
       - name: Unit, contract, Ansible syntax and existing migration tests

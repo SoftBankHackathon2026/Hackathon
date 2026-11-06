@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { FleetEnvironment } from "../../api/migrations";
 import type { Posture } from "../../api/security";
-import { controlHash } from "../../app/routes";
+import { controlHash, replaceHash } from "../../app/routes";
 import { affected, filterFindings, type ExplorerFilters } from "./explorer";
 import { useSort } from "../../components/SortableTable";
 import { FindingPanel } from "./FindingPanel";
@@ -32,15 +32,15 @@ export function FindingsTable({
     resources: (c) =>
       c.scope === "environment" ? null : affected(c, filters).resources,
   });
+  // 주소가 바뀌면(뒤로 가기, 링크) 패널도 따라간다. #security 로 돌아가면 닫는다.
   useEffect(() => {
-    if (focus) setSelected(focus);
+    setSelected(focus);
   }, [focus]);
   useEffect(() => {
     rowRef.current?.scrollIntoView({ block: "nearest" });
     // 열린 문제를 주소에 남겨 링크로 공유할 수 있게 한다(새 기록은 만들지 않음).
     const hash = selected ? controlHash(selected) : "#security";
-    if (window.location.hash !== hash)
-      window.history.replaceState(null, "", hash);
+    replaceHash(hash);
   }, [selected]);
   const index = findings.findIndex((c) => c.id === selected);
   const current = index >= 0 ? findings[index] : undefined;

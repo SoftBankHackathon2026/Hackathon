@@ -18,6 +18,11 @@ openbao-infra = [
     "kubernetes==37.0.2",
     "cryptography==50.0.2",
 ]
+keycloak-infra = [
+    "ansible-core>=2.20,<2.21",
+    "kubernetes>=37.0.2,<38",
+    "cryptography>=42",
+]
 dev = [
     "pytest>=8.0",
 ]
@@ -28,6 +33,7 @@ include-package-data = false
 [tool.setuptools.packages.find]
 include = ["migration", "migration.*"]
 exclude = ["*.__pycache__"]
+namespaces = false
 
 [tool.setuptools.package-data]
 "migration.openbao_infra" = [
@@ -40,9 +46,11 @@ exclude = ["*.__pycache__"]
     "ansible/tasks/*.yml",
     "ansible/templates/*.j2",
 ]
+"migration.keycloak_infra" = ["ansible/**/*.py", "ansible/**/*.yml", "ansible/**/*.j2", "ansible/ansible.cfg"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/*.pyc", "**/__pycache__/*"]
+"migration.keycloak_infra" = ["**/__pycache__/*", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

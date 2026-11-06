@@ -37,6 +37,9 @@ fi
   --version 91.9.0 --create-namespace -f "$ROOT/admin/monitoring/values.yaml" --wait --timeout 10m >/dev/null
 "${K[@]}" apply -k "$ROOT/admin/monitoring"
 
+# 4a. 비용 exporter (노드별 전력 추정값을 ConfigMap 과 /metrics 로 낸다. ServiceMonitor 가 있어 모니터링 뒤에 적용)
+"${K[@]}" apply -k "$ROOT/admin/cost-exporter"
+
 # 4b. Harbor 최소 구성 (워커 고정, NodePort http://172.30.1.7:30002)
 "${H[@]}" repo add harbor https://helm.goharbor.io >/dev/null 2>&1 || true
 "${H[@]}" repo update harbor >/dev/null

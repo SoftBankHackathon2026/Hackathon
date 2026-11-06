@@ -123,17 +123,10 @@ export function EnvironmentsPage({
         </aside>
         <div className="ux-main">
           <ArchitectureCanvas
-            key={
-              select
-                ? `${select.envId}/${select.id}`
-                : nodes
-                  ? `nodes/${nodes.envId ?? ""}/${nodes.node ?? ""}`
-                  : ""
-            }
             environments={environments}
             migrations={fleet.migrations}
-            initialSelect={select}
-            initialNodes={nodes}
+            select={select}
+            nodes={nodes}
             height={Math.max(520, Math.round(viewport * 0.7))}
           />
           <section className="ux-components" aria-label="구성 요소">

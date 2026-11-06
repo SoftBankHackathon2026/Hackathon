@@ -50,6 +50,7 @@ spec:
             - {name: ONEPORT_DATABASE_URL_FILE, value: /etc/oneport/secrets/database-url}
             - {name: ONEPORT_INGEST_TOKEN_FILE, value: /etc/oneport/secrets/ingest-token}
             - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
+            - {name: ONEPORT_COST_CONFIG, value: /etc/oneport/fleet/cost.json}
           volumeMounts:
             - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
             - {name: fleet, mountPath: /etc/oneport/fleet, readOnly: true}
@@ -117,6 +118,7 @@ spec:
           env:
             - {name: ONEPORT_DATABASE_URL_FILE, value: /etc/oneport/secrets/database-url}
             - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
+            - {name: ONEPORT_COST_CONFIG, value: /etc/oneport/fleet/cost.json}
           volumeMounts:
             - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
             - {name: kube, mountPath: /etc/oneport/kube, readOnly: true}

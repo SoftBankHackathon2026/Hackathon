@@ -79,7 +79,7 @@ spec:
             - name: tmp
               mountPath: /tmp
         - name: indexer
-          image: ghcr.io/crystal-sbhackathon2026/review-worker:3f874c80b4edb4b42aece883d0727422a7ccff47
+          image: ghcr.io/softbankhackathon2026/review-worker:743fc9a4aa4156c8e9b8e63dc08b1fe9f2349a11
           command: [sh, -c]
           args:
             - python -m review_ai.retrieval.indexer --qdrant-url http://localhost:6333 --wait 120 && exec sleep infinity

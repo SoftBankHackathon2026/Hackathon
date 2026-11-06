@@ -6,6 +6,7 @@ import sys
 
 COMMANDS: tuple[tuple[str, str], ...] = (
     ("migration.openbao_infra", "OpenBao 탐색·Ubuntu 설치·인증 설정·키 인계"),
+    ("migration.keycloak_infra", "Keycloak 환경 탐색·점검·지정 Kubernetes 노드의 호스트 설치"),
     ("migration.init_db", "DB 생성, 스키마·역할 적용, 비밀번호 설정 (--target onprem|aws)"),
     ("migration.seed", "seed 1,000건 결정적 삽입 후 건수 확인"),
     ("migration.loadgen", "INSERT 워커 실행 (HTTP 제어 API 8080)"),

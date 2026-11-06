@@ -6,6 +6,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from controlplane.api import access_pin
 from controlplane.api.errors import register_exception_handlers
 from controlplane.api.router import api_router
 from controlplane.container import Container, build_container
@@ -60,6 +61,7 @@ def create_app(
     _add_middleware(app, container.http)
     register_exception_handlers(app)
     app.include_router(api_router)
+    access_pin.install(app, access_pin.gate_from_environment())
     return app
 
 

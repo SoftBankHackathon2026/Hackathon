@@ -1,0 +1,16 @@
+# Read-only permission example. Bind to the platform's existing identity separately.
+# RBAC means role-based access control. No Secrets, exec or write permission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: keycloak-infrastructure-discovery
+rules:
+  - apiGroups: ['']
+    resources: [nodes, pods, services]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]

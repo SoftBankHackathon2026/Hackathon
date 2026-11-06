@@ -1,0 +1,29 @@
+[Unit]
+Description=Oneport Keycloak authentication service
+After=network-online.target oneport-keycloak-postgres.service
+Requires=oneport-keycloak-postgres.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oneport-keycloak
+Group=oneport-keycloak
+Environment=JAVA_HOME=/opt/oneport-keycloak/java
+Environment="JAVA_OPTS_KC_HEAP=-Xms256m -Xmx1024m"
+EnvironmentFile=/etc/oneport-keycloak/runtime.env
+WorkingDirectory=/var/lib/oneport-keycloak
+ExecStart=/opt/oneport-keycloak/keycloak-{{ kc_versions.keycloak_version }}/bin/kc.sh --config-file=/etc/oneport-keycloak/keycloak.conf start --optimized
+Restart=on-failure
+TimeoutStartSec=300
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oneport-keycloak/data
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
