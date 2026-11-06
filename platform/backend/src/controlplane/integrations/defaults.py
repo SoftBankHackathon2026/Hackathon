@@ -217,7 +217,7 @@ GCP_COMPONENTS = [
         "entry",
         "load_balancer",
         managed=True,
-        note="도메인을 넣으면 관리형 인증서로 HTTPS",
+        note="Ingress platform/oneaction-dev-platform, HTTP 80",
     ),
     component(
         "argocd", "Argo CD", "platform", "gitops", workload="argocd/deployment/argocd-server"
@@ -249,6 +249,7 @@ GCP_COMPONENTS = [
         "data",
         "postgres",
         managed=True,
+        endpoint_hints=[":oneaction-dev-review"],
         placement=["VPC oneaction-dev-vpc", "data 서브넷"],
     ),
     component(
@@ -257,23 +258,17 @@ GCP_COMPONENTS = [
         "data",
         "kafka",
         managed=True,
+        endpoint_hints=[".managedkafka."],
         placement=["VPC oneaction-dev-vpc", "data 서브넷"],
     ),
     component(
         "gcs",
-        "Cloud Storage review-docs",
+        "Cloud Storage oneaction-dev-review",
         "data",
         "object_storage",
         managed=True,
+        endpoint_hints=["-oneaction-dev-review"],
         placement=[],
-    ),
-    component(
-        "tailscale-gcp",
-        "Tailscale 라우터",
-        "link",
-        "network",
-        managed=True,
-        note="oneaction-dev-gcp-router, 10.20.32.0/19·10.20.10.0/24·10.20.128.0/20 광고",
     ),
 ]
 
@@ -312,7 +307,6 @@ GCP_PLACEMENT = {
     "sample-app": [GCP_VPC, GKE_SUBNET, GKE, "ns platform"],
     "cloud-sql": [GCP_VPC, "data 서브넷"],
     "managed-kafka": [GCP_VPC, "data 서브넷"],
-    "tailscale-gcp": [GCP_VPC, GKE_SUBNET],
 }
 
 
@@ -329,10 +323,10 @@ def placed(
 
 ONPREM = EnvironmentConfig(
     id="onprem",
-    name="온프렘 k3s (부산)",
+    name="온프렘 k3s (서울)",
     kind="k3s",
     provider="onprem",
-    region="busan-local",
+    region="seoul-local",
     role="legacy",
     context="hackathon",
     app_namespace="hackathon",
@@ -344,7 +338,7 @@ ONPREM = EnvironmentConfig(
         DataService(kind="vector_db", name="qdrant", managed=False),
     ],
     components=placed(ONPREM_COMPONENTS, ONPREM_PLACEMENT, [K3S, "ns hackathon"]),
-    boundary=["사이트 busan-local"],
+    boundary=["사이트 seoul-local"],
     declared=DeclaredFacts(
         threat_detection=False,
         posture_service=False,
@@ -394,7 +388,6 @@ AWS = EnvironmentConfig(
     ),
 )
 
-# oneaction-infra infra/gcp (PR #3, project softbank-ghost) 기준. 아직 apply 전이라 실측 전까지는 설정 값이다.
 GCP = EnvironmentConfig(
     id="gcp",
     name="GCP GKE oneaction-dev (서울)",
@@ -408,10 +401,10 @@ GCP = EnvironmentConfig(
     data_services=[
         DataService(kind="postgres", name="Cloud SQL oneaction-dev-review", managed=True),
         DataService(kind="kafka", name="Managed Kafka oneaction-dev-review", managed=True),
-        DataService(kind="object_storage", name="Cloud Storage review-docs", managed=True),
+        DataService(kind="object_storage", name="Cloud Storage oneaction-dev-review", managed=True),
     ],
     components=placed(GCP_COMPONENTS, GCP_PLACEMENT, []),
-    boundary=["GCP 프로젝트 softbank-ghost", "리전 asia-northeast3"],
+    boundary=["GCP 프로젝트 ghost-project", "리전 asia-northeast3"],
     declared=DeclaredFacts(
         threat_detection=False,
         posture_service=False,
@@ -422,7 +415,7 @@ GCP = EnvironmentConfig(
         db_encrypted_at_rest=True,
         db_backups=True,
         workload_identity=True,
-        ingress_tls=None,
+        ingress_tls=False,
         waf=False,
         policy_gates=True,
     ),

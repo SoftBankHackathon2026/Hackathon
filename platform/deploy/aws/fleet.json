@@ -3,16 +3,16 @@
   "environments": [
     {
       "id": "onprem",
-      "name": "온프렘 k3s (부산)",
+      "name": "온프렘 k3s (서울)",
       "kind": "k3s",
       "provider": "onprem",
-      "region": "busan-local",
+      "region": "seoul-local",
       "role": "legacy",
       "kubeconfig": "/etc/oneport/kube/onprem.kubeconfig",
       "context": "hackathon",
       "app_namespace": "hackathon",
       "argocd_namespace": "argocd",
-      "boundary": ["사이트 busan-local"],
+      "boundary": ["사이트 seoul-local"],
       "data_services": [
         {"kind": "postgres", "name": "postgres (PostgreSQL 16)", "managed": false},
         {"kind": "kafka", "name": "kafka (KRaft 3.9.1)", "managed": false},
@@ -59,16 +59,17 @@
       "context": "oneaction-gke",
       "app_namespace": "platform",
       "argocd_namespace": "argocd",
-      "boundary": ["GCP 프로젝트 softbank-ghost", "리전 asia-northeast3"],
+      "boundary": ["GCP 프로젝트 ghost-project", "리전 asia-northeast3"],
       "data_services": [
         {"kind": "postgres", "name": "Cloud SQL oneaction-dev-review", "managed": true},
         {"kind": "kafka", "name": "Managed Kafka oneaction-dev-review", "managed": true},
-        {"kind": "object_storage", "name": "Cloud Storage review-docs", "managed": true}
+        {"kind": "object_storage", "name": "Cloud Storage oneaction-dev-review", "managed": true}
       ],
       "declared": {
         "threat_detection": false, "posture_service": false, "audit_log": true, "flow_logs": true,
         "db_tls_required": true, "db_public": false, "db_encrypted_at_rest": true,
-        "db_backups": true, "workload_identity": true, "waf": false, "policy_gates": true
+        "db_backups": true, "workload_identity": true, "ingress_tls": false, "waf": false,
+        "policy_gates": true
       }
     }
   ],
