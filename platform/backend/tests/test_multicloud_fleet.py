@@ -172,26 +172,26 @@ def test_status_clients_fail_over_to_the_node_that_answers():
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.host)
-        if request.url.host == "172.30.1.10":
+        if request.url.host == "192.0.2.10":
             raise httpx.ConnectTimeout("no local endpoint", request=request)
         if request.url.path == "/connectors/forward_001-source/status":
             return httpx.Response(200, json={"connector": {"state": "RUNNING"}, "tasks": []})
         return httpx.Response(404)
 
     http_clients._PREFERRED.clear()
-    urls = "http://172.30.1.10:30883, http://172.30.1.7:30883/"
+    urls = "http://192.0.2.10:30883, http://192.0.2.7:30883/"
     client = httpx.Client(transport=httpx.MockTransport(handler))
     found = http_clients.ConnectStatusClient(urls, client).get_status("forward_001-source")
     assert found == {"connector": {"state": "RUNNING"}, "tasks": []}
-    assert calls == ["172.30.1.10", "172.30.1.7"]
+    assert calls == ["192.0.2.10", "192.0.2.7"]
     # 다음 tick 은 응답한 노드부터 시도한다.
     calls.clear()
     http_clients.ConnectStatusClient(urls, client).get_status("forward_001-source")
-    assert calls == ["172.30.1.7"]
+    assert calls == ["192.0.2.7"]
     # HTTP 응답(404)은 다음 주소로 넘기지 않는다.
     calls.clear()
     assert http_clients.ConnectStatusClient(urls, client).get_status("missing") is None
-    assert calls == ["172.30.1.7"]
+    assert calls == ["192.0.2.7"]
 
 
 def test_status_client_raises_when_no_address_answers():
