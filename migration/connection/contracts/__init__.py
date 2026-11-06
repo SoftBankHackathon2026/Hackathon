@@ -1,0 +1,1 @@
+"""Versioned connection wire contracts."""

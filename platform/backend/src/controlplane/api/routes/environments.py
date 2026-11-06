@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from controlplane.api.deps import (
+    ContainerDep,
     DeployerIdentity,
     DeploymentsDep,
     EnvironmentsDep,
@@ -18,8 +19,17 @@ router = APIRouter(prefix="/api/v1/environments", tags=["environments"])
 
 
 @router.get("")
-def environments(service: EnvironmentsDep, identity: ViewerIdentity) -> list[dict[str, Any]]:
-    return service.overview(identity)
+def environments(
+    service: EnvironmentsDep, identity: ViewerIdentity, container: ContainerDep
+) -> list[dict[str, Any]]:
+    items = service.overview(identity)
+    if container.connections is not None and identity is not None:
+        from migration_connection.control.service import Actor
+
+        items += container.connections.environments(
+            Actor(identity.team, identity.email, identity.can_deploy)
+        )
+    return items
 
 
 @router.post("/{environment_id}/application")

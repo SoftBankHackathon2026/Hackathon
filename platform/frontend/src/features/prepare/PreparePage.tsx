@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -8,7 +9,7 @@ import {
 import { PageHeader } from "../../components/PageKit";
 import { StatusDot } from "../../components/StatusDot";
 import { Icon } from "../../components/Icon";
-import { unavailableConnections } from "../../api/connections";
+import { createLiveConnections } from "../../api/liveConnections";
 import type {
   CollectionContext,
   ConnectionGateway,
@@ -48,7 +49,7 @@ export function PreparePage({
   onNavigate,
   requestId,
   team = "",
-  gateway = unavailableConnections,
+  gateway: providedGateway,
   previewTools,
 }: {
   onNavigate: (hash: string) => void;
@@ -60,6 +61,8 @@ export function PreparePage({
     context: CollectionContext,
   ) => ReactNode;
 }) {
+  const liveGateway = useMemo(() => createLiveConnections(), [team]);
+  const gateway = providedGateway ?? liveGateway;
   const snapshots = useSyncExternalStore(gateway.subscribe, gateway.list);
   const snapshot = snapshots.find((s) => s.id === requestId) ?? null;
   const [acknowledged, setAcknowledged] = useState(false),
@@ -157,7 +160,9 @@ export function PreparePage({
         copiedId.current = s.id;
         onNavigate("#prepare/" + encodeURIComponent(s.id));
         setMessage(
-          "미리보기 안내를 복사했어요. 실제 실행 명령은 복사하지 않았어요.",
+          gateway.mode === "preview"
+            ? "미리보기 안내를 복사했어요. 실제 실행 명령은 복사하지 않았어요."
+            : "명령을 복사했어요. 준비한 단말에서 기한 안에 실행하세요.",
         );
       })
       .catch((e) => {
@@ -365,7 +370,11 @@ export function PreparePage({
                   ) : snapshot?.environmentId ? (
                     <RegisteredEnvironment
                       snapshot={snapshot}
-                      onNext={registered ? () => setPhase("apps") : undefined}
+                      onNext={
+                        registered && gateway.mode === "preview"
+                          ? () => setPhase("apps")
+                          : undefined
+                      }
                     />
                   ) : step === 1 && snapshot ? (
                     <ConnectionTargetForm

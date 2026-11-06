@@ -20,7 +20,8 @@ MAX_FAILURES = 10
 FAILURE_WINDOW_SECONDS = 10 * 60
 PIN_PATTERN = re.compile(r"^\d{4}$")
 OPEN_PATHS = re.compile(
-    r"^/api/v1/(access-pin$|ingest/|enrollments/scripts/|enrollments/[^/]+/complete$)"
+    r"^/api/v1/(access-pin$|ingest/|enrollments/scripts/|enrollments/[^/]+/complete$|"
+    r"connections/[^/]+/(challenge|device-challenge|prove|device|recover)$|connection-runtime/)"
 )
 
 

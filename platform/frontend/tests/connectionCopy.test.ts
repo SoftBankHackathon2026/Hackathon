@@ -131,3 +131,32 @@ test("unavailable service does not access the clipboard or issue credentials", a
   await assert.rejects(() => copyEnrollmentCommand(gateway, target));
   assert.equal(gateway.list().length, 0);
 });
+
+test("live copy uses release URL and keeps seed out of the request snapshot", async (t) => {
+  const gateway = createPreviewGateway();
+  gateway.mode = "live";
+  const original = gateway.create;
+  gateway.create = async (...args) => ({
+    ...(await original(...args)),
+    id: "a".repeat(22),
+    deployment: {
+      bootstrapUrl: "https://connect.example.com/i",
+      releaseVersion: "test-v1",
+    },
+  });
+  let copied = "";
+  clipboard(t, async (items) => {
+    copied = await (await items[0].getType("text/plain")).text();
+  });
+  const result = await copyEnrollmentCommand(gateway, target);
+  assert.match(
+    copied,
+    /^curl -qfsS --proto '=https' https:\/\/connect.example.com\/i \| MIGRATION_ENROLL='/,
+  );
+  const seed = copied.match(
+    /MIGRATION_ENROLL='[A-Za-z0-9_-]{22}\.([A-Za-z0-9_-]{43})'/,
+  )?.[1];
+  assert.ok(seed);
+  assert.ok(!JSON.stringify(result).includes(seed));
+  assert.ok(!JSON.stringify(gateway.list()).includes(seed));
+});

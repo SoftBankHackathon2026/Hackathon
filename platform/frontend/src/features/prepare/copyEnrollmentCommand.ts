@@ -28,7 +28,8 @@ export async function copyEnrollmentCommand(
   let issued: ConnectionSnapshot | undefined;
   const preparation = (async () => {
     if (previousId) await gateway.cancel(previousId);
-    const { createEnrollmentMaterial } = await import("./enrollmentCrypto.ts");
+    const { createEnrollmentMaterial, enrollmentCommand } =
+      await import("./enrollmentCrypto.ts");
     const material = createEnrollmentMaterial();
     try {
       issued = await gateway.create(
@@ -36,10 +37,23 @@ export async function copyEnrollmentCommand(
         material.publicKey,
         crypto.randomUUID(),
       );
-      // No live publication until the release and cancellation contracts exist.
-      // Preview clipboard contents are inert and never contain a seed.
+      if (gateway.mode === "live") {
+        if (!issued.deployment?.releaseVersion)
+          throw new Error("배포 정보가 준비되지 않았어요.");
+        return new Blob(
+          [
+            enrollmentCommand(
+              issued.deployment.bootstrapUrl,
+              issued.id,
+              material.seed,
+            ),
+          ],
+          { type: "text/plain" },
+        );
+      }
+      // Preview clipboard contents stay inert and never contain a seed.
       if (gateway.mode !== "preview")
-        throw new Error("배포 주소가 확정되지 않았어요.");
+        throw new Error("연결 서비스를 사용할 수 없어요.");
       return new Blob(
         ["# Oneport 화면 미리보기입니다. 실제 단말에서 실행할 명령이 없어요."],
         { type: "text/plain" },

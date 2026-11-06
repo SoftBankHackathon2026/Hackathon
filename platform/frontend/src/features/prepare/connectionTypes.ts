@@ -64,12 +64,13 @@ export type ConnectionSnapshot = {
   blockedUntil?: number;
   issue?: string;
   events: { at: number; message: string }[];
+  deployment?: { bootstrapUrl: string; releaseVersion: string };
 };
 
-// UI proposal only. Missing production session/read/cancel/collection contracts
-// remain disabled; inventory collection never grants migration or install rights.
+// Preview and live implementations share this view contract. The server remains
+// authoritative for permissions, expiry, tunnel readiness and registration.
 export type ConnectionGateway = {
-  mode: "unavailable" | "preview";
+  mode: "unavailable" | "preview" | "live";
   available: boolean;
   reason?: string;
   list: () => readonly ConnectionSnapshot[];

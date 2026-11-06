@@ -10,3 +10,6 @@
 kubeconfig
 credentials.json
 .DS_Store
+
+# Local implementation test environment
+.venv/
