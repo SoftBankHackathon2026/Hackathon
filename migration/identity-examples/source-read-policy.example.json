@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IdentityCenterInventoryRead",
+      "Effect": "Allow",
+      "Action": [
+        "sso:ListInstances", "sso:ListPermissionSets", "sso:DescribePermissionSet",
+        "sso:GetInlinePolicyForPermissionSet", "sso:ListManagedPoliciesInPermissionSet",
+        "sso:ListCustomerManagedPolicyReferencesInPermissionSet",
+        "sso:GetPermissionsBoundaryForPermissionSet", "sso:ListAccountAssignments",
+        "identitystore:ListUsers", "identitystore:ListGroups", "identitystore:ListGroupMemberships"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AccountPolicyInventoryRead",
+      "Effect": "Allow",
+      "Action": ["iam:GetAccountAuthorizationDetails", "iam:GetPolicy", "iam:GetPolicyVersion"],
+      "Resource": "*"
+    }
+  ]
+}

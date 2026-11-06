@@ -12,3 +12,7 @@ reports/
 dist/
 keycloak-infra.local.yaml
 keycloak-results/
+identity.local.json
+identity.local.yaml
+identity-results/
+identity-state/

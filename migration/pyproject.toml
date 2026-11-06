@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+identity = [
+    "boto3>=1.35,<1.36",
+    "requests>=2.32,<3",
+]
 keycloak-infra = [
     "ansible-core>=2.20,<2.21",
     "kubernetes>=37.0.2,<38",

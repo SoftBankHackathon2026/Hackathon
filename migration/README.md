@@ -1,5 +1,15 @@
 # migration/ — 온프렘 PostgreSQL → AWS PostgreSQL 이전 데모 도구
 
+## 계정·권한 이관
+
+`python -m migration.identity`는 AWS Identity Center의 사용자·그룹·계정별 권한 세트를 수집하고, 검토된 업무·환경 대응표로 Keycloak·OpenBao·Kubernetes의 제한된 권한을 구성합니다. 데이터베이스 이관 상태와 분리된 독립 도구입니다.
+
+- [실행 코드와 지원 범위](migration/identity/README.md)
+- [입력·명령·적용·복구 안내](docs/identity/operations.md)
+- [범위 결정과 후속 작업](docs/identity/decisions-and-followups.md)
+
+실제 클라우드·온프레미스 환경의 이관 완료를 뜻하지 않습니다. Kubernetes 로그인 설정과 업무 앱의 설정 인계, 사용자 자격증명 등록, 실제 주체의 접근 검증은 별도로 확인해야 합니다.
+
 `업무-아젠다/01-DB-이전-계획.md` 의 "구성과 INSERT 워커", "온프렘에서 AWS로", "전환과 복구", "데이터 검증" 절을 그대로 코드로 옮긴 것이다.
 INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을 한 디렉터리에 모았다.
 

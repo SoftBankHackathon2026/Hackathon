@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "inventory_hash": "ec74761588385c4a68e61a26ef1852665ea6dbf7b83ccc4f4ec1ff21436541eb",
+  "bindings": [
+    {
+      "assignment_id": "05db2ad66d9a1f99f3ff8c06",
+      "source": {
+        "account_id": "111122223333",
+        "permission_set_arn": "arn:aws:sso:::permissionSet/ssoins-1234567890123456/ps-1234567890123456",
+        "principal_type": "GROUP",
+        "principal_id": "g-1"
+      },
+      "business": "orders",
+      "environment": "dev",
+      "review_ref": "EXAMPLE-ONLY-NOT-A-PRODUCTION-REVIEW",
+      "source_access_evidence": "Fictional fixture only. Replace with reviewed source EKS access, resource-policy and organization-control evidence.",
+      "targets": {
+        "kubernetes": {
+          "namespace": "orders-dev",
+          "rules": [
+            {
+              "apiGroups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "get",
+                "list"
+              ]
+            }
+          ]
+        },
+        "openbao": [
+          {
+            "path": "kv/data/orders/dev/database",
+            "capabilities": [
+              "read"
+            ]
+          }
+        ],
+        "applications": [
+          {
+            "id": "orders",
+            "roles": [
+              "reader"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "excluded_assignments": []
+}
