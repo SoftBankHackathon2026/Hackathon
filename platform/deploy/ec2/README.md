@@ -1,6 +1,6 @@
 # EC2 한 대에 플랫폼 띄우기
 
-EKS 밖에서 플랫폼을 돌리는 구성이에요. t3.small 한 대에 `docker compose`로 DB·API·수집기·화면을 올려요. main에 플랫폼 변경이 들어오면 [`platform-ec2`](../../../.github/workflows/platform-ec2.yml) 워크플로가 이미지를 ECR에 올리고 SSM으로 이 인스턴스에 배포해요.
+EKS 밖에서 플랫폼을 돌리는 구성이에요. t3.small 한 대에 `docker compose`로 DB·API·수집기·화면을 올리고, Caddy가 Let's Encrypt 인증서로 HTTPS를 붙여요. main에 플랫폼 변경이 들어오면 [`platform-ec2`](../../../.github/workflows/platform-ec2.yml) 워크플로가 이미지를 ECR에 올리고 SSM으로 이 인스턴스에 배포해요.
 
 ```
 GitHub Actions ──OIDC──▶ 배포 역할 ──▶ ECR push
@@ -15,8 +15,8 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 | 자원 | 이름 | 비고 |
 |---|---|---|
 | 인스턴스 | 태그 `Name=oneport-platform`, `project=oneport` | t3.small, Amazon Linux 2023, gp3 20GiB 암호화, IMDSv2 필수, public 서브넷. user-data 는 [`user-data.sh`](user-data.sh). 온디맨드 vCPU 한도가 차 있으면 스팟(`persistent`, 회수 시 `stop`)으로 띄워요 |
-| 고정 IP | 태그 `Name=oneport-platform` | 화면 주소와 `ONEPORT_ALLOWED_HOSTS`가 바뀌지 않게 고정해요 |
-| 보안그룹 | `oneport-platform-sg` | 인바운드는 80 하나, 화면을 볼 사람 IP만 열어요. SSH는 열지 않고 SSM으로 들어가요. macOS에서 iCloud 비공개 릴레이를 켜 두면 HTTP 요청이 Apple 릴레이 IP로 나가서 막혀요. 그 네트워크에서 'IP 주소 추적 제한'을 꺼요 |
+| 고정 IP | 태그 `Name=oneport-platform` | 도메인 A 레코드가 가리키는 주소예요. 인스턴스를 멈췄다 켜도 바뀌지 않아요 |
+| 보안그룹 | `oneport-platform-sg` | 443은 화면을 볼 사람 IP만 열어요. 80은 Let's Encrypt 인증(HTTP-01)이 어디서 올지 몰라 전체에 열지만, Caddy가 인증 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
 | EKS 클러스터 보안그룹 | 규칙 하나 | `oneport-platform-sg` → 443. 수집기가 EKS 비공개 엔드포인트로 들어가요 |
 | EC2 역할 | `ghost-oneport-platform-ec2` | `AmazonSSMManagedInstanceCore` + `ghost/oneport-platform-*` ECR 읽기 |
 | 배포 역할 | `ghost-oneport-platform-deploy` | 아래 정책. GitHub OIDC 공급자가 있어야 만들 수 있어요 |
@@ -96,13 +96,14 @@ chown 10001:10001 secrets/database-url secrets/ingest-token
 chmod 0400 secrets/*
 ```
 
-**3. 화면 주소**. 고정 IP를 넣어요.
+**3. 화면 주소**. 도메인의 A 레코드를 고정 IP로 먼저 맞춰요. Caddy가 처음 뜰 때 그 도메인으로 인증서를 받아요.
 
 ```sh
 cat > settings.env <<EOF
+ONEPORT_DOMAIN=<도메인>
 ONEPORT_AUTH_MODE=demo
-ONEPORT_ALLOWED_HOSTS=<고정 IP>,localhost
-ONEPORT_ALLOWED_ORIGINS=http://<고정 IP>
+ONEPORT_ALLOWED_HOSTS=<도메인>,localhost
+ONEPORT_ALLOWED_ORIGINS=https://<도메인>
 EOF
 ```
 
