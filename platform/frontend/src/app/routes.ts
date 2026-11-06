@@ -2,17 +2,30 @@ export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
   | { view: "prepare" }
-  | { view: "environments"; select?: { envId: string; id: string } }
+  | {
+      view: "environments";
+      select?: { envId: string; id: string };
+      /** 노드 보기. envId 가 있으면 그 클러스터 패널, node 까지 있으면 노드 패널을 연다. */
+      nodes?: { envId?: string; node?: string };
+    }
   | { view: "security"; control?: string }
   | { view: "costs"; tab?: string }
   | { view: "team" };
 
 export function readRoute(hash = "#"): Route {
-  const [head, id, extra] = hash.replace(/^#/, "").split("/");
+  const [head, id, extra, more] = hash.replace(/^#/, "").split("/");
   if (head === "prepare") return { view: "prepare" };
   if (head === "migrations" && id)
     return { view: "migration", id: decodeURIComponent(id) };
   if (head === "environments") {
+    if (id === "nodes")
+      return {
+        view: "environments",
+        nodes: {
+          ...(extra ? { envId: decodeURIComponent(extra) } : {}),
+          ...(extra && more ? { node: decodeURIComponent(more) } : {}),
+        },
+      };
     if (id && extra)
       return {
         view: "environments",
@@ -45,6 +58,15 @@ export function controlHash(controlId: string) {
 
 export function resourceHash(envId: string, componentId: string) {
   return `#environments/${encodeURIComponent(envId)}/${encodeURIComponent(componentId)}`;
+}
+
+/** 노드 보기(클러스터/노드 패널) 주소 */
+export function nodesHash(envId?: string, node?: string) {
+  return [
+    "#environments/nodes",
+    ...(envId ? [encodeURIComponent(envId)] : []),
+    ...(envId && node ? [encodeURIComponent(node)] : []),
+  ].join("/");
 }
 
 export function routeTitle(route: Route, teamName: string) {

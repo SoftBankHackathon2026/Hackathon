@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EnvComponent, FleetEnvironment } from "../../api/migrations";
 import { useElementWidth } from "../../components/charts/useElementWidth";
 import {
@@ -40,6 +35,7 @@ import {
   type CloudIconRef,
 } from "./cloudIcons";
 import { iconFor } from "./iconMap";
+import { usePanZoom } from "./usePanZoom";
 import {
   COS,
   SIN,
@@ -53,7 +49,6 @@ import {
   shade,
   shortLabel,
   zoomAt,
-  type View,
   type ViewMode,
 } from "./iso";
 
@@ -341,11 +336,11 @@ export function IsoCanvas({
 }) {
   const { ref, width } = useElementWidth(900);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [hover, setHover] = useState<string | null>(null);
   const [openMarker, setOpenMarker] = useState<string | null>(null);
-  const pointers = useRef(new Map<number, Point>());
-  const drag = useRef({ moved: false, startX: 0, startY: 0 });
+  const { view, setView, moved, handlers } = usePanZoom(svgRef, () =>
+    onSelect(null),
+  );
   const bounds = layoutBounds(layout, mode);
   // 캔버스 높이는 그림 비율에 맞춘다(너비에 맞춰 그렸을 때 높이, 최소 480). 큰 빈 공간을 두지 않는다.
   const fitScale = Math.min(
@@ -385,75 +380,6 @@ export function IsoCanvas({
   useEffect(() => {
     if (overlay !== "security") setOpenMarker(null);
   }, [overlay]);
-
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const box = svg.getBoundingClientRect();
-      const factor = Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0015));
-      setView((prev) =>
-        zoomAt(prev, factor, event.clientX - box.left, event.clientY - box.top),
-      );
-    };
-    svg.addEventListener("wheel", onWheel, { passive: false });
-    return () => svg.removeEventListener("wheel", onWheel);
-  }, []);
-
-  const onPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    pointers.current.set(event.pointerId, [event.clientX, event.clientY]);
-    drag.current = {
-      moved: false,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
-  };
-  const onPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const previous = pointers.current.get(event.pointerId);
-    if (!previous) return;
-    const next: Point = [event.clientX, event.clientY];
-    if (!drag.current.moved) {
-      if (
-        Math.hypot(
-          next[0] - drag.current.startX,
-          next[1] - drag.current.startY,
-        ) < 4
-      )
-        return;
-      drag.current.moved = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    const others = [...pointers.current.entries()].filter(
-      ([id]) => id !== event.pointerId,
-    );
-    if (others.length === 1) {
-      const other = others[0][1];
-      const before = Math.hypot(previous[0] - other[0], previous[1] - other[1]);
-      const after = Math.hypot(next[0] - other[0], next[1] - other[1]);
-      const box = event.currentTarget.getBoundingClientRect();
-      if (before > 0)
-        setView((prev) =>
-          zoomAt(
-            prev,
-            after / before,
-            (next[0] + other[0]) / 2 - box.left,
-            (next[1] + other[1]) / 2 - box.top,
-          ),
-        );
-    } else {
-      setView((prev) => ({
-        ...prev,
-        x: prev.x + next[0] - previous[0],
-        y: prev.y + next[1] - previous[1],
-      }));
-    }
-    pointers.current.set(event.pointerId, next);
-  };
-  const onPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
-    pointers.current.delete(event.pointerId);
-    if (!drag.current.moved) onSelect(null);
-  };
 
   const tileOf = new Map(layout.tiles.map((t) => [`${t.envId}:${t.id}`, t]));
   const screenCenter = (tile: TileRect): Point => {
@@ -791,10 +717,7 @@ export function IsoCanvas({
         className="iso-svg"
         width={width}
         height={height}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        {...handlers}
       >
         <defs>
           <pattern
@@ -1066,7 +989,7 @@ export function IsoCanvas({
                 }
                 onHover={setHover}
                 onActivate={() => {
-                  if (drag.current.moved) return;
+                  if (moved()) return;
                   onSelect(
                     selected?.envId === env.id && selected.id === component.id
                       ? null

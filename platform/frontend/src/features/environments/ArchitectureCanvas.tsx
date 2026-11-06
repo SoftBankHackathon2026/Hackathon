@@ -6,7 +6,9 @@ import { Segmented } from "../../components/Segmented";
 import { migrationQueryOptions } from "../migrations/queries";
 import { STATUS_LABELS, stageTitle } from "../migrations/stages";
 import { postureQueryOptions } from "../security/queries";
+import { ClusterPanel } from "./ClusterPanel";
 import { ComponentPanel } from "./ComponentPanel";
+import { NodeCanvas, type NodeRef } from "./NodeCanvas";
 import { ResourceTree } from "./ResourceTree";
 import {
   IsoCanvas,
@@ -31,7 +33,7 @@ import {
   type OverlayGroup,
 } from "./securityModel";
 
-type Grouping = "boundary" | "layer";
+type Grouping = "boundary" | "node" | "layer";
 
 const TABS: { id: Overlay; label: string }[] = [
   { id: "infra", label: "인프라" },
@@ -43,20 +45,29 @@ export function ArchitectureCanvas({
   environments,
   migrations,
   initialSelect,
+  initialNodes,
   height = 860,
 }: {
   environments: FleetEnvironment[];
   migrations: MigrationSummary[];
   initialSelect?: TileRef;
+  initialNodes?: { envId?: string; node?: string };
   height?: number;
 }) {
   const [overlay, setOverlay] = useState<Overlay>("infra");
-  const [grouping, setGrouping] = useState<Grouping>("boundary");
+  const [grouping, setGrouping] = useState<Grouping>(
+    initialNodes ? "node" : "boundary",
+  );
   const [mode, setMode] = useState<ViewMode>("iso");
   const [showPods, setShowPods] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<TileRef | null>(
     initialSelect ?? null,
+  );
+  const [node, setNode] = useState<NodeRef | null>(
+    initialNodes?.envId
+      ? { envId: initialNodes.envId, node: initialNodes.node ?? null }
+      : null,
   );
   const [jobId, setJobId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Severity[]>([]);
@@ -70,20 +81,35 @@ export function ArchitectureCanvas({
   }).data;
 
   useEffect(() => {
-    if (initialSelect)
+    if (initialSelect || initialNodes)
       document
         .querySelector(".canvas-block")
         ?.scrollIntoView({ block: "start" });
-  }, [initialSelect]);
+  }, [initialSelect, initialNodes]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected && !node) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelected(null);
+      if (event.key === "Escape") {
+        setSelected(null);
+        setNode(null);
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selected]);
+  }, [selected, node]);
+  // 패널은 하나만: 구성 요소를 고르면 노드 패널을 닫고, 노드를 고르면 구성 요소 패널을 닫는다.
+  const selectComponent = (ref: TileRef | null) => {
+    setNode(null);
+    setSelected(ref);
+  };
+  const selectNode = (ref: NodeRef | null) => {
+    setSelected(null);
+    setNode(ref);
+  };
+  const nodeEnv = node
+    ? environments.find((e) => e.id === node.envId)
+    : undefined;
 
   const layout = layoutCanvas(environments);
   const controls = posture?.controls ?? [];
@@ -162,9 +188,13 @@ export function ArchitectureCanvas({
               value={grouping}
               options={[
                 { value: "boundary", label: "인프라 경계" },
+                { value: "node", label: "노드" },
                 { value: "layer", label: "계층" },
               ]}
-              onChange={setGrouping}
+              onChange={(next) => {
+                setGrouping(next);
+                setNode(null);
+              }}
             />
           </span>
           {grouping === "boundary" && (
@@ -178,7 +208,7 @@ export function ArchitectureCanvas({
               파드 보기
             </button>
           )}
-          {grouping === "boundary" && (
+          {grouping !== "layer" && (
             <input
               type="search"
               aria-label="다이어그램에서 찾기"
@@ -189,7 +219,51 @@ export function ArchitectureCanvas({
           )}
         </div>
       </div>
-      {grouping === "layer" ? (
+      {grouping === "node" ? (
+        <div className="canvas-frame" data-panel-owner>
+          {overlay !== "infra" && (
+            <p className="tree-note canvas-note">
+              이전 경로와 보안은 인프라 경계 보기에서 볼 수 있어요.
+            </p>
+          )}
+          <NodeCanvas
+            environments={environments}
+            mode={mode}
+            onModeChange={setMode}
+            query={query}
+            selectedComponent={selected}
+            selectedNode={node}
+            onSelectComponent={selectComponent}
+            onSelectNode={selectNode}
+            onClear={() => {
+              setSelected(null);
+              setNode(null);
+            }}
+            height={height}
+          />
+          {nodeEnv && node && (
+            <ClusterPanel
+              env={nodeEnv}
+              node={node.node}
+              onSelectNode={(name) =>
+                selectNode({ envId: nodeEnv.id, node: name })
+              }
+              onSelectComponent={(id) =>
+                selectComponent({ envId: nodeEnv.id, id })
+              }
+              onClose={() => setNode(null)}
+            />
+          )}
+          {selectedEnv && selectedComponent && (
+            <ComponentPanel
+              env={selectedEnv}
+              component={selectedComponent}
+              onClose={() => setSelected(null)}
+              onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
+            />
+          )}
+        </div>
+      ) : grouping === "layer" ? (
         <div className="canvas-frame tree-frame" data-panel-owner>
           {overlay !== "infra" && (
             <p className="tree-note">

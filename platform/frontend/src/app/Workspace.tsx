@@ -52,7 +52,7 @@ export function Workspace({
           <MigrationDetailPage key={route.id} jobId={route.id} />
         )}
         {route.view === "environments" && (
-          <EnvironmentsPage select={route.select} />
+          <EnvironmentsPage select={route.select} nodes={route.nodes} />
         )}
         {route.view === "security" && <SecurityPage control={route.control} />}
         {route.view === "costs" && <CostsPage tab={route.tab} />}

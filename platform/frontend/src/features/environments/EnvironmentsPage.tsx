@@ -11,6 +11,7 @@ import { StatusDot } from "../../components/StatusDot";
 import { fleetQueryOptions } from "../migrations/queries";
 import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
+import { clusterRailRows } from "./clusterModel";
 import { envRailRows } from "./model";
 
 function useViewportHeight() {
@@ -25,8 +26,10 @@ function useViewportHeight() {
 
 export function EnvironmentsPage({
   select,
+  nodes,
 }: {
   select?: { envId: string; id: string };
+  nodes?: { envId?: string; node?: string };
 }) {
   const { data: fleet } = useSuspenseQuery(fleetQueryOptions());
   const [envId, setEnvId] = useState("all");
@@ -64,18 +67,34 @@ export function EnvironmentsPage({
             <section key={env.id} className="ux-block">
               <h2 className="ux-name">{env.name}</h2>
               <dl className="ux-kv">
-                {envRailRows(env).map((row) => (
-                  <div key={row.label}>
-                    <dt>{row.label}</dt>
-                    <dd>
-                      {row.tone ? (
-                        <StatusDot tone={row.tone}>{row.value}</StatusDot>
-                      ) : (
-                        row.value
-                      )}
-                    </dd>
-                  </div>
-                ))}
+                {[
+                  ...envRailRows(env).map((row) => ({
+                    ...row,
+                    href: undefined as string | undefined,
+                    title: undefined as string | undefined,
+                  })),
+                  ...clusterRailRows(env),
+                ].map((row) => {
+                  const body = row.tone ? (
+                    <StatusDot tone={row.tone}>{row.value}</StatusDot>
+                  ) : (
+                    row.value
+                  );
+                  return (
+                    <div key={row.label}>
+                      <dt>{row.label}</dt>
+                      <dd title={row.title}>
+                        {row.href ? (
+                          <a className="ux-link" href={row.href}>
+                            {body}
+                          </a>
+                        ) : (
+                          body
+                        )}
+                      </dd>
+                    </div>
+                  );
+                })}
               </dl>
             </section>
           ))}
@@ -104,10 +123,17 @@ export function EnvironmentsPage({
         </aside>
         <div className="ux-main">
           <ArchitectureCanvas
-            key={select ? `${select.envId}/${select.id}` : ""}
+            key={
+              select
+                ? `${select.envId}/${select.id}`
+                : nodes
+                  ? `nodes/${nodes.envId ?? ""}/${nodes.node ?? ""}`
+                  : ""
+            }
             environments={environments}
             migrations={fleet.migrations}
             initialSelect={select}
+            initialNodes={nodes}
             height={Math.max(520, Math.round(viewport * 0.7))}
           />
           <section className="ux-components" aria-label="구성 요소">

@@ -3468,3 +3468,468 @@ th[aria-sort="descending"] .pk-sort-mark {
 .canvas-frame {
   min-width: 0;
 }
+
+/* ── 33. 노드 보기(Cloudcraft 쿠버네티스 그림처럼): 클러스터 → 영역 → 노드 판 → 파드 블록, 클러스터/노드 패널 ── */
+.canvas-note {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-badge);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.node-plate {
+  cursor: pointer;
+}
+.node-plate:focus-visible rect {
+  stroke: var(--accent);
+}
+.node-empty {
+  fill: var(--text-tertiary);
+  font-weight: 500;
+  pointer-events: none;
+}
+.node-slab .ns-body {
+  cursor: pointer;
+}
+.node-slab .ns-t {
+  fill: #ffffff;
+  stroke: #b0b8c1;
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+.node-slab .ns-l {
+  fill: #d1d6db;
+}
+.node-slab .ns-r {
+  fill: #b0b8c1;
+}
+.node-slab.tone-bad .ns-t {
+  stroke: var(--danger);
+  stroke-width: 1.6;
+}
+.node-slab.tone-warn .ns-t {
+  stroke: var(--warning);
+  stroke-width: 1.6;
+}
+.node-slab.unplaced .ns-t {
+  fill: var(--warning-soft);
+  stroke: var(--warning);
+  stroke-dasharray: 5 4;
+}
+.node-slab.dim {
+  opacity: 0.3;
+}
+.node-slab .ns-body:hover .ns-t {
+  stroke: var(--accent);
+}
+.node-slab .ns-body:focus-visible {
+  outline: none;
+}
+.node-slab .ns-body:focus-visible .ns-t {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.ns-name {
+  fill: var(--text);
+  font-weight: 700;
+  pointer-events: none;
+}
+.ns-bar-label,
+.ns-bar-value {
+  fill: var(--text-tertiary);
+  font-weight: 600;
+  pointer-events: none;
+}
+.ns-track {
+  fill: var(--surface-sunken);
+}
+.ns-fill {
+  fill: var(--success);
+}
+.ns-bar.tone-warn .ns-fill {
+  fill: var(--warning);
+}
+.ns-bar.tone-bad .ns-fill {
+  fill: var(--danger);
+}
+.ns-bar.requested .ns-fill {
+  opacity: 0.45;
+}
+.ns-request {
+  stroke: var(--text-strong);
+  stroke-width: 1.2;
+}
+.pod-cube {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+.pod-cube.faded {
+  opacity: 0.28;
+}
+.pod-cube.tone-other {
+  cursor: default;
+}
+.pod-cube.tone-other .pc-t {
+  fill: #eef0f2;
+}
+.pod-cube.tone-other .pc-l {
+  fill: #d9dde1;
+}
+.pod-cube.tone-other .pc-r {
+  fill: #c6ccd2;
+}
+.pod-cube .pc-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.node-legend .legend-cube {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #6fcf8b;
+}
+.node-legend .legend-cube.tone-warn {
+  background: #f5c25c;
+}
+.node-legend .legend-cube.tone-bad {
+  background: #ec6a62;
+}
+.node-legend .legend-cube.tone-other {
+  background: #eef0f2;
+  box-shadow: inset 0 0 0 1px #c6ccd2;
+}
+.node-legend .legend-bar {
+  display: inline-block;
+  width: 22px;
+  height: 6px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--success) 0 55%,
+    var(--surface-sunken) 55%
+  );
+}
+.pod-tip {
+  position: absolute;
+  z-index: 8;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: var(--radius-badge);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 6px 20px rgba(0, 0, 0, 0.1);
+  font: var(--type-label);
+  pointer-events: none;
+}
+.pod-tip .pt-name {
+  overflow: hidden;
+  color: var(--text);
+  font: var(--type-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pod-tip .pt-row {
+  display: grid;
+  color: var(--text-secondary);
+}
+.pod-tip .pt-state {
+  font-weight: 700;
+}
+.pod-tip .pt-state.tone-ok {
+  color: var(--success-contrast);
+}
+.pod-tip .pt-state.tone-warn {
+  color: var(--warning-contrast);
+}
+.pod-tip .pt-state.tone-bad {
+  color: var(--danger-contrast);
+}
+.pod-tip .pt-sub {
+  color: var(--text-tertiary);
+}
+.pod-tip .pt-hint {
+  margin-top: 2px;
+  color: var(--accent-contrast);
+}
+
+/* 클러스터/노드 패널 */
+.cl-title {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-meter + .cl-meter {
+  margin-top: 14px;
+}
+.cl-meter-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.cl-meter-label {
+  color: var(--text-secondary);
+  font: var(--type-strong);
+}
+.cl-meter-value {
+  color: var(--text-tertiary);
+  font: var(--type-body);
+  font-variant-numeric: tabular-nums;
+}
+.cl-meter-value b {
+  color: var(--text);
+  font-weight: 700;
+}
+.cl-meter-pct {
+  margin-left: 8px;
+  color: var(--text);
+  font-weight: 700;
+}
+.cl-meter.tone-warn .cl-meter-pct {
+  color: var(--warning-contrast);
+}
+.cl-meter.tone-bad .cl-meter-pct {
+  color: var(--danger-contrast);
+}
+.cl-track {
+  position: relative;
+  height: 8px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+}
+.cl-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+}
+.cl-track .cl-req {
+  background: var(--success-line);
+}
+.cl-track .cl-use {
+  background: var(--success);
+}
+.cl-meter.tone-warn .cl-req {
+  background: var(--warning-line);
+}
+.cl-meter.tone-warn .cl-use {
+  background: var(--warning);
+}
+.cl-meter.tone-bad .cl-req {
+  background: var(--danger-line, #f5bcb8);
+}
+.cl-meter.tone-bad .cl-use {
+  background: var(--danger);
+}
+.fp-group p.cl-meter-sub {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cl-nodes {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font: var(--type-body);
+}
+.cl-nodes th {
+  padding: 0 8px 6px 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-align: left;
+}
+.cl-nodes th:nth-child(2),
+.cl-nodes th:nth-child(3) {
+  width: 92px;
+}
+.cl-nodes th.num {
+  width: 44px;
+}
+.cl-nodes td {
+  padding: 8px 8px 8px 0;
+  border-top: 1px solid var(--divider);
+  vertical-align: middle;
+}
+.cl-nodes .num {
+  padding-right: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cl-nodes tbody tr {
+  cursor: pointer;
+}
+.cl-nodes tbody tr:hover td {
+  background: var(--surface-weak);
+}
+.shell .cl-node-link {
+  display: block;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-strong);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-node-sub {
+  display: block;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-mini {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font: var(--type-label);
+  font-variant-numeric: tabular-nums;
+}
+.cl-mini i {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+}
+.cl-mini b {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+.cl-mini.tone-warn b {
+  background: var(--warning);
+}
+.cl-mini.tone-bad b {
+  background: var(--danger);
+}
+.fp-group p.cl-lead {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font: var(--type-strong);
+}
+.cl-pod-groups {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cl-pod-groups > li {
+  min-width: 0;
+}
+.shell .cl-comp {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-strong);
+  text-align: left;
+}
+.shell .cl-comp:hover {
+  color: var(--accent-contrast);
+}
+.cl-count {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+.cl-pod-list {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+.cl-pod-list li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font: var(--type-label);
+}
+.cl-pod-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--success);
+}
+.cl-pod-dot.tone-warn {
+  background: var(--warning);
+}
+.cl-pod-dot.tone-bad {
+  background: var(--danger);
+}
+.cl-pod-dot.tone-idle {
+  background: var(--border-strong);
+}
+.shell .cl-pod-name {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: var(--type-label);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cl-pod-state {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+.cl-facts {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font: var(--type-body);
+}
+.cl-facts dt {
+  color: var(--text-tertiary);
+}
+.cl-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.cl-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.cl-meter-kind {
+  color: var(--text-tertiary);
+}
+.fp-group p.cl-note {
+  margin: 10px 0 0;
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}

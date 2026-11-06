@@ -111,6 +111,40 @@ export type FleetEnvironment = {
   components: EnvComponent[];
   issues: EnvIssue[];
   boundary?: string[];
+  /** 클러스터 버전, 노드, 자원 합계. 연결이 끊겼거나 백엔드가 아직 보내지 않으면 null/undefined. */
+  cluster?: ClusterInfo | null;
+};
+/** CPU 는 밀리코어, 메모리는 바이트. */
+export type ClusterResources = { cpu_millicores: number; memory_bytes: number };
+/** null 은 "읽지 못함"(권한 없음, metrics-server 없음 등). 0 과 다르다. */
+export type ClusterInfo = {
+  version: string | null;
+  node_count: number | null;
+  /** Ready 여부를 모르는 노드가 있으면 null */
+  ready_nodes: number | null;
+  /** 클러스터 합계. 한 노드라도 값을 모르면 null */
+  allocatable: ClusterResources | null;
+  requests: ClusterResources | null;
+  /** metrics-server 실측 */
+  usage: ClusterResources | null;
+  nodes: ClusterNode[];
+};
+export type ClusterNode = {
+  name: string;
+  ready: boolean | null;
+  /** cordon 됨(새 파드를 받지 않음) */
+  unschedulable: boolean | null;
+  roles: string[];
+  kubelet_version: string | null;
+  os_image: string | null;
+  arch: string | null;
+  instance_type: string | null;
+  zone: string | null;
+  allocatable: ClusterResources | null;
+  requests: ClusterResources | null;
+  usage: ClusterResources | null;
+  /** 이 노드에서 도는 파드 수(구성 요소에 속하지 않은 시스템 파드 포함) */
+  pods: number | null;
 };
 export type MigrationSummary = {
   job_id: string;
