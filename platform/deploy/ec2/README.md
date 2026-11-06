@@ -1,12 +1,14 @@
 # EC2 한 대에 플랫폼 띄우기
 
-EKS 밖에서 플랫폼을 돌리는 구성이에요. t3.small 한 대에 `docker compose`로 DB·API·수집기·화면을 올리고, Caddy가 Let's Encrypt 인증서로 HTTPS를 붙여요. main에 플랫폼 변경이 들어오면 [`platform-ec2`](../../../.github/workflows/platform-ec2.yml) 워크플로가 이미지를 ECR에 올리고 SSM으로 이 인스턴스에 배포해요.
+EKS 밖에서 플랫폼을 돌리는 구성이에요. 도쿄 리전(`ap-northeast-1`) t3.small 한 대에 `docker compose`로 DB·API·수집기·화면을 올리고, Caddy가 Let's Encrypt 인증서로 HTTPS를 붙여요. main에 플랫폼 변경이 들어오면 [`platform-ec2`](../../../.github/workflows/platform-ec2.yml) 워크플로가 이미지를 서울 ECR에 올리고 SSM으로 이 인스턴스에 배포해요.
+
+서울 계정의 온디맨드 vCPU 한도(8)를 EKS 노드와 Tailscale 라우터가 다 쓰고 있어서, 한도가 따로 매겨지는 도쿄에 온디맨드로 띄워요. 스팟처럼 회수될 걱정이 없어요. 홈랩까지 Tailscale 직접 연결로 40ms 안팎이에요.
 
 ```
 GitHub Actions ──OIDC──▶ 배포 역할 ──▶ ECR push
                                    └─▶ SSM send-command ──▶ EC2 deploy.sh ──▶ docker compose up
 EC2 수집기 ──Tailscale──▶ 온프렘 k3s
-          ──VPC 비공개 엔드포인트──▶ EKS
+          ──공개 엔드포인트(허용 IP)──▶ EKS (서울)
           ──공개 엔드포인트──▶ GKE
 ```
 
@@ -14,11 +16,11 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 
 | 자원 | 이름 | 비고 |
 |---|---|---|
-| 인스턴스 | 태그 `Name=oneport-platform`, `project=oneport` | t3.small, Amazon Linux 2023, gp3 20GiB 암호화, IMDSv2 필수, public 서브넷. user-data 는 [`user-data.sh`](user-data.sh). 온디맨드 vCPU 한도가 차 있으면 스팟(`persistent`, 회수 시 `stop`)으로 띄워요 |
+| 인스턴스 | 태그 `Name=oneport-platform`, `project=oneport` | 도쿄 기본 VPC, t3.small 온디맨드, Amazon Linux 2023, gp3 20GiB 암호화, IMDSv2 필수. user-data 는 [`user-data.sh`](user-data.sh) |
 | 고정 IP | 태그 `Name=oneport-platform` | 도메인 A 레코드가 가리키는 주소예요. 인스턴스를 멈췄다 켜도 바뀌지 않아요 |
 | 보안그룹 | `oneport-platform-sg` | 443은 화면을 볼 사람 IP만 열어요. 80은 Let's Encrypt 인증(HTTP-01)이 어디서 올지 몰라 전체에 열지만, Caddy가 인증 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
-| EKS 클러스터 보안그룹 | 규칙 하나 | `oneport-platform-sg` → 443. 수집기가 EKS 비공개 엔드포인트로 들어가요 |
-| EC2 역할 | `ghost-oneport-platform-ec2` | `AmazonSSMManagedInstanceCore` + `ghost/oneport-platform-*` ECR 읽기 |
+| EKS 공개 엔드포인트 | 허용 IP(`publicAccessCidrs`) | 이 인스턴스 고정 IP를 더해요. 리전이 달라 VPC 비공개 엔드포인트는 쓰지 않아요 |
+| EC2 역할 | `ghost-oneport-platform-ec2` | `AmazonSSMManagedInstanceCore` + 서울 `ghost/oneport-platform-*` ECR 읽기 |
 | 배포 역할 | `ghost-oneport-platform-deploy` | 아래 정책. GitHub OIDC 공급자가 있어야 만들 수 있어요 |
 
 팀 SSO 권한(`GhostInfraEngineer`)으로는 이름이 `ghost-`로 시작하고 권한 경계 `GhostWorkloadBoundary`를 붙인 역할만 만들 수 있어요. GitHub OIDC 공급자(`token.actions.githubusercontent.com`)는 계정 관리자가 한 번 만들어요.
@@ -55,9 +57,9 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
                 "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage"],
      "Resource": "arn:aws:ecr:ap-northeast-2:<ACCOUNT_ID>:repository/ghost/oneport-platform-*"},
     {"Effect": "Allow", "Action": "ssm:SendCommand",
-     "Resource": "arn:aws:ssm:ap-northeast-2::document/AWS-RunShellScript"},
+     "Resource": "arn:aws:ssm:ap-northeast-1::document/AWS-RunShellScript"},
     {"Effect": "Allow", "Action": "ssm:SendCommand",
-     "Resource": "arn:aws:ec2:ap-northeast-2:<ACCOUNT_ID>:instance/*",
+     "Resource": "arn:aws:ec2:ap-northeast-1:<ACCOUNT_ID>:instance/*",
      "Condition": {"StringEquals": {"ssm:resourceTag/project": "oneport"}}},
     {"Effect": "Allow", "Action": ["ssm:ListCommands", "ssm:ListCommandInvocations", "ssm:GetCommandInvocation"],
      "Resource": "*"}
@@ -72,11 +74,11 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 SSM으로 들어가요.
 
 ```sh
-aws ssm start-session --target <인스턴스 ID>
+aws ssm start-session --region ap-northeast-1 --target <인스턴스 ID>
 sudo -i
 ```
 
-**1. Tailscale**. 온프렘 k3s 로 가는 길이에요. 출력된 주소를 tailnet 관리자가 승인해요. AWS 라우터가 VPC 대역(`10.0.0.0/16`)을 광고해서, `user-data.sh`의 `oneport-vpc-bypass.service`가 VPC 안 트래픽(EKS 비공개 엔드포인트, VPC DNS)은 Tailscale 로 보내지 않게 해요.
+**1. Tailscale**. 온프렘 k3s 로 가는 길이에요. 출력된 주소를 tailnet 관리자가 승인해요.
 
 ```sh
 tailscale up --accept-routes --accept-dns=false --hostname=oneport-platform
@@ -112,7 +114,7 @@ EOF
 | 파일 | 만드는 법 |
 |---|---|
 | `onprem.kubeconfig` | `infra/install/onprem-k8s/generate-kubeconfig.sh`의 `hackathon-user` |
-| `aws.kubeconfig` | EKS에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-eks aws.kubeconfig`. 주소는 EKS 엔드포인트 그대로(VPC 안에서는 비공개 주소로 풀려요) |
+| `aws.kubeconfig` | EKS에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-eks aws.kubeconfig`. 주소는 EKS 공개 엔드포인트예요 |
 | `gcp.kubeconfig` | GKE에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-gke gcp.kubeconfig`. GKE 승인 네트워크를 좁혀 두었다면 고정 IP를 더해요 |
 
 워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요.

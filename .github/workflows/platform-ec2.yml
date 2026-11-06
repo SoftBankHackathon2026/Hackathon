@@ -1,4 +1,4 @@
-# main 에 플랫폼 변경이 들어오면 이미지 2개를 팀 계정 ECR 에 올리고, EC2(oneport-platform) 에 SSM 으로 배포한다.
+# main 에 플랫폼 변경이 들어오면 이미지 2개를 팀 계정 ECR(서울) 에 올리고, 도쿄 EC2(oneport-platform) 에 SSM 으로 배포한다.
 #
 # 준비 (platform/deploy/ec2/README.md)
 #   - 저장소 secret ONEPORT_DEPLOY_ROLE_ARN : GitHub OIDC 로 맡는 배포 역할. 공개 저장소라 계정 번호가 로그에 찍히지 않게 secret 으로 둔다
@@ -27,6 +27,7 @@ permissions:
 
 env:
   AWS_REGION: ap-northeast-2
+  INSTANCE_REGION: ap-northeast-1
   INSTANCE_TAG: oneport-platform
 
 jobs:
@@ -102,7 +103,7 @@ jobs:
             "bash \($d)/deploy.sh \($d) \($r) \($t)",
             "ls -1dt /opt/oneport/releases/* | tail -n +6 | xargs -r rm -rf"
           ]}' > params.json
-          id=$(aws ssm send-command \
+          id=$(aws ssm send-command --region "$INSTANCE_REGION" \
             --document-name AWS-RunShellScript \
             --targets "Key=tag:Name,Values=${INSTANCE_TAG}" "Key=tag:project,Values=oneport" \
             --parameters file://params.json \
@@ -111,11 +112,11 @@ jobs:
             --query Command.CommandId --output text)
           echo "command: $id"
           for _ in $(seq 60); do
-            status=$(aws ssm list-commands --command-id "$id" --query 'Commands[0].Status' --output text)
+            status=$(aws ssm list-commands --region "$INSTANCE_REGION" --command-id "$id" --query 'Commands[0].Status' --output text)
             case "$status" in Pending|InProgress|Delayed) sleep 10 ;; *) break ;; esac
           done
-          instance=$(aws ssm list-command-invocations --command-id "$id" --query 'CommandInvocations[0].InstanceId' --output text)
-          aws ssm get-command-invocation --command-id "$id" --instance-id "$instance" \
+          instance=$(aws ssm list-command-invocations --region "$INSTANCE_REGION" --command-id "$id" --query 'CommandInvocations[0].InstanceId' --output text)
+          aws ssm get-command-invocation --region "$INSTANCE_REGION" --command-id "$id" --instance-id "$instance" \
             --query '[StandardOutputContent, StandardErrorContent]' --output text
           echo "status: $status"
           [ "$status" = "Success" ]
