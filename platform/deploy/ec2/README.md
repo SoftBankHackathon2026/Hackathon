@@ -119,6 +119,26 @@ EOF
 
 워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요.
 
+## 접속 PIN (임시)
+
+화면 맨 앞에 숫자 4자리 비밀번호 화면을 둬요. PIN 을 맞히기 전에는 API(`/api/*`)가 모두 401 을 돌려줘서, 개발자 도구로 화면만 바꿔서는 데이터를 볼 수 없어요.
+
+- 맞히면 서명한 쿠키(HttpOnly·Secure·SameSite=Strict, 12시간)를 줘요. 서명 키는 API 프로세스가 뜰 때마다 새로 만들어서, 다시 배포하면 PIN 을 다시 입력해요.
+- 10분 안에 10번 틀리면 10분 동안 맞는 PIN 도 받지 않아요(전체 기준).
+- 보고기 ingest 와 클러스터 등록 스크립트 경로(`/api/v1/ingest/…`, `/api/v1/enrollments/scripts/…`, `/api/v1/enrollments/<id>/complete`)는 자기 토큰으로 인증해서 PIN 을 묻지 않아요.
+
+켜기·바꾸기 (인스턴스에서 root)
+
+```sh
+cd /opt/oneport && umask 077
+read -rs -p "PIN 4자리: " pin; echo
+printf 'ONEPORT_ACCESS_PIN=%s\n' "$pin" > secrets/access.env; pin=
+chmod 0400 secrets/access.env
+docker compose up -d oneport-api
+```
+
+끄기는 `secrets/access.env` 를 지우고 `docker compose up -d oneport-api` 해요. 코드를 걷어낼 때는 `controlplane/api/access_pin.py`, `main.py` 의 `access_pin.install` 한 줄, 프론트 `features/access-pin/`, `App.tsx` 의 `PinGate` 감싸기를 지우면 돼요.
+
 ## 배포
 
 - 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.
