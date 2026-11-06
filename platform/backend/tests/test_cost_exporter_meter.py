@@ -3,8 +3,9 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from kubernetes.client.exceptions import ApiException
 
-from controlplane.cost.collect import collect_inventory
+from controlplane.cost.collect import collect_inventory, list_nodes, summarize
 from controlplane.cost.config import OnPremSpec
 from controlplane.cost.estimator import price_onprem
 from controlplane.cost.meters import cost_exporter
@@ -128,3 +129,63 @@ def test_default_lister_reads_labelled_configmaps(monkeypatch):
     monkeypatch.setattr(cost_exporter.client, "CoreV1Api", FakeCore)
     assert cost_exporter.list_readings(ONPREM, "oneport-cost") == [{"k": "v"}, {}]
     assert calls == [("api", "client:onprem"), ("oneport-cost", "oneport.io/cost-reading=node")]
+
+
+class FakeCore:
+    def __init__(self, nodes_status=None, readings=()):
+        self.nodes_status = nodes_status
+        self.readings = readings
+        self.asked = []
+
+    def list_node(self):
+        if self.nodes_status:
+            raise ApiException(status=self.nodes_status)
+        return SimpleNamespace(items=["node-object"])
+
+    def list_namespaced_config_map(self, namespace, label_selector):
+        self.asked.append((namespace, label_selector))
+        return SimpleNamespace(items=[SimpleNamespace(data=d) for d in self.readings])
+
+
+def exporter_reading(node, vcpus, memory_bytes):
+    return {
+        "reading.json": json.dumps({"node": node, "vcpus": vcpus, "memory_bytes": memory_bytes})
+    }
+
+
+def test_nodes_come_from_the_api_when_readable():
+    core = FakeCore()
+    assert list_nodes(core, lambda n: {"serialized": n}) == [{"serialized": "node-object"}]
+    assert core.asked == []
+
+
+def test_forbidden_node_list_falls_back_to_exporter_specs():
+    gib = 2**30
+    core = FakeCore(
+        nodes_status=403,
+        readings=[exporter_reading("k3s-master", 2, 4 * gib), {}, {"reading.json": "{"}],
+    )
+    nodes = list_nodes(core, lambda n: n)
+    assert core.asked == [("oneport-cost", "oneport.io/cost-reading=node")]
+    assert nodes == [
+        {
+            "metadata": {"name": "k3s-master"},
+            "status": {"allocatable": {"cpu": "2", "memory": str(4 * gib)}},
+        }
+    ]
+    priced, _, _ = summarize(nodes, [], [])
+    assert priced[0].name == "k3s-master"
+    assert priced[0].vcpu == 2
+    assert priced[0].memory_gib == 4
+
+
+def test_forbidden_node_list_without_exporter_still_fails():
+    with pytest.raises(ApiException):
+        list_nodes(FakeCore(nodes_status=403), lambda n: n)
+
+
+def test_other_node_list_errors_do_not_fall_back():
+    core = FakeCore(nodes_status=500, readings=[exporter_reading("a", 2, 1)])
+    with pytest.raises(ApiException):
+        list_nodes(core, lambda n: n)
+    assert core.asked == []

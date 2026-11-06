@@ -1,0 +1,79 @@
+- name: Read cluster identity
+  hosts: controllers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+- name: Operate only selected node
+  hosts: openbao_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+  - name: Acquire target operation lock
+    openbao_lock:
+      action: acquire
+      owner: '{{ ob_lock_owner }}'
+  - name: Perform owned operation
+    block:
+    - ansible.builtin.import_tasks: ../tasks/preflight.yml
+    - name: Require owned install for verification writes
+      ansible.builtin.assert:
+        that:
+        - ob.target.mode == 'reuse' or host_check.report.owned
+        quiet: true
+    - name: Prepare private product control state
+      ansible.builtin.file:
+        path: '{{ ob_state }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+    - name: Copy reuse trust anchor
+      ansible.builtin.copy:
+        dest: '{{ ob_state }}/trust.pem'
+        content: '{{ ob_credentials.reuse_ca }}'
+        owner: root
+        group: root
+        mode: '0644'
+      when: ob.target.mode == 'reuse'
+    - name: Seed test value with migration identity
+      openbao_manage:
+        action: verify_seed
+        config: '{{ ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict }}'
+        state_dir: '{{ ob_state }}'
+        credentials: '{{ ob_credentials }}'
+    - name: Restart only when explicitly selected
+      ansible.builtin.systemd_service:
+        name: openbao.service
+        state: restarted
+      when: ob.verification.restart
+    - name: Wait after restart
+      ansible.builtin.wait_for:
+        host: '{{ ob_endpoint_host }}'
+        port: '{{ ob.target.port }}'
+        timeout: 60
+      when: ob.verification.restart
+    - name: Verify authentication and persistence
+      openbao_manage:
+        action: verify
+        config: '{{ (ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict) | combine({''restart_performed'':
+          ob.verification.restart}) }}'
+        state_dir: '{{ ob_state }}'
+        credentials: '{{ ob_credentials }}'
+    always:
+    - name: Release only own operation lock
+      openbao_lock:
+        action: release
+        owner: '{{ ob_lock_owner }}'
+- name: Check Kubernetes node after OpenBao operation
+  hosts: controllers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+  - name: Require selected Kubernetes node to remain ready
+    ansible.builtin.assert:
+      that:
+      - (cluster_result.report.nodes | selectattr('name', 'equalto', ob.target.node_name) | first).ready
+      quiet: true

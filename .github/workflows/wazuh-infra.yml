@@ -28,6 +28,8 @@ jobs:
         run: |
           ruff check --isolated --select E9,F,I migration/wazuh_infra tests/wazuh_infra
           ruff format --check migration/wazuh_infra tests/wazuh_infra
+      - name: Install collections for merged Keycloak regression tests
+        run: ansible-galaxy collection install -r migration/keycloak_infra/ansible/requirements.yml
       - name: Run contracts, actual Ansible and existing migration checks
         run: python -m pytest -ra
       - name: Build and inspect package assets

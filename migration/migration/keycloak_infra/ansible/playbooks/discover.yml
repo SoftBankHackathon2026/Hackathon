@@ -1,0 +1,34 @@
+- name: Discover cluster Keycloak candidates
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read cluster inventory
+      ansible.builtin.import_tasks: ../tasks/cluster.yml
+
+- name: Discover native Keycloak services on configured nodes
+  hosts: keycloak_nodes
+  gather_facts: false
+  tasks:
+    - name: Resolve current node identity
+      ansible.builtin.set_fact:
+        kc_node: "{{ hostvars['localhost'].kc_cluster.nodes | selectattr('name', 'equalto', node_name) | selectattr('uid', 'equalto', node_uid) | first | default({}) }}"
+    - name: Require matching Kubernetes membership
+      ansible.builtin.assert:
+        that: kc_node | length > 0
+        fail_msg: NODE_MEMBERSHIP_CHANGED
+    - name: Read host services without starting or stopping them
+      keycloak_host_info:
+        node: "{{ kc_node }}"
+      register: kc_host
+      no_log: true
+    - name: Require matching remote machine
+      ansible.builtin.assert:
+        that: kc_host.report.checks | rejectattr('status', 'equalto', 'pass') | list | length == 0
+        fail_msg: SSH_NODE_IDENTITY_MISMATCH
+    - name: Save host candidate report
+      ansible.builtin.copy:
+        content: "{{ {'node_name': node_name, 'candidates': kc_host.report.candidates, 'coverage': kc_host.report.coverage, 'checks': kc_host.report.checks, 'detection_method': kc_host.report.detection_method} | to_json }}"
+        dest: "{{ kc_report_dir }}/host-{{ inventory_hostname }}.json"
+        mode: '0600'
+      delegate_to: localhost
+      become: false

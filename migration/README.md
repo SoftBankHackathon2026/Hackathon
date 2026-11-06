@@ -3,6 +3,13 @@
 `업무-아젠다/01-DB-이전-계획.md` 의 "구성과 INSERT 워커", "온프렘에서 AWS로", "전환과 복구", "데이터 검증" 절을 그대로 코드로 옮긴 것이다.
 INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을 한 디렉터리에 모았다.
 
+Keycloak 인증 기반의 탐색·점검·호스트 설치는 독립 명령
+`python -m migration.keycloak_infra`로 제공한다.
+[사용법과 플랫폼 입출력 규약](keycloak-infra/README.md)을 참고한다.
+[주요 구현 디렉토리의 설치 흐름·구성도·수집 정보 안내](migration/keycloak_infra/README.md)에서
+기존 환경 조사 방식과 신규 설치 후 반환 정보의 범위를 확인할 수 있다.
+이 명령은 계정·IAM 정책 이관이나 기존 데이터베이스 전환을 실행하지 않는다.
+
 > **주의: 이 코드는 아직 실제 클러스터(온프렘 k3s, 기존 Postgres, RDS, Kafka Connect)에서 실행·검증하지 않았다.**
 > 로컬에서는 pytest 단위 테스트와 `docker run postgres:16-alpine` 통합 테스트만 통과했다. Debezium/Kafka Connect 와의 결합은 미검증이다.
 
@@ -249,6 +256,14 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 - COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
 - 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.
 
+
+## Harbor 온프레미스 목적지 준비
+
+별도 Ansible 모듈 `python -m migration.harbor_infra`로 기존 Harbor 조사·신규 설치·접근권한·노드 인증서 신뢰 설정을 준비합니다. 실제 업무 이미지 복사는 수행하지 않습니다. [설치와 플랫폼 호출 안내](docs/harbor-infra/README.md)를 참조하십시오.
+
+# OpenBao 온프레미스 준비
+
+`python -m migration.openbao_infra`로 기존 OpenBao 탐색·점검, 선택한 Ubuntu 노드 한 대의 운영체제 서비스 설치, 인증·접근 권한과 고정 키 인계를 수행합니다. 실제 비밀값 이관과 Keycloak 서버 설치는 포함하지 않습니다. [사용법과 플랫폼 연동](docs/openbao-infra/README.md), [검증 범위](docs/openbao-infra/VALIDATION.md), [예시 설정](config.openbao-infra.example.yaml)을 참고하십시오.
 
 # Wazuh 온프레미스 감사로그 기반 준비
 

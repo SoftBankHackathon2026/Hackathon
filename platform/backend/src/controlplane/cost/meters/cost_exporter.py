@@ -10,6 +10,7 @@ from controlplane.domain.fleet import EnvironmentConfig
 from controlplane.integrations.kube import api_client
 
 LABEL_SELECTOR = "oneport.io/cost-reading=node"
+DEFAULT_NAMESPACE = "oneport-cost"
 DATA_KEY = "reading.json"
 METHOD_NOTES = {"model": "CPU 사용률 기반 추정", "rapl": "RAPL 전력 측정"}
 
@@ -52,7 +53,7 @@ class CostExporterMeter:
         lister: ConfigMapLister = list_readings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        self._namespace = str(options.get("namespace", "oneport-cost"))
+        self._namespace = str(options.get("namespace", DEFAULT_NAMESPACE))
         self._max_age = timedelta(seconds=float(options.get("max_age_seconds", 600)))
         self._field = "power_watts" if options.get("use") == "current" else "average_watts"
         self._lister = lister

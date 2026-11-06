@@ -6,7 +6,7 @@
 
 ## 코드 위치와 기존 변경 요청
 
-`migration/migration/wazuh_infra/`의 독립 명령으로 제공합니다. 최신 main에서 분기했으며, 열려 있는 [Keycloak 변경 요청 #27](https://github.com/SoftBankHackathon2026/Hackathon/pull/27)과 [OpenBao 변경 요청 #28](https://github.com/SoftBankHackathon2026/Hackathon/pull/28)의 입력 검증·Ansible 호출·결과 반환 방식을 참고했습니다. 두 변경을 이 브랜치에 합치거나 해당 파일에 실행 의존성을 만들지 않았습니다.
+`migration/migration/wazuh_infra/`의 독립 명령으로 제공합니다. main에 반영된 [Keycloak 변경 요청 #27](https://github.com/SoftBankHackathon2026/Hackathon/pull/27)·[OpenBao 변경 요청 #28](https://github.com/SoftBankHackathon2026/Hackathon/pull/28)·[Harbor 변경 요청 #49](https://github.com/SoftBankHackathon2026/Hackathon/pull/49)와 공통 의존성·배포 자원을 함께 보존합니다. 입력 검증·Ansible 호출·결과 반환의 형식을 맞추되, 다른 설치 모듈을 직접 호출하지 않습니다.
 
 `pyproject.toml`의 선택 의존성과 하위 패키지 탐색, `MANIFEST.in`은 다른 설치 모듈과 공통으로 추가하는 위치이므로 해당 변경 요청을 합칠 때 각 모듈의 항목을 모두 보존해야 합니다. 기존 데이터베이스 이관의 기본 의존성에는 추가하지 않고 `wazuh-infra` 선택 묶음에 분리했습니다.
 

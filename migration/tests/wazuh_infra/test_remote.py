@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,7 +40,6 @@ def test_atomic_write_preserves_permissions_and_same_contents(remote_modules, tm
 
 
 def test_source_pagination_is_bounded_and_partial(remote_modules, monkeypatch):
-    import boto3
 
     _, helpers, *_ = remote_modules
     calls = []
@@ -53,10 +53,16 @@ def test_source_pagination_is_bounded_and_partial(remote_modules, monkeypatch):
                 "NextContinuationToken": "next",
             }
 
-    monkeypatch.setattr(
-        boto3,
-        "Session",
-        lambda **kwargs: SimpleNamespace(client=lambda *args, **kw: S3()),
+    monkeypatch.setitem(
+        sys.modules,
+        "boto3",
+        SimpleNamespace(
+            Session=lambda **kwargs: SimpleNamespace(client=lambda *args, **kw: S3())
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "botocore", SimpleNamespace())
+    monkeypatch.setitem(
+        sys.modules, "botocore.config", SimpleNamespace(Config=lambda **kwargs: kwargs)
     )
     c = {
         "sources": [

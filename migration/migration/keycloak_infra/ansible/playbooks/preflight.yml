@@ -1,0 +1,19 @@
+- name: Read installation cluster and validate supplied certificates
+  hosts: localhost
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Read current node membership
+      ansible.builtin.import_tasks: ../tasks/cluster.yml
+    - name: Validate certificates
+      ansible.builtin.import_tasks: ../tasks/certificate.yml
+
+- name: Inspect installation target without modifying services
+  hosts: keycloak_nodes
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - ../versions.yml
+  tasks:
+    - name: Check installation prerequisites
+      ansible.builtin.import_tasks: ../tasks/preflight.yml
