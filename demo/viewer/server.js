@@ -2,6 +2,8 @@
 // 시연용 3환경 동시 보기 뷰어. 외부 의존성 없음 (Node 22 내장 모듈만).
 //   node demo/viewer/server.js                      http://127.0.0.1:5050
 //   PORT=6060 VIEWER_CONFIG=./my.json node demo/viewer/server.js
+// 시연은 환경마다 DB 가 다르다(온프렘 Postgres → AWS RDS CDC). 같은 DB 를 보면
+// 칸마다 수치가 같아 전환이 숫자로 드러나지 않는다.
 // 설정 파일은 요청마다 다시 읽는다 → 현장에서 주소를 고치면 재시작 없이 반영된다
 // (브라우저는 새로고침 한 번). 앱에 CORS 를 추가하지 않으려고 서버가 대신 요청한다.
 const fs = require('node:fs');

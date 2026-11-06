@@ -9,7 +9,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createViewerServer} = require('../server');
 const {
-  classifyPoll, createIngestTracker, noResponseDetail,
+  classifyPoll, createIngestTracker, createVersionTracker, noResponseDetail,
+  splitChartSegments, versionColor,
 } = require('../public/live-model');
 
 const listen = (server) => new Promise((resolve) => {
@@ -133,9 +134,9 @@ test('environment colors beat the default bar color', () => {
   const page = fs.readFileSync(
       path.join(__dirname, '../public/index.html'), 'utf8');
   // A class on the default rule would outrank [data-environment] and gray out
-  // every bar.
-  assert.match(page, /^\s*rect \{ --environment:/m);
-  assert.doesNotMatch(page, /\.\w+ rect \{/);
+  // every segment.
+  assert.match(page, /^\s*g \{ --environment:/m);
+  assert.doesNotMatch(page, /\.\w+ g \{/);
 });
 
 test('a malformed request path cannot kill the viewer', async (t) => {
@@ -234,7 +235,7 @@ function fakeElement() {
       contains: (name) => classes.has(name),
     },
     setAttribute(name, value) { this.attributes[name] = String(value); },
-    append(child) { this.children.push(child); },
+    append(...children) { this.children.push(...children); },
     replaceChildren(...children) { this.children = children; },
   };
 }
@@ -255,7 +256,8 @@ async function openViewer(answers, environment = {}) {
   };
   const page = new Map();
   const context = {
-    createIngestTracker, classifyPoll, noResponseDetail,
+    createIngestTracker, createVersionTracker, classifyPoll, noResponseDetail,
+    splitChartSegments, versionColor,
     document: {
       getElementById(id) {
         if (id === 'panel-template') {
@@ -324,7 +326,7 @@ test('the panel shows a live answer and loads the real page', async () => {
   assert.equal(screen.part('status').textContent, '실시간');
   assert.equal(screen.part('total').textContent, '1,010');
   assert.equal(screen.part('rate').textContent, '10.0');
-  assert.equal(screen.part('version').textContent, 'aaaaaaa');
+  assert.equal(screen.part('version').children[0].textContent, 'aaaaaaa');
   assert.equal(screen.part('frame').src, 'http://a/');
   assert.equal(screen.part('banner').hidden, true);
 });
@@ -413,7 +415,17 @@ test('the config keeps the public address apart from the polled one',
       assert.equal(environments[1].publicUrl, null);
     });
 
-test('W switches the panels to the recent requests list', async () => {
+test('the version has its own row so a canary mix is never cut off', () => {
+  const page = fs.readFileSync(
+      path.join(__dirname, '../public/index.html'), 'utf8');
+  const meta = page.slice(page.indexOf('<div class="meta">'),
+      page.indexOf('<div class="version-row">'));
+  assert.doesNotMatch(meta, /data-part="version"/);
+  // A line rule would also repaint the version marks.
+  assert.doesNotMatch(page, /\.chart line \{/);
+});
+
+test('the list shows by default and W brings up the real page', async () => {
   const row = {request_id_prefix: 'aaaaaaaa', run_id: '<b>x</b>', phase: 'p',
     created_at: '2026-11-06T00:00:00.000Z'};
   const screen = await openViewer([liveAnswer(1, 0, {recent: [row]})]);
@@ -421,7 +433,45 @@ test('W switches the panels to the recent requests list', async () => {
   assert.equal(cell.textContent, 'aaaaaaaa');
   assert.equal(screen.part('rows').children[0].children[1].textContent,
       '<b>x</b>');
+  const {classList} = screen.context.document.body;
+  assert.equal(classList.contains('frame-view'), false);
   screen.context.keydown({code: 'KeyW'});
-  assert.equal(screen.context.document.body.classList.contains('list-view'),
-      true);
+  assert.equal(classList.contains('frame-view'), true);
+  screen.context.keydown({code: 'KeyW'});
+  assert.equal(classList.contains('frame-view'), false);
+});
+
+test('the rate falls to 0.0 at once while the pause banner is up', async () => {
+  const screen = await openViewer([liveAnswer(100, -1000), liveAnswer(110, 0),
+    liveAnswer(110, 500, {writes_paused: true})]);
+  await screen.next();
+  screen.context.render();
+  assert.equal(screen.part('rate').textContent, '10.0');
+  await screen.next();
+  screen.context.render();
+  assert.equal(screen.part('rate').textContent, '0.0');
+});
+
+test('a canary shows shares; a replacement raises the notice', async () => {
+  const answer = (version) => liveAnswer(1, 0, {version});
+  const canary = await openViewer(['old', 'new', 'old', 'new'].map(answer));
+  for (let poll = 0; poll < 3; poll++) await canary.next();
+  canary.context.render();
+  assert.deepEqual(canary.part('version').children.map((c) => c.textContent),
+      ['new 50%', 'old 50%']);
+  const swap = await openViewer(
+      ['old', 'new', 'new', 'new', 'new'].map(answer));
+  for (let poll = 0; poll < 4; poll++) await swap.next();
+  swap.context.render();
+  assert.equal(swap.part('version-notice').textContent, '버전 변경 old → new');
+  assert.equal(swap.part('version').classList.contains('changed'), true);
+});
+
+test('versions and chart segments match sample-app', () => {
+  // Pinned to the same values as sample-app test/live-page.test.js.
+  assert.equal(versionColor('d697a40'), '#a3e635');
+  assert.equal(versionColor('a1b2c3d'), '#f472b6');
+  assert.deepEqual(splitChartSegments([{environment: 'aws', rate: 1}, null]),
+      [{environment: 'aws', firstIndex: 0, rates: [1]}]);
+  assert.deepEqual(createVersionTracker().shares(), []);
 });
