@@ -1,0 +1,143 @@
+- ansible.builtin.import_tasks: preflight.yml
+- name: Create private installation state
+  ansible.builtin.file:
+    path: '{{ ob_state }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+- name: Bind installation to exact node
+  ansible.builtin.copy:
+    dest: '{{ ob_state }}/installation.json'
+    content: '{{ {''installation_id'': ob.target.installation_id, ''node_uid'': node_uid, ''machine_id'': host_check.report.machine_id,
+      ''settings_digest'': ob_settings_digest} | to_json }}'
+    owner: root
+    group: root
+    mode: '0600'
+    force: false
+- name: Install runtime prerequisites
+  ansible.builtin.apt:
+    name:
+    - ca-certificates
+    - python3-cryptography
+    - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+- name: Create dedicated service user
+  ansible.builtin.user:
+    name: openbao
+    system: true
+    create_home: false
+    home: /var/lib/openbao
+    shell: /usr/sbin/nologin
+- name: Create root controlled configuration directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: openbao
+    mode: '0750'
+  loop:
+  - /etc/openbao
+  - /etc/openbao/keys
+  - /opt/openbao
+  - /opt/openbao/2.7.2
+- name: Create dedicated persistent directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: '0700'
+  loop:
+  - /var/lib/openbao
+  - /var/log/openbao
+- name: Determine architecture
+  ansible.builtin.command:
+    argv:
+    - uname
+    - -m
+  register: architecture
+  changed_when: false
+- name: Require supported architecture
+  ansible.builtin.assert:
+    that:
+    - architecture.stdout in ob_releases
+    quiet: true
+- name: Fetch fixed verified OpenBao archive
+  ansible.builtin.get_url:
+    url: '{{ ob_releases[architecture.stdout].url }}'
+    checksum: '{{ ob_releases[architecture.stdout].checksum }}'
+    dest: '{{ ob_state }}/openbao.tar.gz'
+    owner: root
+    group: root
+    mode: '0600'
+- name: Extract owned version only
+  ansible.builtin.unarchive:
+    src: '{{ ob_state }}/openbao.tar.gz'
+    dest: /opt/openbao/2.7.2
+    remote_src: true
+    creates: /opt/openbao/2.7.2/bao
+    owner: root
+    group: root
+- name: Prepare durable key and matching certificate
+  openbao_material:
+    config: '{{ ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict }}'
+    host: '{{ ob_endpoint_host }}'
+    credentials: '{{ ob_credentials }}'
+- name: Install trust anchor for product calls
+  ansible.builtin.copy:
+    dest: /etc/openbao/trust.pem
+    content: '{{ ob_credentials.tls_ca }}'
+    owner: root
+    group: root
+    mode: '0644'
+  when: ob.tls.mode == 'provided'
+- name: Install immutable server configuration
+  ansible.builtin.template:
+    src: ../templates/openbao.hcl.j2
+    dest: /etc/openbao/openbao.hcl
+    owner: root
+    group: openbao
+    mode: '0640'
+    force: false
+- name: Install service unit
+  ansible.builtin.template:
+    src: ../templates/openbao.service.j2
+    dest: /etc/systemd/system/openbao.service
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+- name: Install audit log rotation
+  ansible.builtin.template:
+    src: ../templates/openbao.logrotate.j2
+    dest: /etc/logrotate.d/openbao
+    owner: root
+    group: root
+    mode: '0644'
+    force: false
+- name: Start only OpenBao service
+  ansible.builtin.systemd_service:
+    name: openbao.service
+    enabled: true
+    daemon_reload: true
+    state: started
+- name: Wait for HTTPS listener
+  ansible.builtin.wait_for:
+    host: '{{ ob_endpoint_host }}'
+    port: '{{ ob.target.port }}'
+    timeout: 60
+- name: Initialize only owned new instance
+  openbao_manage:
+    action: bootstrap
+    config: '{{ ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict }}'
+    state_dir: '{{ ob_state }}'
+    credentials: '{{ ob_credentials }}'
+- name: Fetch public server certificate using verified SSH
+  ansible.builtin.fetch:
+    src: '{{ ''/etc/openbao/trust.pem'' if ob.tls.mode == ''provided'' else ''/etc/openbao/server.crt'' }}'
+    dest: '{{ ob_work }}/trusted-ca.pem'
+    flat: true
+  no_log: true

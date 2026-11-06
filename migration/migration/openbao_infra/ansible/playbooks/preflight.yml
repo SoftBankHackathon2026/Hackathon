@@ -1,0 +1,13 @@
+- name: Read cluster identity
+  hosts: controllers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+- name: Operate only selected node
+  hosts: openbao_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/preflight.yml

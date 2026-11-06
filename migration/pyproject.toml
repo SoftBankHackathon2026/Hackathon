@@ -13,6 +13,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+openbao-infra = [
+    "ansible-core==2.20.11",
+    "kubernetes==37.0.2",
+    "cryptography==50.0.2",
+]
 keycloak-infra = [
     "ansible-core>=2.20,<2.21",
     "kubernetes>=37.0.2,<38",
@@ -22,14 +27,29 @@ dev = [
     "pytest>=8.0",
 ]
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 include = ["migration", "migration.*"]
+exclude = ["*.__pycache__"]
 namespaces = false
 
 [tool.setuptools.package-data]
+"migration.openbao_infra" = [
+    "ansible/ansible.cfg",
+    "ansible/releases.json",
+    "ansible/library/*.py",
+    "ansible/module_utils/*.py",
+    "ansible/callback_plugins/*.py",
+    "ansible/playbooks/*.yml",
+    "ansible/tasks/*.yml",
+    "ansible/templates/*.j2",
+]
 "migration.keycloak_infra" = ["ansible/**/*.py", "ansible/**/*.yml", "ansible/**/*.j2", "ansible/ansible.cfg"]
 
 [tool.setuptools.exclude-package-data]
+"*" = ["**/*.pyc", "**/__pycache__/*"]
 "migration.keycloak_infra" = ["**/__pycache__/*", "**/*.pyc"]
 
 [tool.pytest.ini_options]
@@ -37,4 +57,5 @@ testpaths = ["tests"]
 addopts = "-q -ra"
 markers = [
     "integration: 실제 PostgreSQL이 필요한 테스트 (MIGRATION_TEST_DSN 설정 시 실행)",
+    "openbao_live: OPENBAO_TEST_BINARY로 제공한 실제 OpenBao 실행 파일을 사용하는 로컬 시험",
 ]
