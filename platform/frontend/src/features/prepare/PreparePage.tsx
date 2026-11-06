@@ -1,6 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { PageHeader, Section } from "../../components/PageKit";
 import { PageActions } from "../../components/PageSlots";
+import { ProviderLogo } from "../../components/ProviderLogo";
+import { fleetQueryOptions } from "../migrations/queries";
 import { Segmented } from "../../components/Segmented";
 import { StatusDot } from "../../components/StatusDot";
 import {
@@ -32,14 +35,69 @@ import {
 
 type ShellKind = Exclude<EnvKind, "gcp">;
 
+const STEPS = [
+  {
+    id: "connect",
+    title: "환경 연결",
+    detail: "출발/도착 환경을 플랫폼에 등록",
+  },
+  { id: "apps", title: "앱 선택", detail: "옮길 앱과 데이터 고르기" },
+  {
+    id: "precheck",
+    title: "사전 점검",
+    detail: "용량/권한/보안 정책 확인 후 이전 시작",
+  },
+];
+
+const ROLE_LABELS = { legacy: "출발", target: "도착" } as const;
+
+/** 설정 단계 하나: 번호(끝나면 체크) + 제목 + 설명 + 내용. */
+function SetupTask({
+  n,
+  title,
+  description,
+  done,
+  children,
+}: {
+  n: number;
+  title: string;
+  description?: string;
+  done?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <li className={`setup-task${done ? " done" : ""}`}>
+      <span className="setup-no" aria-hidden="true">
+        {done ? (
+          <svg viewBox="0 0 16 16">
+            <path d="M3.5 8.5l3 3 6-7" />
+          </svg>
+        ) : (
+          n
+        )}
+      </span>
+      <div className="setup-task-body">
+        <h3>{title}</h3>
+        {description && <p className="setup-desc">{description}</p>}
+        <div className="setup-content">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * 새 이전 준비(Datadog 연동 설정 방식).
+ * 왼쪽: 전체 단계와 이미 연결된 환경. 오른쪽: 번호 붙은 설정 단계. 아래: 진행 상태와 다음 버튼.
+ */
 export function PreparePage({
   onNavigate,
 }: {
   onNavigate: (hash: string) => void;
 }) {
+  const fleet = useQuery(fleetQueryOptions()).data;
   const [kind, setKind] = useState<ShellKind>("kubernetes");
   const [k8s, setK8s] = useState<KubernetesInput>({
-    name: "onprem-busan",
+    name: "onprem-seoul",
     role: "source",
     host: "",
     port: "22",
@@ -66,6 +124,10 @@ export function PreparePage({
     null,
   );
   const input = kind === "kubernetes" ? k8s : aws;
+  const formReady =
+    kind === "kubernetes" ? kubernetesReady(k8s) : Boolean(aws.name.trim());
+  const ran = kind === "kubernetes" ? checked : Boolean(ticket);
+  const connected = fleet?.environments.filter((e) => e.connected) ?? [];
 
   function choose(next: ShellKind) {
     setKind(next);
@@ -77,180 +139,266 @@ export function PreparePage({
   return (
     <div className="pk-page">
       <PageActions>
-        <span className="pill">데모 화면</span>
+        <span className="refresh refresh-idle">
+          <i aria-hidden="true" />
+          데모 화면
+        </span>
       </PageActions>
       <PageHeader
-        title="마이그레이션"
-        tabs={[
-          { id: "overview", label: "개요" },
-          { id: "prepare", label: "준비" },
-        ]}
-        active="prepare"
-        onTab={(id) => id === "overview" && onNavigate("#migrations")}
+        title="새 이전 준비"
+        meta="환경을 연결하고 옮길 앱을 고르면, 사전 점검을 거쳐 이전 작업이 시작돼요."
       />
-      <ol className="prep-steps" aria-label="준비 단계">
-        <li aria-current="step">
-          <span className="prep-step-no">1</span>환경 연결
-        </li>
-        <li className={result ? "" : "disabled"}>
-          <span className="prep-step-no">2</span>앱 선택
-        </li>
-      </ol>
+      <div className="setup">
+        <aside className="setup-rail" aria-label="준비 단계">
+          <ol className="setup-steps">
+            {STEPS.map((step, i) => {
+              const state = i === 0 ? (result ? "done" : "current") : "todo";
+              return (
+                <li
+                  key={step.id}
+                  className={`setup-step ${state}`}
+                  aria-current={state === "current" ? "step" : undefined}
+                >
+                  <span className="setup-no" aria-hidden="true">
+                    {state === "done" ? (
+                      <svg viewBox="0 0 16 16">
+                        <path d="M3.5 8.5l3 3 6-7" />
+                      </svg>
+                    ) : (
+                      i + 1
+                    )}
+                  </span>
+                  <span className="setup-step-text">
+                    <b>{step.title}</b>
+                    <small>{step.detail}</small>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+          <section className="setup-connected">
+            <h3>
+              연결된 환경 <span>{connected.length}</span>
+            </h3>
+            {connected.length === 0 ? (
+              <p className="pk-empty">아직 없어요.</p>
+            ) : (
+              <ul>
+                {connected.map((env) => (
+                  <li key={env.id}>
+                    <ProviderLogo provider={env.provider} />
+                    <span className="rule-text">
+                      <span className="rule-title">{env.name}</span>
+                      <span className="rule-sub">
+                        {ROLE_LABELS[env.role]}, {env.region}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </aside>
 
-      <Section
-        title="환경 종류"
-        description="옮길 출발 환경이나 도착 환경을 고르세요. 클러스터 정보는 직접 입력하지 않고, 그 환경에 명령이 되는 셸에서 읽어 와요."
-      >
-        <div className="prep-kinds" role="radiogroup" aria-label="환경 종류">
-          {KIND_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={kind === option.value}
-              disabled={option.disabled}
-              className="prep-kind"
-              onClick={() =>
-                !option.disabled && choose(option.value as ShellKind)
+        <Section title="환경 연결" meta="1 / 3 단계">
+          <ol className="setup-tasks">
+            <SetupTask
+              n={1}
+              title="환경 종류"
+              description="옮길 출발 환경이나 도착 환경을 고르세요."
+              done
+            >
+              <div
+                className="setup-kinds"
+                role="radiogroup"
+                aria-label="환경 종류"
+              >
+                {KIND_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={kind === option.value}
+                    disabled={option.disabled}
+                    className="setup-kind"
+                    onClick={() =>
+                      !option.disabled && choose(option.value as ShellKind)
+                    }
+                  >
+                    <ProviderLogo
+                      provider={
+                        option.value === "kubernetes" ? "onprem" : option.value
+                      }
+                    />
+                    <span className="rule-text">
+                      <span className="rule-title">
+                        {option.title}
+                        {option.disabled && (
+                          <span className="setup-soon">준비 중</span>
+                        )}
+                      </span>
+                      <span className="rule-sub">
+                        {option.shell}, {option.detail}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </SetupTask>
+
+            <SetupTask
+              n={2}
+              title="연결 정보"
+              description={
+                kind === "kubernetes"
+                  ? "kubectl 이 되는 접속지의 SSH 정보와 kubeconfig 만 주세요. 노드/CPU/메모리 같은 나머지는 플랫폼이 그 셸에서 읽어 와요."
+                  : "이름과 리전, 읽기 권한 범위만 정해요. 계정 정보는 스크립트가 읽어 와요."
               }
+              done={formReady}
             >
-              <span className="prep-radio" aria-hidden="true" />
-              <span className="prep-kind-text">
-                <strong>{option.title}</strong>
-                <small>
-                  {option.shell} · {option.detail}
-                </small>
-              </span>
-            </button>
-          ))}
-        </div>
-      </Section>
+              {kind === "kubernetes" ? (
+                <KubernetesForm value={k8s} onChange={setK8s} />
+              ) : (
+                <AwsForm value={aws} onChange={setAws} />
+              )}
+            </SetupTask>
 
-      <Section
-        title="플랫폼에 줄 정보"
-        description={
-          kind === "kubernetes"
-            ? "kubectl 이 되는 접속지의 SSH 정보와 kubeconfig 를 주세요. 노드 수·CPU·메모리 같은 나머지는 플랫폼이 그 셸에서 읽어 와요."
-            : "이름과 리전, 읽기 권한 범위만 정해요. 계정 정보는 스크립트가 읽어 와요."
-        }
-      >
-        {kind === "kubernetes" ? (
-          <KubernetesForm value={k8s} onChange={setK8s} />
-        ) : (
-          <AwsForm value={aws} onChange={setAws} />
-        )}
-        <div className="prep-actions">
-          {kind === "kubernetes" ? (
-            <button
-              type="button"
-              className="primary"
-              disabled={!kubernetesReady(k8s)}
-              onClick={() => {
-                setChecked(true);
-                setResult(demoResult("kubernetes", k8s));
-              }}
+            <SetupTask
+              n={3}
+              title={
+                kind === "kubernetes" ? "연결 확인" : "셸에서 등록 명령 실행"
+              }
+              description={
+                kind === "kubernetes"
+                  ? "플랫폼이 접속지에 SSH 로 들어가 kubectl 로 클러스터를 읽어요."
+                  : "aws 명령이 되는 셸에서 아래 명령을 차례로 실행하세요."
+              }
+              done={ran}
             >
-              {checked ? "다시 연결 확인" : "연결 확인"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="primary"
-              disabled={!input.name.trim()}
-              onClick={() => {
-                setTicket(demoTicket());
-                setResult(null);
-              }}
-            >
-              {ticket ? "등록 명령 다시 만들기" : "등록 명령 만들기"}
-            </button>
-          )}
-          {kind === "kubernetes" && !kubernetesReady(k8s) && (
-            <span className="prep-note">
-              접속지 주소, 사용자, 인증 정보, kubeconfig 를 모두 채우면 확인할
-              수 있어요.
-            </span>
-          )}
-          {kind === "aws" && ticket && (
-            <span className="prep-note">
-              {TOKEN_TTL_MINUTES}분 동안 한 번만 쓸 수 있어요. 새로 만들면 이전
-              명령은 쓸 수 없어요.
-            </span>
-          )}
-        </div>
-      </Section>
+              <div className="setup-run">
+                {kind === "kubernetes" ? (
+                  <button
+                    type="button"
+                    className="pk-button"
+                    disabled={!formReady}
+                    onClick={() => {
+                      setChecked(true);
+                      setResult(demoResult("kubernetes", k8s));
+                    }}
+                  >
+                    {checked ? "다시 확인" : "연결 확인"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="pk-button"
+                    disabled={!formReady}
+                    onClick={() => {
+                      setTicket(demoTicket());
+                      setResult(null);
+                    }}
+                  >
+                    {ticket ? "명령 다시 만들기" : "등록 명령 만들기"}
+                  </button>
+                )}
+                <span className="setup-hint">
+                  {!formReady
+                    ? kind === "kubernetes"
+                      ? "2단계의 접속지 주소/사용자/인증 정보/kubeconfig 를 채우면 확인할 수 있어요."
+                      : "2단계의 환경 이름을 채우면 만들 수 있어요."
+                    : kind === "aws" && ticket
+                      ? `${TOKEN_TTL_MINUTES}분 동안 한 번만 쓸 수 있어요. 새로 만들면 이전 명령은 쓸 수 없어요.`
+                      : ""}
+                </span>
+              </div>
+              {kind === "kubernetes" && checked && (
+                <ul className="setup-checks">
+                  {connectionChecks(k8s).map((check) => (
+                    <li key={check.label}>
+                      <span className="setup-check-mark" aria-hidden="true">
+                        <svg viewBox="0 0 16 16">
+                          <path d="M3.5 8.5l3 3 6-7" />
+                        </svg>
+                      </span>
+                      <span className="rule-text">
+                        <span className="rule-title">{check.label}</span>
+                        <span className="rule-sub">{check.detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {kind === "aws" && ticket && (
+                <>
+                  <Commands kind={kind} input={input} ticket={ticket} />
+                  <div className="setup-does">
+                    <h4>이 스크립트가 하는 일</h4>
+                    <ul>
+                      {SCRIPT_ACTIONS[kind].map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
+            </SetupTask>
 
-      {kind === "kubernetes" && checked && (
-        <Section
-          title="연결 확인"
-          description="플랫폼이 접속지에 SSH 로 들어가 kubectl 로 클러스터를 읽었어요. (데모)"
-        >
-          <ul className="prep-checks">
-            {connectionChecks(k8s).map((check) => (
-              <li key={check.label}>
-                <StatusDot tone="ok">{check.label}</StatusDot>
-                <span className="prep-check-detail">{check.detail}</span>
-              </li>
-            ))}
-          </ul>
+            <SetupTask
+              n={4}
+              title="가져온 정보"
+              description={
+                kind === "kubernetes"
+                  ? "접속지 셸에서 kubectl 로 읽은 클러스터 정보예요."
+                  : "스크립트가 등록을 마치면 이 계정의 정보가 여기에 나와요."
+              }
+              done={Boolean(result)}
+            >
+              {result ? (
+                <ResultView result={result} name={input.name} />
+              ) : (
+                <div className="setup-waiting">
+                  <StatusDot tone="idle">
+                    {kind === "aws" && ticket
+                      ? `명령 실행을 기다리고 있어요, 등록 ID ${ticket.id}`
+                      : "3단계를 마치면 채워져요."}
+                  </StatusDot>
+                  {kind === "aws" && ticket && (
+                    <button
+                      type="button"
+                      className="pk-action"
+                      onClick={() => setResult(demoResult(kind, input))}
+                    >
+                      데모 결과로 채우기
+                    </button>
+                  )}
+                </div>
+              )}
+            </SetupTask>
+          </ol>
         </Section>
-      )}
+      </div>
 
-      {kind === "aws" && ticket && (
-        <Section
-          title="셸에서 실행"
-          description="aws 명령이 되는 셸에서 아래 명령을 차례로 실행하세요."
-        >
-          <Commands kind={kind} input={input} ticket={ticket} />
-          <div className="prep-does">
-            <h3>이 스크립트가 하는 일</h3>
-            <ul>
-              {SCRIPT_ACTIONS[kind].map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        </Section>
-      )}
-
-      {((kind === "aws" && ticket) || (kind === "kubernetes" && checked)) && (
-        <Section
-          title="가져온 정보"
-          description={
-            kind === "kubernetes"
-              ? "플랫폼이 접속지 셸에서 kubectl 로 읽은 클러스터 정보예요."
-              : "스크립트가 등록을 마치면 이 계정의 정보가 여기에 나와요."
-          }
-          action={
-            result || !ticket
-              ? undefined
-              : {
-                  label: "데모 결과로 채우기",
-                  onClick: () => setResult(demoResult(kind, input)),
-                }
-          }
-        >
+      <div className="setup-bar">
+        <span className="setup-bar-status">
           {result ? (
-            <ResultView result={result} name={input.name} />
+            <StatusDot tone="ok">{input.name} 연결 완료</StatusDot>
           ) : (
-            <p className="prep-waiting">
-              <StatusDot tone="idle">
-                명령 실행을 기다리고 있어요. 등록 ID {ticket?.id}
-              </StatusDot>
-            </p>
+            <StatusDot tone="idle">
+              환경을 하나 이상 연결하면 다음 단계로 갈 수 있어요.
+            </StatusDot>
           )}
-        </Section>
-      )}
-
-      <div className="prep-footer">
-        <button type="button" className="primary" disabled={!result}>
+          {result && <span className="sub">앱 선택 단계는 준비 중이에요.</span>}
+        </span>
+        <button
+          type="button"
+          className="pk-button weak"
+          onClick={() => onNavigate("#migrations")}
+        >
+          취소
+        </button>
+        <button type="button" className="pk-button" disabled={!result}>
           다음: 앱 선택
         </button>
-        <span className="prep-note">
-          {result
-            ? "앱 선택 단계는 준비 중이에요."
-            : "환경을 하나 이상 연결하면 다음 단계로 갈 수 있어요."}
-        </span>
       </div>
     </div>
   );
@@ -290,7 +438,7 @@ function KubernetesForm({
           <input
             value={value.name}
             onChange={(e) => set({ name: e.target.value })}
-            placeholder="onprem-busan"
+            placeholder="onprem-seoul"
           />
         </Field>
         <Field label="역할">
@@ -303,9 +451,9 @@ function KubernetesForm({
         </Field>
       </div>
 
-      <fieldset className="prep-group">
-        <legend>접속지 SSH</legend>
-        <p className="prep-help">
+      <section className="setup-sub">
+        <h4>접속지 SSH</h4>
+        <p className="setup-sub-help">
           kubectl 이 되는 호스트(배스천, 컨트롤 플레인 노드 등)예요.
         </p>
         <div className="prep-form prep-form-ssh">
@@ -313,7 +461,7 @@ function KubernetesForm({
             <input
               value={value.host}
               onChange={(e) => set({ host: e.target.value })}
-              placeholder="172.30.1.10"
+              placeholder="192.0.2.10"
             />
           </Field>
           <Field label="포트">
@@ -365,11 +513,11 @@ function KubernetesForm({
             />
           </Field>
         )}
-      </fieldset>
+      </section>
 
-      <fieldset className="prep-group">
-        <legend>Kubernetes 접속</legend>
-        <p className="prep-help">
+      <section className="setup-sub">
+        <h4>Kubernetes 접속</h4>
+        <p className="setup-sub-help">
           접속지 셸에서 kubectl 이 쓸 kubeconfig 예요.
         </p>
         <div className="prep-form">
@@ -412,7 +560,7 @@ function KubernetesForm({
             />
           </Field>
         )}
-      </fieldset>
+      </section>
     </div>
   );
 }
@@ -537,7 +685,7 @@ function CommandBlock({ step }: { step: CommandStep }) {
         <h3>{step.title}</h3>
         <button
           type="button"
-          className="secondary prep-copy"
+          className="pk-button weak prep-copy"
           onClick={() => {
             navigator.clipboard?.writeText(text).then(() => {
               setCopied(true);

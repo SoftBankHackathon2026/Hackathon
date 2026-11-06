@@ -82,7 +82,7 @@ export function connectionChecks(input: KubernetesInput) {
     },
     {
       label: "클러스터 정보 읽기",
-      detail: "노드·CPU·메모리·버전·StorageClass·설치된 도구",
+      detail: "노드/CPU/메모리/버전/StorageClass/설치된 도구",
     },
   ];
 }
@@ -98,13 +98,13 @@ export const KIND_OPTIONS: {
     value: "kubernetes",
     title: "온프렘 Kubernetes",
     shell: "SSH + kubectl",
-    detail: "k3s·kubeadm 등 직접 운영하는 클러스터",
+    detail: "k3s/kubeadm 등 직접 운영하는 클러스터",
   },
   {
     value: "aws",
     title: "AWS 계정",
     shell: "aws CLI",
-    detail: "EKS·RDS·MSK 가 있는 계정",
+    detail: "EKS/RDS/MSK 가 있는 계정",
   },
   {
     value: "gcp",
@@ -250,13 +250,13 @@ export const SCRIPT_ACTIONS: Record<Exclude<EnvKind, "gcp">, string[]> = {
   kubernetes: [
     "클러스터에 읽기 전용 계정(oneport-reader)을 만들어요. Secret 은 읽지 않아요.",
     "그 계정의 토큰으로 kubeconfig 를 만들어 플랫폼에 보내요. 지금 쓰는 관리자 kubeconfig 는 보내지 않아요.",
-    "노드·버전·StorageClass·IngressClass·설치된 도구 이름을 읽어요.",
+    "노드/버전/StorageClass/IngressClass/설치된 도구 이름을 읽어요.",
     "등록 토큰은 한 번만 쓸 수 있고 1시간 뒤 만료돼요.",
   ],
   aws: [
     "읽기 전용 IAM 역할을 만들어요. 플랫폼 주체만, 이 등록의 External ID 로만 맡을 수 있어요.",
     "액세스 키는 만들지도 보내지도 않아요. 플랫폼에는 역할 ARN 만 전달돼요.",
-    "계정 번호·별칭과 리전의 EKS·RDS·VPC·MSK 개수를 읽어요.",
+    "계정 번호/별칭과 리전의 EKS/RDS/VPC/MSK 개수를 읽어요.",
     "등록 토큰은 한 번만 쓸 수 있고 1시간 뒤 만료돼요.",
   ],
 };
@@ -299,7 +299,7 @@ export function demoResult(
 ): KubernetesResult | AwsResult {
   if (kind === "kubernetes") {
     const k8s = input as KubernetesInput;
-    const server = `https://${k8s.host || "172.30.1.10"}:6443`;
+    const server = `https://${k8s.host || "192.0.2.10"}:6443`;
     return {
       kind,
       context: k8s.context || "hackathon",
@@ -314,7 +314,7 @@ export function demoResult(
           memoryGiB: 3.8,
           os: "Ubuntu 22.04.5 LTS",
           runtime: "containerd 2.2.3",
-          ip: "172.30.1.10",
+          ip: "192.0.2.10",
         },
         {
           name: "k3s-worker",
@@ -323,7 +323,7 @@ export function demoResult(
           memoryGiB: 7.8,
           os: "Ubuntu 22.04.5 LTS",
           runtime: "containerd 2.2.3",
-          ip: "172.30.1.7",
+          ip: "192.0.2.11",
         },
       ],
       storageClasses: ["local-path (기본)"],
