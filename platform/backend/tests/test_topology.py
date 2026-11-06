@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -19,6 +20,8 @@ from controlplane.integrations.kube_inventory import (
     ServiceSpec,
     WorkloadSpec,
     build_inventory,
+    pod_fact,
+    pods_by_workload,
 )
 from controlplane.services import security
 from controlplane.services.fleet import environment_view
@@ -288,3 +291,142 @@ def test_only_host_shaped_references_become_calls():
     assert found["registry"].depends_on == []
     assert found["yaml"].depends_on == ["postgres"]
     assert found["repo"].depends_on == []
+
+
+def pod(ns, name, owner, *, phase="Running", ready=True, waiting=None, restarts=0):
+    state = {"waiting": {"reason": waiting}} if waiting else {"running": {}}
+    return {
+        "metadata": {
+            "namespace": ns,
+            "name": name,
+            "ownerReferences": [{"kind": owner[0], "name": owner[1], "controller": True}],
+        },
+        "spec": {
+            "nodeName": "worker-1",
+            "containers": [
+                {"name": "app", "image": "app:1"},
+                {"name": "proxy", "image": "envoy:1"},
+            ],
+        },
+        "status": {
+            "phase": phase,
+            "startTime": "2026-11-06T01:02:03Z",
+            "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+            "containerStatuses": [
+                {"name": "proxy", "ready": True, "restartCount": 1, "state": {"running": {}}},
+                {"name": "app", "ready": ready, "restartCount": restarts, "state": state},
+            ],
+        },
+    }
+
+
+SHOP_PODS = [
+    pod("shop", "api-7d9f-abcde", ("ReplicaSet", "api-7d9f")),
+    pod(
+        "shop",
+        "api-7d9f-fghij",
+        ("ReplicaSet", "api-7d9f"),
+        ready=False,
+        waiting="CrashLoopBackOff",
+        restarts=7,
+    ),
+    pod("shop", "web-canary-5c4b-xyz", ("ReplicaSet", "web-canary-5c4b"), phase="Pending"),
+    pod("shop", "db-0", ("StatefulSet", "db")),
+    pod("shop", "migrate-x1", ("Job", "migrate")),
+    pod("argocd", "argocd-server-6f-q", ("ReplicaSet", "argocd-server-6f")),
+    pod(
+        "argocd",
+        "argocd-application-controller-0",
+        ("StatefulSet", "argocd-application-controller"),
+    ),
+]
+
+
+def test_pods_are_grouped_under_the_workload_that_owns_them():
+    grouped = pods_by_workload(SHOP_PODS)
+    assert "shop/migrate" not in grouped
+    assert [p.name for p in grouped["shop/web-canary"]] == ["web-canary-5c4b-xyz"]
+    crashing = grouped["shop/api"][1]
+    assert (crashing.reason, crashing.restarts, crashing.node) == (
+        "CrashLoopBackOff",
+        8,
+        "worker-1",
+    )
+    assert [(c.name, c.ready, c.image) for c in crashing.containers] == [
+        ("app", False, "app:1"),
+        ("proxy", True, "envoy:1"),
+    ]
+    assert grouped["shop/db"][0].started_at == datetime(2026, 11, 6, 1, 2, 3, tzinfo=UTC)
+
+
+def test_each_component_carries_the_pods_of_all_its_workloads():
+    objects = ClusterObjects(
+        workloads=[
+            workload("deployment", "shop", "api", ready=1, replicas=2),
+            workload("deployment", "argocd", "argocd-server"),
+            workload("statefulset", "argocd", "argocd-application-controller"),
+        ],
+        services=[],
+        ingresses=[],
+        configmaps={},
+        pods=pods_by_workload(SHOP_PODS),
+    )
+    found = live_components(ONPREM, build_inventory(objects, {}))
+    api = found["api"].model_dump(mode="json")["pods"]
+    assert [(p["name"], p["ready"], p["restarts"]) for p in api] == [
+        ("api-7d9f-abcde", True, 1),
+        ("api-7d9f-fghij", False, 8),
+    ]
+    assert api[0]["started_at"] == "2026-11-06T01:02:03Z"
+    assert [p.name for p in found["argocd"].pods] == [
+        "argocd-application-controller-0",
+        "argocd-server-6f-q",
+    ]
+    assert "pods" not in found["tailscale-onprem"].model_dump(mode="json")
+
+
+def test_pods_that_could_not_be_listed_are_unknown_not_empty():
+    objects = ClusterObjects(
+        workloads=[workload("deployment", "shop", "api")], services=[], ingresses=[], configmaps={}
+    )
+    assert live_components(ONPREM, build_inventory(objects, {}))["api"].pods is None
+    listed = ClusterObjects(**{**objects.__dict__, "pods": {}})
+    assert live_components(ONPREM, build_inventory(listed, {}))["api"].pods == []
+
+
+def test_pods_survive_the_journal():
+    objects = ClusterObjects(
+        workloads=[workload("deployment", "shop", "api")],
+        services=[],
+        ingresses=[],
+        configmaps={},
+        pods=pods_by_workload(SHOP_PODS),
+    )
+    inventory = build_inventory(objects, {})
+    payload = facts_to_json(ClusterFacts(observed_at=NOW, connected=True, inventory=inventory))
+    json.dumps(payload)
+    assert facts_from_json(payload).inventory == inventory
+
+
+def test_reader_leaves_pods_unknown_when_it_may_not_list_them(monkeypatch):
+    monkeypatch.setattr(kube, "api_client", lambda env: kube.client.ApiClient())
+    reader = kube.ClusterReader(ONPREM)
+
+    def forbidden():
+        raise ApiException(status=403)
+
+    reader._core = SimpleNamespace(list_pod_for_all_namespaces=forbidden)
+    assert reader._pods() is None
+
+
+def test_a_pod_stuck_in_an_init_container_shows_that_reason():
+    stuck = pod("shop", "api-1", ("ReplicaSet", "api-7d9f"), phase="Pending", ready=False)
+    stuck["status"]["initContainerStatuses"] = [
+        {"state": {"waiting": {"reason": "ImagePullBackOff"}}}
+    ]
+    assert pod_fact(stuck).reason == "ImagePullBackOff"
+
+
+def test_an_unexpected_pod_phase_is_reported_as_unknown():
+    odd = pod("shop", "api-1", ("ReplicaSet", "api-7d9f"), phase="Evicting")
+    assert pod_fact(odd).phase == "Unknown"

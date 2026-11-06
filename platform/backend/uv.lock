@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -681,7 +681,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "kubernetes", specifier = ">=35,<36" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2,<4" },
-    { name = "pydantic", specifier = ">=2.9,<3" },
+    { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pydantic-settings", specifier = ">=2.6,<3" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
 ]

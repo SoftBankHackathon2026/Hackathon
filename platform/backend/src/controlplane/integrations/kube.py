@@ -6,7 +6,13 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
-from controlplane.domain.fleet import ClusterFacts, EnvironmentConfig, InventoryItem, Workload
+from controlplane.domain.fleet import (
+    ClusterFacts,
+    EnvironmentConfig,
+    InventoryItem,
+    PodFact,
+    Workload,
+)
 from controlplane.integrations.kube_inventory import (
     ClusterObjects,
     ConfigValue,
@@ -14,6 +20,7 @@ from controlplane.integrations.kube_inventory import (
     ServiceSpec,
     WorkloadSpec,
     build_inventory,
+    pods_by_workload,
 )
 from controlplane.schemas.migrations import AppState
 
@@ -207,6 +214,12 @@ class ClusterReader:
                 found[(namespace, name)] = values
         return found
 
+    def _pods(self) -> dict[str, list[PodFact]] | None:
+        listed = _optional(lambda: self._core.list_pod_for_all_namespaces().items)
+        if listed is None:
+            return None
+        return pods_by_workload([self._serialize(pod) for pod in listed])
+
     def _inventory(self) -> list[InventoryItem] | None:
         workloads = self._workload_specs()
         if workloads is None:
@@ -218,6 +231,7 @@ class ClusterReader:
             services=[ServiceSpec.from_k8s(self._serialize(s)) for s in services],
             ingresses=[IngressSpec.from_k8s(self._serialize(i)) for i in ingresses],
             configmaps=self._configmap_values(workloads),
+            pods=self._pods(),
         )
         hints = {c.id: c.endpoint_hints for c in self._env.components if c.endpoint_hints}
         return build_inventory(objects, hints)

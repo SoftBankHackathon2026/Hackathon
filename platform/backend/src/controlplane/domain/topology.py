@@ -1,13 +1,14 @@
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from controlplane.domain.fleet import (
     ClusterFacts,
     ComponentConfig,
     EnvironmentSnapshot,
     InventoryItem,
+    PodFact,
 )
-from controlplane.schemas.migrations import AppState, ComponentView
+from controlplane.schemas.migrations import AppState, ComponentView, ContainerView, PodView
 
 APP_HEALTH_STATUS = {
     "Healthy": "healthy",
@@ -154,6 +155,26 @@ def _group_status(items: list[InventoryItem]) -> tuple[str, str]:
     return "degraded", f"{detail} · 준비 안 됨: {', '.join(lagging[:3])}"
 
 
+def _pod_view(pod: PodFact) -> PodView:
+    return PodView(
+        name=pod.name,
+        phase=pod.phase,
+        ready=pod.ready,
+        reason=pod.reason,
+        restarts=pod.restarts,
+        node=pod.node,
+        started_at=pod.started_at,
+        containers=[ContainerView(**asdict(container)) for container in pod.containers],
+    )
+
+
+def _group_pods(items: list[InventoryItem]) -> list[PodView] | None:
+    listed = [item.pods for item in items if item.pods is not None]
+    if not listed:
+        return None
+    return sorted((_pod_view(pod) for pods in listed for pod in pods), key=lambda pod: pod.name)
+
+
 @dataclass(frozen=True)
 class _Links:
     owner: dict[str, str]
@@ -206,6 +227,7 @@ def discovered_components(
                 detail=detail,
                 depends_on=links.depends_on(group),
                 placement=[*cluster_path, f"ns {group.namespace}"],
+                pods=_group_pods(group.items),
             )
         )
     return views

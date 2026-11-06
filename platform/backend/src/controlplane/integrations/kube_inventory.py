@@ -1,8 +1,10 @@
 import re
 from dataclasses import dataclass
-from typing import Any, Self
+from datetime import datetime
+from typing import Any, Self, get_args
 
-from controlplane.domain.fleet import InventoryItem
+from controlplane.domain.fleet import ContainerFact, InventoryItem, PodFact
+from controlplane.schemas.migrations import PodPhase
 
 KubeObject = dict[str, Any]
 KEPT_LABELS = (
@@ -23,6 +25,8 @@ EMBEDDED_PAIR = re.compile(
 )
 SERVICE_DOMAINS = ("", ".svc", ".svc.cluster.local")
 REGISTRY_KEYS = {"fleet.json"}
+POD_OWNER_KINDS = {"ReplicaSet", "StatefulSet", "DaemonSet"}
+POD_PHASES = set(get_args(PodPhase))
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,76 @@ def _replicas(kind: str, obj: KubeObject) -> tuple[int, int]:
     replicas = field_at(obj, "spec", "replicas")
     ready = field_at(obj, "status", "readyReplicas") or 0
     return ready, 1 if replicas is None else replicas
+
+
+def _pod_owner(obj: KubeObject) -> str | None:
+    refs = items_at(obj, "metadata", "ownerReferences")
+    owner = next((ref for ref in refs if ref.get("controller")), None)
+    if owner is None or owner.get("kind") not in POD_OWNER_KINDS:
+        return None
+    name = owner.get("name") or ""
+    if owner["kind"] == "ReplicaSet":
+        name = name.rsplit("-", 1)[0]
+    return f"{field_at(obj, 'metadata', 'namespace') or ''}/{name}"
+
+
+def _pod_reason(obj: KubeObject) -> str | None:
+    if field_at(obj, "metadata", "deletionTimestamp"):
+        return "Terminating"
+    statuses = [
+        *items_at(obj, "status", "initContainerStatuses"),
+        *items_at(obj, "status", "containerStatuses"),
+    ]
+    for status in statuses:
+        state = mapping_at(status, "state")
+        reason = field_at(state, "waiting", "reason") or field_at(state, "terminated", "reason")
+        if reason and reason != "Completed":
+            return reason
+    return field_at(obj, "status", "reason")
+
+
+def _pod_ready(obj: KubeObject) -> bool:
+    conditions = items_at(obj, "status", "conditions")
+    return any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions)
+
+
+def _containers(obj: KubeObject) -> list[ContainerFact]:
+    statuses = {s.get("name"): s for s in items_at(obj, "status", "containerStatuses")}
+    containers = []
+    for spec in items_at(obj, "spec", "containers"):
+        status = statuses.get(spec.get("name"), {})
+        containers.append(
+            ContainerFact(
+                name=spec.get("name") or "",
+                ready=bool(status.get("ready")),
+                restarts=int(status.get("restartCount") or 0),
+                image=spec.get("image") or "",
+            )
+        )
+    return containers
+
+
+def pod_fact(obj: KubeObject) -> PodFact:
+    started = field_at(obj, "status", "startTime")
+    phase = field_at(obj, "status", "phase")
+    return PodFact(
+        name=field_at(obj, "metadata", "name") or "",
+        phase=phase if phase in POD_PHASES else "Unknown",
+        ready=_pod_ready(obj),
+        containers=_containers(obj),
+        node=field_at(obj, "spec", "nodeName"),
+        reason=_pod_reason(obj),
+        started_at=datetime.fromisoformat(started) if started else None,
+    )
+
+
+def pods_by_workload(pods: list[KubeObject]) -> dict[str, list[PodFact]]:
+    grouped: dict[str, list[PodFact]] = {}
+    for obj in pods:
+        owner = _pod_owner(obj)
+        if owner is not None:
+            grouped.setdefault(owner, []).append(pod_fact(obj))
+    return grouped
 
 
 @dataclass(frozen=True)
@@ -176,6 +250,10 @@ class ClusterObjects:
     services: list[ServiceSpec]
     ingresses: list[IngressSpec]
     configmaps: dict[tuple[str, str], list[ConfigValue]]
+    pods: dict[str, list[PodFact]] | None = None
+
+    def pods_of(self, workload: WorkloadSpec) -> list[PodFact] | None:
+        return None if self.pods is None else self.pods.get(workload.key, [])
 
     def values_of(self, workload: WorkloadSpec) -> list[ConfigValue]:
         mounted = [
@@ -251,6 +329,7 @@ def build_inventory(objects: ClusterObjects, hints: dict[str, list[str]]) -> lis
                 uses=_calls(workload, values, index),
                 uses_external=_external_calls(values, hints),
                 ingress_classes=sorted(classes.get(workload.key, set())),
+                pods=objects.pods_of(workload),
             )
         )
     return items

@@ -25,6 +25,25 @@ class DataService(BaseModel):
 
 ComponentLayer = Literal["entry", "platform", "app", "migration", "data", "link"]
 ComponentStatus = Literal["healthy", "degraded", "down", "idle", "unknown"]
+PodPhase = Literal["Running", "Pending", "Succeeded", "Failed", "Unknown"]
+
+
+class ContainerView(BaseModel):
+    name: str
+    ready: bool
+    restarts: int
+    image: str
+
+
+class PodView(BaseModel):
+    name: str
+    phase: PodPhase
+    ready: bool
+    reason: str | None = None
+    restarts: int
+    node: str | None = None
+    started_at: datetime | None = None
+    containers: list[ContainerView] = Field(default_factory=list)
 
 
 class ComponentView(BaseModel):
@@ -37,6 +56,7 @@ class ComponentView(BaseModel):
     detail: str
     depends_on: list[str] = Field(default_factory=list)
     placement: list[str] = Field(default_factory=list)
+    pods: list[PodView] | None = Field(default=None, exclude_if=lambda pods: pods is None)
 
 
 class EnvironmentIssue(BaseModel):
