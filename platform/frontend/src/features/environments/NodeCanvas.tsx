@@ -519,6 +519,7 @@ export function NodeCanvas({
                     <g
                       key={cell.key}
                       className={`pod-cube tone-${cell.tone}${lit ? " lit" : ""}${faded ? " faded" : ""}`}
+                      data-clickable={cell.componentId ? "" : undefined}
                       transform={`translate(${px} ${py - lift})`}
                       onPointerEnter={(event) => {
                         const [x, y] = pointAt(event);
