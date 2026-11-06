@@ -48,6 +48,14 @@ export function readRoute(hash = "#"): Route {
   return { view: "migrations" };
 }
 
+/** 주소만 바꾸고(새 기록 없음) 화면 라우터에도 알린다. replaceState 는 hashchange 를 내지 않는다. */
+export const ROUTE_EVENT = "oneport:route";
+export function replaceHash(hash: string) {
+  if (window.location.hash === hash) return;
+  window.history.replaceState(null, "", hash);
+  window.dispatchEvent(new Event(ROUTE_EVENT));
+}
+
 export function migrationHash(jobId: string) {
   return `#migrations/${encodeURIComponent(jobId)}`;
 }
