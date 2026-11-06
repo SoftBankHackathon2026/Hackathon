@@ -10,7 +10,6 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - platform.yaml
-  - ingress.yaml
 configMapGenerator:
   - name: oneport-fleet
     files: [fleet.json]

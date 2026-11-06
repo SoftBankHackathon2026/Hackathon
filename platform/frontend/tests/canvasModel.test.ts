@@ -169,11 +169,13 @@ test("statusCounts and problemOrdinals", () => {
     component("b", "app", "app", { status: "down" }),
     component("c", "app", "app", { status: "unknown" }),
     component("d", "app", "app", { status: "degraded" }),
+    component("e", "app", "app", { status: "idle" }),
   ];
   assert.deepEqual(statusCounts(list), {
     healthy: 1,
     degraded: 1,
     down: 1,
+    idle: 1,
     unknown: 1,
   });
   assert.deepEqual(
@@ -464,6 +466,7 @@ test("iconFor prefers brand marks and falls back to line glyphs", () => {
   );
   assert.equal(brandSlug({ id: "traefik", kind: "ingress" }), "traefikproxy");
   assert.equal(brandSlug({ id: "argocd", kind: "gitops" }), "argo");
+  assert.equal(brandSlug({ id: "argocd-platform", kind: "gitops" }), "argo");
   assert.equal(brandSlug({ id: "argo-rollouts", kind: "rollout" }), "argo");
   assert.equal(brandSlug({ id: "rds", kind: "postgres" }), "postgresql");
   assert.equal(

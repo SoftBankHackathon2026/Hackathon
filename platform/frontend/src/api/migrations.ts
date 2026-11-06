@@ -31,7 +31,8 @@ export type DataService = {
 };
 export type ComponentLayer =
   "entry" | "platform" | "app" | "migration" | "data" | "link";
-export type ComponentStatus = "healthy" | "degraded" | "down" | "unknown";
+export type ComponentStatus =
+  "healthy" | "degraded" | "down" | "idle" | "unknown";
 export type EnvComponent = {
   id: string;
   name: string;

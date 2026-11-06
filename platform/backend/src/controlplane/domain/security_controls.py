@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from controlplane.domain.fleet import EnvironmentSnapshot, Workload
+from controlplane.schemas.migrations import ComponentView
 from controlplane.schemas.security import Category, ControlResult, Severity, Standard
 
 STANDARDS = [
@@ -425,9 +426,9 @@ CONTROL_TARGETS = {
 }
 
 
-def affected_components(control_id: str, snapshot: EnvironmentSnapshot) -> list[str]:
+def affected_components(control_id: str, components: list[ComponentView]) -> list[str]:
     targets = CONTROL_TARGETS.get(control_id, ())
-    return [c.name for c in snapshot.config.components if c.kind in targets or c.layer in targets]
+    return [c.name for c in components if c.kind in targets or c.layer in targets]
 
 
 def evaluate(snapshot: EnvironmentSnapshot) -> dict[str, ControlResult]:

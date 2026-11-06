@@ -5,7 +5,7 @@
 # - workflow_dispatch               : 수동 실행 (main 외 브랜치에서는 sha 태그만 push)
 #
 # EKS 배포(platform/deploy/aws)는 이 워크플로가 하지 않는다. 태그 교체는 사람이 kustomization 에서 정한다.
-# 패키지를 처음 올린 뒤 GitHub 패키지 설정에서 공개(public)로 바꿔야 EKS·k3s 가 pull secret 없이 받는다.
+# 조직 정책상 ghcr 패키지는 공개할 수 없다. EKS 는 팀 계정 ECR(ghost/oneport-platform-*)에서 받는다 (platform/README.md "이미지 올리기").
 name: platform-images
 
 on:

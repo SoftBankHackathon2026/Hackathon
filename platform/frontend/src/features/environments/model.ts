@@ -31,6 +31,7 @@ export const COMPONENT_STATUS_LABELS: Record<ComponentStatus, string> = {
   healthy: "정상",
   degraded: "일부만 준비됨",
   down: "중단",
+  idle: "꺼 둠",
   unknown: "상태 미수집",
 };
 
@@ -41,6 +42,10 @@ const KIND_LABELS: Record<string, string> = {
   rollout: "롤아웃",
   monitoring: "모니터링",
   secrets: "시크릿",
+  certificates: "인증서",
+  registry: "이미지 레지스트리",
+  platform: "플랫폼",
+  cache: "캐시",
   app: "앱",
   migration: "이전 도구",
   postgres: "PostgreSQL",

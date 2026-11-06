@@ -2,7 +2,17 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
-from controlplane.domain.fleet import ClusterFacts, WorkerSample, Workload
+from controlplane.domain.fleet import (
+    ClusterFacts,
+    ContainerFact,
+    EndpointFact,
+    InventoryItem,
+    NodeFact,
+    PodFact,
+    Resources,
+    WorkerSample,
+    Workload,
+)
 from controlplane.domain.migration import Stage
 from controlplane.schemas.migrations import (
     AppState,
@@ -102,12 +112,57 @@ def cutover_from_status(status: Row) -> tuple[Stage, Row, datetime] | None:
     return Stage(stage), dict(status.get("checkpoint") or {}), parse_time(status["updated_at"])
 
 
+def _pod_to_json(pod: PodFact) -> Row:
+    payload = asdict(pod)
+    payload["started_at"] = pod.started_at.isoformat() if pod.started_at else None
+    return payload
+
+
+def _pod_from_json(payload: Row) -> PodFact:
+    started = payload.get("started_at")
+    return PodFact(
+        **{
+            **payload,
+            "containers": [ContainerFact(**c) for c in payload.get("containers") or []],
+            "started_at": parse_time(started) if started else None,
+        }
+    )
+
+
+def _item_to_json(item: InventoryItem) -> Row:
+    payload = asdict(item)
+    payload["pods"] = None if item.pods is None else [_pod_to_json(pod) for pod in item.pods]
+    return payload
+
+
+def _item_from_json(payload: Row) -> InventoryItem:
+    pods = payload.get("pods")
+    return InventoryItem(
+        **{
+            **payload,
+            "pods": None if pods is None else [_pod_from_json(pod) for pod in pods],
+            "endpoints": [EndpointFact(**e) for e in payload.get("endpoints") or []],
+        }
+    )
+
+
+def _resources(payload: Row | None) -> Resources | None:
+    return None if payload is None else Resources(**payload)
+
+
+def _node_from_json(payload: Row) -> NodeFact:
+    sized = {key: _resources(payload.get(key)) for key in ("allocatable", "requests", "usage")}
+    return NodeFact(**{**payload, **sized})
+
+
 def facts_to_json(facts: ClusterFacts) -> Row:
     payload = asdict(facts)
     payload["observed_at"] = facts.observed_at.isoformat() if facts.observed_at else None
     payload["default_deny_namespaces"] = sorted(facts.default_deny_namespaces)
     payload["resource_quota_namespaces"] = sorted(facts.resource_quota_namespaces)
     payload["apps"] = [app.model_dump() for app in facts.apps]
+    if facts.inventory is not None:
+        payload["inventory"] = [_item_to_json(item) for item in facts.inventory]
     return payload
 
 
@@ -128,4 +183,12 @@ def facts_from_json(payload: Row) -> ClusterFacts:
         workload_ready={
             k: (int(v[0]), int(v[1])) for k, v in (payload.get("workload_ready") or {}).items()
         },
+        read_status=payload.get("read_status"),
+        inventory=None
+        if payload.get("inventory") is None
+        else [_item_from_json(item) for item in payload["inventory"]],
+        version=payload.get("version"),
+        nodes=None
+        if payload.get("nodes") is None
+        else [_node_from_json(node) for node in payload["nodes"]],
     )
