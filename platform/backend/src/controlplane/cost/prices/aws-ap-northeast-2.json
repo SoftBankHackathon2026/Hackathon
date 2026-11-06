@@ -1,0 +1,200 @@
+{
+  "provider": "aws",
+  "region": "ap-northeast-2",
+  "currency": "USD",
+  "source": "AWS Price List Query API (pricing:GetProducts), On-Demand, Linux, Shared tenancy",
+  "fetched_at": "2026-11-06T00:01:55+00:00",
+  "hours_per_month": 730,
+  "labels": {
+    "compute": "EC2 (온디맨드)",
+    "kubernetes_control_plane": "EKS 컨트롤 플레인",
+    "load_balancer": "Application Load Balancer",
+    "load_balancer_capacity_unit": "ALB LCU",
+    "nat_gateway": "NAT Gateway",
+    "postgres": "RDS for PostgreSQL (Single-AZ)",
+    "kafka_broker": "MSK 브로커",
+    "block": "EBS gp3",
+    "database": "RDS gp3 스토리지",
+    "kafka": "MSK 스토리지",
+    "object": "S3 Standard"
+  },
+  "compute": {
+    "t3.micro": {
+      "hourly": 0.013,
+      "vcpu": 2,
+      "memory_gib": 1.0
+    },
+    "t3.small": {
+      "hourly": 0.026,
+      "vcpu": 2,
+      "memory_gib": 2.0
+    },
+    "t3.medium": {
+      "hourly": 0.052,
+      "vcpu": 2,
+      "memory_gib": 4.0
+    },
+    "t3.large": {
+      "hourly": 0.104,
+      "vcpu": 2,
+      "memory_gib": 8.0
+    },
+    "t3.xlarge": {
+      "hourly": 0.208,
+      "vcpu": 4,
+      "memory_gib": 16.0
+    },
+    "t3.2xlarge": {
+      "hourly": 0.416,
+      "vcpu": 8,
+      "memory_gib": 32.0
+    },
+    "t4g.micro": {
+      "hourly": 0.0104,
+      "vcpu": 2,
+      "memory_gib": 1.0
+    },
+    "t4g.small": {
+      "hourly": 0.0208,
+      "vcpu": 2,
+      "memory_gib": 2.0
+    },
+    "t4g.medium": {
+      "hourly": 0.0416,
+      "vcpu": 2,
+      "memory_gib": 4.0
+    },
+    "t4g.large": {
+      "hourly": 0.0832,
+      "vcpu": 2,
+      "memory_gib": 8.0
+    },
+    "t4g.xlarge": {
+      "hourly": 0.1664,
+      "vcpu": 4,
+      "memory_gib": 16.0
+    },
+    "t4g.2xlarge": {
+      "hourly": 0.3328,
+      "vcpu": 8,
+      "memory_gib": 32.0
+    },
+    "m6i.large": {
+      "hourly": 0.118,
+      "vcpu": 2,
+      "memory_gib": 8.0
+    },
+    "m6i.xlarge": {
+      "hourly": 0.236,
+      "vcpu": 4,
+      "memory_gib": 16.0
+    },
+    "m6i.2xlarge": {
+      "hourly": 0.472,
+      "vcpu": 8,
+      "memory_gib": 32.0
+    },
+    "m7g.large": {
+      "hourly": 0.1003,
+      "vcpu": 2,
+      "memory_gib": 8.0
+    },
+    "m7g.xlarge": {
+      "hourly": 0.2006,
+      "vcpu": 4,
+      "memory_gib": 16.0
+    },
+    "m7g.2xlarge": {
+      "hourly": 0.4012,
+      "vcpu": 8,
+      "memory_gib": 32.0
+    },
+    "r6i.large": {
+      "hourly": 0.152,
+      "vcpu": 2,
+      "memory_gib": 16.0
+    },
+    "r6i.xlarge": {
+      "hourly": 0.304,
+      "vcpu": 4,
+      "memory_gib": 32.0
+    }
+  },
+  "managed": {
+    "postgres": {
+      "db.t4g.micro": {
+        "hourly": 0.025,
+        "vcpu": 2,
+        "memory_gib": 1.0
+      },
+      "db.t4g.small": {
+        "hourly": 0.051,
+        "vcpu": 2,
+        "memory_gib": 2.0
+      },
+      "db.t4g.medium": {
+        "hourly": 0.102,
+        "vcpu": 2,
+        "memory_gib": 4.0
+      },
+      "db.t4g.large": {
+        "hourly": 0.203,
+        "vcpu": 2,
+        "memory_gib": 8.0
+      },
+      "db.t3.micro": {
+        "hourly": 0.028,
+        "vcpu": 2,
+        "memory_gib": 1.0
+      },
+      "db.t3.small": {
+        "hourly": 0.056,
+        "vcpu": 2,
+        "memory_gib": 2.0
+      },
+      "db.t3.medium": {
+        "hourly": 0.112,
+        "vcpu": 2,
+        "memory_gib": 4.0
+      },
+      "db.t3.large": {
+        "hourly": 0.224,
+        "vcpu": 2,
+        "memory_gib": 8.0
+      },
+      "db.m7g.large": {
+        "hourly": 0.2344,
+        "vcpu": 2,
+        "memory_gib": 8.0
+      },
+      "db.m7g.xlarge": {
+        "hourly": 0.4688,
+        "vcpu": 4,
+        "memory_gib": 16.0
+      }
+    },
+    "kafka_broker": {
+      "kafka.t3.small": {
+        "hourly": 0.0569
+      },
+      "kafka.m5.large": {
+        "hourly": 0.258
+      },
+      "kafka.m7g.large": {
+        "hourly": 0.2508
+      }
+    }
+  },
+  "storage_gib_month": {
+    "block": 0.0912,
+    "database": 0.131,
+    "kafka": 0.114,
+    "object": 0.025
+  },
+  "hourly": {
+    "kubernetes_control_plane": 0.1,
+    "load_balancer": 0.0225,
+    "nat_gateway": 0.059,
+    "load_balancer_capacity_unit": 0.008
+  }
+}

@@ -2845,3 +2845,103 @@ body {
 .shell .marker-pop .marker-pop-meta a:hover {
   text-decoration: underline;
 }
+
+/* 비용 */
+.cost-detail {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.cost-detail:last-of-type {
+  border-bottom: 0;
+}
+.cost-detail h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cost-block {
+  display: grid;
+  gap: 8px;
+}
+.cost-block-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.cost-block-head span {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.cost-bar {
+  display: flex;
+  gap: 2px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.cost-seg {
+  min-width: 4px;
+  overflow: hidden;
+  padding: 0 6px;
+  color: var(--text-knockout);
+  font-size: 11px;
+  line-height: 22px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--other);
+}
+.cost-seg.seg-compute {
+  background: var(--accent);
+}
+.cost-seg.seg-control_plane {
+  background: var(--series-queue);
+}
+.cost-seg.seg-database {
+  background: var(--series-source);
+}
+.cost-seg.seg-messaging {
+  background: var(--sev-medium);
+}
+.cost-seg.seg-network {
+  background: var(--sev-high);
+}
+.cost-seg.seg-storage {
+  background: var(--other-contrast);
+}
+.cost-table td:nth-child(2) {
+  white-space: normal;
+}
+.cost-table tfoot td {
+  border-bottom: 0;
+  font-weight: 600;
+}
+.cost-basis {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cost-basis.basis-not_priced {
+  color: var(--warning-contrast);
+}
+.cost-basis.basis-owner_input {
+  color: var(--accent-contrast);
+}
+.cost-assumptions,
+.cost-sources {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.cost-sources {
+  padding-top: 12px;
+}
+.cost-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}

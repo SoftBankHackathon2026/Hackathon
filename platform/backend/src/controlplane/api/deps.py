@@ -6,6 +6,7 @@ from fastapi import Depends, Header, Request
 from controlplane.container import Container
 from controlplane.core.config import AuthMode
 from controlplane.core.errors import AccessDenied, NotConfigured, OperationNotFound, Unauthenticated
+from controlplane.cost.service import CostService
 from controlplane.repositories.accounts import SESSION_COOKIE
 from controlplane.schemas.accounts import Identity
 from controlplane.services.auth import AuthService
@@ -62,6 +63,10 @@ def get_security(container: ContainerDep) -> SecurityService:
     return container.security
 
 
+def get_costs(container: ContainerDep) -> CostService:
+    return container.costs
+
+
 def require_ingest(
     container: ContainerDep, authorization: str = Header(default="")
 ) -> IngestService:
@@ -77,6 +82,7 @@ MigrationsDep = Annotated[MigrationService, Depends(get_migrations)]
 FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
+CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
 MonitoringDep = Annotated[MonitoringService, Depends(get_monitoring)]

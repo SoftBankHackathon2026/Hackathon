@@ -3,6 +3,7 @@ export type Route =
   | { view: "migration"; id: string }
   | { view: "environments"; select?: { envId: string; id: string } }
   | { view: "security"; control?: string }
+  | { view: "costs" }
   | { view: "team" };
 
 export function readRoute(hash = "#"): Route {
@@ -24,6 +25,7 @@ export function readRoute(hash = "#"): Route {
     return id
       ? { view: "security", control: decodeURIComponent(id) }
       : { view: "security" };
+  if (head === "costs") return { view: "costs" };
   if (head === "team") return { view: "team" };
   return { view: "migrations" };
 }
@@ -48,6 +50,8 @@ export function routeTitle(route: Route, teamName: string) {
       return "환경";
     case "security":
       return "보안";
+    case "costs":
+      return "비용";
     case "team":
       return `${teamName} 팀`;
     default:

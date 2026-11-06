@@ -4,6 +4,7 @@ import { AppShell, type View } from "../components/AppShell";
 import { PageBoundary } from "../components/QueryBoundary";
 import { AccountControls } from "./AccountControls";
 import {
+  CostsPage,
   EnvironmentsPage,
   FleetPage,
   MigrationDetailPage,
@@ -41,7 +42,8 @@ export function Workspace({
       hideTitle={
         route.view === "migrations" ||
         route.view === "environments" ||
-        route.view === "security"
+        route.view === "security" ||
+        route.view === "costs"
       }
     >
       <PageBoundary resetKeys={[route.view, "id" in route ? route.id : ""]}>
@@ -53,6 +55,7 @@ export function Workspace({
           <EnvironmentsPage select={route.select} />
         )}
         {route.view === "security" && <SecurityPage control={route.control} />}
+        {route.view === "costs" && <CostsPage />}
         {route.view === "team" &&
           (access.user ? (
             <TeamPage account={access.user} />

@@ -4,6 +4,7 @@ from controlplane.api.routes import (
     applications,
     auth,
     builds,
+    costs,
     environments,
     migrations,
     monitoring,
@@ -26,5 +27,6 @@ for module in (
     monitoring,
     releases,
     migrations,
+    costs,
 ):
     api_router.include_router(module.router)
