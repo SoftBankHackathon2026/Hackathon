@@ -20,6 +20,7 @@ const STATIC_FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/viewer.js': ['viewer.js', 'text/javascript; charset=utf-8'],
   '/live-model.js': ['live-model.js', 'text/javascript; charset=utf-8'],
+  '/vendor/qrcode.js': ['vendor/qrcode.js', 'text/javascript; charset=utf-8'],
 };
 
 function pageUrlOf(address) {
@@ -43,6 +44,8 @@ function loadConfig(file) {
       name: environment.name,
       nameJa: environment.nameJa || '',
       pageUrl: pageUrlOf(environment.url),
+      // 폰이 여는 주소다. 뷰어가 쓰는 url 과 다를 수 있어 따로 둔다.
+      publicUrl: pageUrlOf(environment.public_url),
     })),
   };
 }

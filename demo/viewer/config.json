@@ -2,8 +2,8 @@
   "pollMillis": 500,
   "timeoutMillis": 3000,
   "environments": [
-    {"id": "onprem", "name": "온프렘", "nameJa": "オンプレミス", "url": "http://localhost:8081"},
-    {"id": "aws", "name": "AWS", "nameJa": "AWS", "url": "http://localhost:8082"},
-    {"id": "gcp", "name": "GCP", "nameJa": "GCP", "url": ""}
+    {"id": "onprem", "name": "온프렘", "nameJa": "オンプレミス", "url": "http://localhost:8081", "public_url": ""},
+    {"id": "aws", "name": "AWS", "nameJa": "AWS", "url": "http://localhost:8082", "public_url": ""},
+    {"id": "gcp", "name": "GCP", "nameJa": "GCP", "url": "", "public_url": ""}
   ]
 }

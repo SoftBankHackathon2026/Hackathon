@@ -38,7 +38,8 @@
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px;
   }
-  .head { display: flex; align-items: flex-start; gap: 1vw; }
+  /* QR 이 없는 칸도 높이를 맞춰 칸끼리 그래프 위치가 어긋나지 않게 한다. */
+  .head { display: flex; align-items: flex-start; gap: 1vw; min-height: 7vw; }
   .names { min-width: 0; }
   .name {
     color: var(--environment); font-size: 3.6vw; font-weight: 900;
@@ -78,6 +79,32 @@
   .chart line {
     stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke;
   }
+  .qr {
+    flex: none; width: 7vw; height: 7vw; background: #fff; border-radius: 4px;
+  }
+  .qr path { fill: #000; }
+  .local-note {
+    flex: none; max-width: 10vw; padding: .4em .6em; border: 1px solid #a16207;
+    border-radius: 4px; background: rgba(161, 98, 7, .12); color: #fbbf24;
+    font-size: .85vw; line-height: 1.4;
+  }
+  .panel.unset .qr, .panel.unset .local-note { visibility: hidden; }
+  .list {
+    flex: 1; min-height: 0; overflow: hidden; display: none;
+    border: 1px solid var(--line); border-radius: 8px; padding: .4vh .6vw;
+  }
+  .list table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .list th {
+    color: var(--muted); font-size: .9vw; font-weight: 600; text-align: left;
+  }
+  .list td {
+    padding: .15em .4em .15em 0; border-top: 1px solid var(--line);
+    font-size: 1.15vw; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .list th:nth-child(1), .list th:nth-child(4) { width: 24%; }
+  body.list-view .list { display: block; }
+  body.list-view .frame-part { display: none; }
   .frame-head {
     display: flex; justify-content: space-between; color: var(--muted);
     font-size: .9vw;
@@ -115,7 +142,10 @@
     #grid { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 0 16px; }
     .panel { gap: 8px; padding: 12px; }
     .name { font-size: 36px; }
-    .name-ja, .meta, .frame-head, .label { font-size: 13px; }
+    .name-ja, .meta, .frame-head, .label, .list th { font-size: 13px; }
+    .list td { font-size: 14px; }
+    .qr { width: 96px; height: 96px; }
+    .local-note { max-width: 120px; font-size: 12px; }
     .status { font-size: 16px; }
     .banner { font-size: 15px; }
     .value { font-size: 24px; }
@@ -130,7 +160,7 @@
   <div id="top"><span id="top-ko"></span><span id="top-ja" lang="ja"></span></div>
   <div id="grid"></div>
   <div id="foot"><span id="paused" role="status" hidden>일시정지</span>
-    <span>P 일시정지 · F 전체화면</span></div>
+    <span>P 일시정지 · F 전체화면 · W 화면/목록</span></div>
   <template id="panel-template">
     <section class="panel">
       <div class="head">
@@ -142,6 +172,10 @@
           <div class="status" role="status" data-part="status">연결 중</div>
           <div class="detail" data-part="detail"></div>
         </div>
+        <svg class="qr" data-part="qr" role="img" shape-rendering="crispEdges"
+            aria-label="이 환경의 실제 서비스 주소 QR 코드"></svg>
+        <div class="local-note" data-part="local-note">이 노트북에서만 접속<br>
+          <span lang="ja">このPCからのみ接続</span></div>
       </div>
       <div class="meta">응답 환경 <b data-part="responder">—</b>
         · 리전 <b data-part="region">—</b>
@@ -167,15 +201,19 @@
           <g data-part="bars"></g>
         </svg>
       </div>
-      <div class="frame-head"><span>실제 서비스 화면 / 実際のサービス画面</span>
+      <div class="list"><table><thead><tr><th>요청 ID</th><th>run_id</th>
+        <th>phase</th><th>시각</th></tr></thead>
+        <tbody data-part="rows"></tbody></table></div>
+      <div class="frame-head frame-part"><span>실제 서비스 화면 / 実際のサービス画面</span>
         <a data-part="open" target="_blank" rel="noopener noreferrer">새 창으로 열기 ↗</a></div>
-      <div class="frame-box" data-part="frame-box">
+      <div class="frame-box frame-part" data-part="frame-box">
         <iframe data-part="frame" title="실제 서비스 화면" tabindex="-1"
             referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>
       </div>
       <div class="unset-note">주소 미설정</div>
     </section>
   </template>
+  <script src="/vendor/qrcode.js"></script>
   <script src="/live-model.js"></script>
   <script src="/viewer.js"></script>
 </body>

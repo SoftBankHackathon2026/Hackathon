@@ -227,18 +227,22 @@ function fakeElement() {
     textContent: '', hidden: false, dataset: {}, style: {}, children: [],
     src: '', href: '', attributes: {},
     classList: {
-      toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
+      toggle(name, on = !classes.has(name)) {
+        if (on) classes.add(name);
+        else classes.delete(name);
+      },
       contains: (name) => classes.has(name),
     },
     setAttribute(name, value) { this.attributes[name] = String(value); },
     append(child) { this.children.push(child); },
+    replaceChildren(...children) { this.children = children; },
   };
 }
 
 const IDENTITY = {environment: 'aws', region: 'r', version: 'a'.repeat(40)};
 
 /** Runs the real viewer.js for one panel against scripted poll answers. */
-async function openViewer(answers) {
+async function openViewer(answers, environment = {}) {
   const parts = new Map();
   const part = (name) => {
     if (!parts.has(name)) parts.set(name, fakeElement());
@@ -261,18 +265,27 @@ async function openViewer(answers) {
         return page.get(id);
       },
       createElementNS: fakeElement,
+      createElement: fakeElement,
+      body: fakeElement(),
       addEventListener(type, listener) { context.keydown = listener; },
     },
     fetch: async (url) => {
       if (url === '/api/environments') {
         return {json: async () => ({pollMillis: 500, timeoutMillis: 3000,
-          environments: [{id: 'a', name: 'A', nameJa: '', pageUrl: 'http://a'}],
+          environments: [{id: 'a', name: 'A', nameJa: '', pageUrl: 'http://a',
+            publicUrl: null, ...environment}],
         })};
       }
       context.polls++;
       return {json: async () => answers.shift() || {reachable: false}};
     },
     polls: 0,
+    qrcode: () => ({
+      addData(text) { context.qrText = text; },
+      make() {},
+      getModuleCount: () => 21,
+      isDark: () => true,
+    }),
     AbortSignal,
     ResizeObserver: class { observe() {} },
     setTimeout: (callback) => { context.nextPoll = callback; },
@@ -373,3 +386,42 @@ test('P pauses polling by physical key, so a Korean IME cannot block it',
       await screen.next();
       assert.equal(screen.context.polls, polls + 1);
     });
+
+test('the QR holds the public address; without one the panel says local only',
+    async () => {
+      const screen = await openViewer([], {pageUrl: 'http://proxy-side',
+        publicUrl: 'https://app.example.com'});
+      assert.equal(screen.context.qrText, 'https://app.example.com/');
+      assert.equal(screen.part('local-note').hidden, true);
+      const local = await openViewer([]);
+      assert.equal(local.context.qrText, undefined);
+      assert.equal(local.part('local-note').hidden, false);
+      assert.equal(local.part('qr').attributes.hidden, '');
+    });
+
+test('the config keeps the public address apart from the polled one',
+    async (t) => {
+      const {base} = await startViewer(t, [
+        {id: 'a', name: 'A', url: 'http://10.0.0.1:8080/',
+          public_url: 'https://app.example.com/'},
+        {id: 'b', name: 'B', url: 'http://10.0.0.2:8080', public_url: ''},
+      ]);
+      const {environments} =
+        await (await fetch(`${base}/api/environments`)).json();
+      assert.equal(environments[0].pageUrl, 'http://10.0.0.1:8080');
+      assert.equal(environments[0].publicUrl, 'https://app.example.com');
+      assert.equal(environments[1].publicUrl, null);
+    });
+
+test('W switches the panels to the recent requests list', async () => {
+  const row = {request_id_prefix: 'aaaaaaaa', run_id: '<b>x</b>', phase: 'p',
+    created_at: '2026-11-06T00:00:00.000Z'};
+  const screen = await openViewer([liveAnswer(1, 0, {recent: [row]})]);
+  const [cell] = screen.part('rows').children[0].children;
+  assert.equal(cell.textContent, 'aaaaaaaa');
+  assert.equal(screen.part('rows').children[0].children[1].textContent,
+      '<b>x</b>');
+  screen.context.keydown({code: 'KeyW'});
+  assert.equal(screen.context.document.body.classList.contains('list-view'),
+      true);
+});

@@ -1,5 +1,5 @@
 'use strict';
-/* global createIngestTracker, classifyPoll, noResponseDetail */
+/* global createIngestTracker, classifyPoll, noResponseDetail, qrcode */
 
 const RENDER_MILLIS = 250;
 const RATE_WINDOW_SECONDS = 10;
@@ -16,8 +16,45 @@ const SHORT_COMMIT_LENGTH = 7;
 // The page inside the frame is laid out at this width, then scaled to fit.
 const FRAME_VIRTUAL_WIDTH = 1600;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+// The QR standard asks for four blank modules around the code.
+const QR_QUIET_MODULES = 4;
 
 let paused = false;
+
+/** Draws a QR code as SVG, inside the browser: no network, works offline. */
+function drawQrCode(svg, text) {
+  const code = qrcode(0, 'M');
+  code.addData(text);
+  code.make();
+  const modules = code.getModuleCount();
+  const size = modules + QR_QUIET_MODULES * 2;
+  let path = '';
+  for (let row = 0; row < modules; row++) {
+    for (let column = 0; column < modules; column++) {
+      if (code.isDark(row, column)) {
+        const x = column + QR_QUIET_MODULES;
+        const y = row + QR_QUIET_MODULES;
+        path += `M${x} ${y}h1v1h-1z`;
+      }
+    }
+  }
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  const dark = document.createElementNS(SVG_NAMESPACE, 'path');
+  dark.setAttribute('d', path);
+  svg.append(dark);
+}
+
+function createRow(row) {
+  const tableRow = document.createElement('tr');
+  const time = new Date(row.created_at).toLocaleTimeString('en-GB');
+  // run_id and phase are request input: textContent keeps them inert.
+  for (const text of [row.request_id_prefix, row.run_id, row.phase, time]) {
+    const cell = document.createElement('td');
+    cell.textContent = text;
+    tableRow.append(cell);
+  }
+  return tableRow;
+}
 
 function createPanel(environment, pollMillis, timeoutMillis) {
   const root = document.getElementById('panel-template').content
@@ -83,6 +120,7 @@ function createPanel(environment, pollMillis, timeoutMillis) {
         observedAtMs - Date.now());
     part('database').textContent = live.database.name;
     part('total').textContent = tracker.highestCount().toLocaleString('ko-KR');
+    part('rows').replaceChildren(...live.recent.map(createRow));
   }
 
   /** A new deployment without a DB must not show the old one's data. */
@@ -90,6 +128,7 @@ function createPanel(environment, pollMillis, timeoutMillis) {
     if (live.environment === shownEnvironment) return;
     part('database').textContent = '—';
     part('total').textContent = '—';
+    part('rows').replaceChildren();
     tracker.forget();
   }
 
@@ -185,6 +224,12 @@ function createPanel(environment, pollMillis, timeoutMillis) {
     renderStatus();
   }
 
+  if (environment.publicUrl) {
+    drawQrCode(part('qr'), `${environment.publicUrl}/`);
+    part('local-note').hidden = true;
+  } else {
+    part('qr').setAttribute('hidden', '');
+  }
   if (environment.pageUrl) {
     part('open').href = `${environment.pageUrl}/`;
     new ResizeObserver(fitFrame).observe(part('frame-box'));
@@ -205,6 +250,7 @@ document.addEventListener('keydown', (event) => {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   // event.code ignores the input language: a Korean IME turns P into ㅔ.
   if (event.code === 'KeyP') setPaused(!paused);
+  if (event.code === 'KeyW') document.body.classList.toggle('list-view');
   if (event.code === 'KeyF') {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
