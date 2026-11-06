@@ -24,7 +24,7 @@ class DataService(BaseModel):
 
 
 ComponentLayer = Literal["entry", "platform", "app", "migration", "data", "link"]
-ComponentStatus = Literal["healthy", "degraded", "down", "unknown"]
+ComponentStatus = Literal["healthy", "degraded", "down", "idle", "unknown"]
 
 
 class ComponentView(BaseModel):

@@ -144,7 +144,7 @@ def _group_status(items: list[InventoryItem]) -> tuple[str, str]:
     desired = sum(item.desired for item in items)
     count = f"워크로드 {len(items)}개 · " if len(items) > 1 else ""
     if desired <= 0:
-        return "down", f"{count}복제본 0개로 줄어 있음"
+        return "idle", f"{count}복제본 0개로 줄여 둠"
     detail = f"{count}준비 {ready}/{desired}"
     lagging = [item.name for item in items if item.ready < item.desired]
     if not lagging:

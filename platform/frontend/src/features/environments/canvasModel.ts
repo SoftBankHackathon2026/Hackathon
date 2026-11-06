@@ -112,6 +112,7 @@ export function statusCounts(components: EnvComponent[]) {
     healthy: count("healthy"),
     degraded: count("degraded"),
     down: count("down"),
+    idle: count("idle"),
     unknown: count("unknown"),
   };
 }

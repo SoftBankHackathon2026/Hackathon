@@ -31,6 +31,7 @@ export const COMPONENT_STATUS_LABELS: Record<ComponentStatus, string> = {
   healthy: "정상",
   degraded: "일부만 준비됨",
   down: "중단",
+  idle: "꺼 둠",
   unknown: "상태 미수집",
 };
 

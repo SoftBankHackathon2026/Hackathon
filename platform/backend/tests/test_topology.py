@@ -24,7 +24,9 @@ from controlplane.services.fleet import environment_view
 NOW = datetime(2026, 11, 6, tzinfo=UTC)
 
 
-def workload(kind, ns, name, *, ready=1, labels=None, env=None, image="app:1", configmaps=()):
+def workload(
+    kind, ns, name, *, ready=1, replicas=1, labels=None, env=None, image="app:1", configmaps=()
+):
     container = {
         "image": image,
         "env": [{"name": k, "value": v} for k, v in (env or {}).items()],
@@ -35,7 +37,7 @@ def workload(kind, ns, name, *, ready=1, labels=None, env=None, image="app:1", c
         {
             "metadata": {"namespace": ns, "name": name, "labels": labels or {}},
             "spec": {
-                "replicas": 1,
+                "replicas": replicas,
                 "template": {
                     "metadata": {"labels": {"app": name}},
                     "spec": {"containers": [container]},
@@ -179,3 +181,18 @@ def test_permission_errors_are_not_reported_as_an_unreachable_cluster(monkeypatc
     assert (facts.connected, facts.read_status) == (False, 403)
     assert [i.title for i in view.issues] == ["클러스터를 읽을 권한이 없어요"]
     assert facts_from_json(facts_to_json(facts)).read_status == 403
+
+
+def test_workload_scaled_to_zero_is_idle_not_an_outage():
+    objects = ClusterObjects(
+        workloads=[workload("deployment", "shop", "batch", ready=0, replicas=0)],
+        services=[],
+        ingresses=[],
+        configmaps={},
+    )
+    env = with_default_layout(ONPREM.model_copy(update={"components": []}))
+    facts = ClusterFacts(observed_at=NOW, connected=True, inventory=build_inventory(objects, {}))
+    view = environment_view(EnvironmentSnapshot(env, facts))
+    batch = next(c for c in view.components if c.id == "batch")
+    assert batch.status == "idle"
+    assert view.issues == []

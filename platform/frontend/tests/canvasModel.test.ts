@@ -169,11 +169,13 @@ test("statusCounts and problemOrdinals", () => {
     component("b", "app", "app", { status: "down" }),
     component("c", "app", "app", { status: "unknown" }),
     component("d", "app", "app", { status: "degraded" }),
+    component("e", "app", "app", { status: "idle" }),
   ];
   assert.deepEqual(statusCounts(list), {
     healthy: 1,
     degraded: 1,
     down: 1,
+    idle: 1,
     unknown: 1,
   });
   assert.deepEqual(

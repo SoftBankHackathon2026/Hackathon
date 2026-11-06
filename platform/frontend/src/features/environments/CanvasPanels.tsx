@@ -221,6 +221,7 @@ export function InfraLegend({
     { tone: "ok", label: "정상", count: counts.healthy },
     { tone: "warn", label: "일부만 준비됨", count: counts.degraded },
     { tone: "bad", label: "중단", count: counts.down },
+    { tone: "idle", label: "꺼 둠", count: counts.idle },
     { tone: "idle", label: "상태 미수집", count: counts.unknown },
   ].filter((row) => row.tone === "ok" || row.count > 0);
   return (

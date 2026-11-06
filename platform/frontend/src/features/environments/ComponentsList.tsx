@@ -46,7 +46,11 @@ export function ComponentsList({
             return (
               <tr
                 key={`${row.envId}:${c.id}`}
-                className={c.status === "unknown" ? "dim" : undefined}
+                className={
+                  c.status === "unknown" || c.status === "idle"
+                    ? "dim"
+                    : undefined
+                }
               >
                 <td className="dot-col">
                   <i
