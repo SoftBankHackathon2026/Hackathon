@@ -94,7 +94,8 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
   `None` 을 돌려주면 설정값만 쓴다.
 - 기본 제공: `cost-exporter`. 온프렘 노드마다 DaemonSet 이 전력을 구해 ConfigMap `oneport-cost/cost-reading-<노드>` 에 남기고,
   측정기가 온프렘 읽기 계정으로 그 값을 모아 `power_watts` 로 쓴다. 노드가 VM 이면 CPU 사용률 기반 추정, 물리 서버에서 RAPL 을 읽을 수 있으면 측정.
-  배포 설정 `deploy/aws/cost.json` 이 이 측정기를 고른다. 자세한 것은 `infra/install/onprem-k8s/admin/cost-exporter/README.md`.
+  배포 설정 `deploy/aws/cost.json` 이 이 측정기를 고른다. 전기 단가는 같은 파일 `onprem.electricity_usd_per_kwh` 0.132 다
+  (한전 2026년 7월 평균 판매단가 kWh 당 179.7원 ÷ 2026-11-06 원·달러 1,356.6원. 일반용 요금표 단가로 바꾸려면 이 값만 고친다). 자세한 것은 `infra/install/onprem-k8s/admin/cost-exporter/README.md`.
 - 다른 예: 스마트 플러그 API 를 읽는 측정기.
 - 테스트 예: `tests/test_costs.py` 의 `test_registered_meter_is_created_and_read_by_collector`.
 
