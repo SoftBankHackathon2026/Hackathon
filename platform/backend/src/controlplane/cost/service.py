@@ -125,7 +125,7 @@ class CostService:
                 if not capacity.fits:
                     gaps.append(
                         "온프렘 용량 부족: 장비 증설 필요 "
-                        f"(vCPU {max(0, need_cpu - free_cpu):.2f} · "
+                        f"(vCPU {max(0, need_cpu - free_cpu):.2f}, "
                         f"메모리 {max(0, need_memory - free_memory):.1f} GiB)"
                     )
             elif sheet is not None:
@@ -134,7 +134,7 @@ class CostService:
                 )
             assumptions = [f"옮길 네임스페이스: {', '.join(namespaces)}", *assumptions]
         if source_cost.current and source_cost.current.unpriced and source_cost.cloud_equivalent:
-            gaps.append("원본 온프렘 장비비·전기료 미입력: 원본 비용은 클라우드 동급 환산값")
+            gaps.append("원본 온프렘 장비비/전기료 미입력: 원본 비용은 클라우드 동급 환산값")
         released = None
         source_sheet = self._sheet(source_env)
         if source is not None:
@@ -145,7 +145,7 @@ class CostService:
                     CostChange(
                         change="removed",
                         category="compute",
-                        source=f"{source_env.name} 노드·볼륨 중 옮기는 몫",
+                        source=f"{source_env.name} 노드, 볼륨 중 옮기는 워크로드 비용",
                         target=None,
                         before=released,
                         after=0.0,

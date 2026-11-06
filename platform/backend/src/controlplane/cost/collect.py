@@ -339,7 +339,7 @@ def read_aws_managed(region: str, tags: dict[str, str], session: Any = None) -> 
                 kind="lb_processing",
                 name=lb["LoadBalancerName"],
                 gib_per_month=_monthly_gib(processed),
-                note="처리 GB 를 LCU-시간으로 봄(연결·규칙 차원 제외)",
+                note="처리 GB 를 LCU-시간으로 봄(연결/규칙 차원 제외)",
             )
         )
     for nat in ec2.describe_nat_gateways(Filters=[{"Name": "state", "Values": ["available"]}])[
@@ -566,7 +566,7 @@ def collect_inventory(
             try:
                 scan = _scan(aws(env.region, tags))
                 sources.append(f"AWS 태그 {scope}")
-            except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
+            except Exception as exc:  # noqa: BLE001 - 권한/자격 증명/네트워크 오류 모두 수집 공백으로 남긴다
                 gaps.append(f"관리형 서비스: AWS 읽기 실패 ({type(exc).__name__})")
     elif env.provider == "gcp":
         if not project:
@@ -576,7 +576,7 @@ def collect_inventory(
                 scan = _scan(gcp(project, env.region, tags))
                 scope = ", ".join(f"{k}={v}" for k, v in tags.items())
                 sources.append("GCP 프로젝트" + (f" 라벨 {scope}" if scope else ""))
-            except Exception as exc:  # noqa: BLE001 - 권한·자격 증명·네트워크 오류 모두 수집 공백으로 남긴다
+            except Exception as exc:  # noqa: BLE001 - 권한/자격 증명/네트워크 오류 모두 수집 공백으로 남긴다
                 gaps.append(f"관리형 서비스: GCP 읽기 실패 ({type(exc).__name__})")
     reading = None
     if meter is not None:

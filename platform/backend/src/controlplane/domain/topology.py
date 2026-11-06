@@ -72,7 +72,7 @@ PRODUCTS = (
     Product("cert-manager", "cert-manager", "platform", "certificates", ("cert-manager",)),
     Product(
         "prometheus",
-        "Prometheus·Grafana",
+        "Prometheus/Grafana",
         "platform",
         "monitoring",
         ("prometheus-", "monitoring-", "grafana"),
@@ -150,7 +150,7 @@ def _groups(inventory: list[InventoryItem]) -> list[_Group]:
 def _group_status(items: list[InventoryItem]) -> tuple[str, str]:
     ready = sum(min(item.ready, item.desired) for item in items)
     desired = sum(item.desired for item in items)
-    count = f"워크로드 {len(items)}개 · " if len(items) > 1 else ""
+    count = f"워크로드 {len(items)}개, " if len(items) > 1 else ""
     if desired <= 0:
         return "idle", f"{count}복제본 0개로 줄여 둠"
     detail = f"{count}준비 {ready}/{desired}"
@@ -159,7 +159,7 @@ def _group_status(items: list[InventoryItem]) -> tuple[str, str]:
         return "healthy", detail
     if ready == 0:
         return "down", detail
-    return "degraded", f"{detail} · 준비 안 됨: {', '.join(lagging[:3])}"
+    return "degraded", f"{detail}, 준비 안 됨: {', '.join(lagging[:3])}"
 
 
 def _pod_view(pod: PodFact) -> PodView:
@@ -264,7 +264,7 @@ def _app_status(name: str, apps: list[AppState]) -> tuple[str, str]:
     app = next((a for a in apps if a.name == name), None)
     if app is None:
         return "unknown", "Argo CD 앱을 찾지 못함"
-    return APP_HEALTH_STATUS.get(app.health, "unknown"), f"{app.sync} · {app.health}"
+    return APP_HEALTH_STATUS.get(app.health, "unknown"), f"{app.sync}, {app.health}"
 
 
 def component_view(component: ComponentConfig, cluster: ClusterFacts) -> ComponentView:
@@ -275,7 +275,7 @@ def component_view(component: ComponentConfig, cluster: ClusterFacts) -> Compone
     else:
         status, detail = "unknown", "관리형 서비스 상태는 아직 수집하지 않음"
     if component.note:
-        detail = f"{detail} · {component.note}"
+        detail = f"{detail}, {component.note}"
     return ComponentView(
         id=component.id,
         name=component.name,

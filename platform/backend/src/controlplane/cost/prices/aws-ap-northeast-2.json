@@ -22,7 +22,7 @@
     "inter_zone": "가용 영역 간 전송",
     "nat_processing": "NAT Gateway 처리",
     "lb_processing": "ALB 처리량(LCU)",
-    "block_volume": "EBS gp3 (노드·VM 디스크)"
+    "block_volume": "EBS gp3 (노드와 VM 디스크)"
   },
   "compute": {
     "t3.micro": {

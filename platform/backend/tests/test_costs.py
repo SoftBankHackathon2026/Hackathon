@@ -180,11 +180,11 @@ def test_cloud_price_counts_nodes_control_plane_volumes_and_managed():
     assert cost.unpriced == 1
     assert by_item["kubernetes_control_plane"] == monthly(0.1)
     assert by_item["block"] == 1.0
-    assert by_item["postgres db.t4g.micro · db"] == monthly(0.01)
+    assert by_item["postgres db.t4g.micro / db"] == monthly(0.01)
     assert by_item["database"] == 4.0
-    assert by_item["kafka_broker kafka.t3.small · mq"] == round(monthly(0.05) * 2, 2)
-    assert by_item["load_balancer · alb"] == monthly(0.02)
-    assert by_item["EC2 t3.small · router"] == monthly(0.02)
+    assert by_item["kafka_broker kafka.t3.small / mq"] == round(monthly(0.05) * 2, 2)
+    assert by_item["load_balancer / alb"] == monthly(0.02)
+    assert by_item["EC2 t3.small / router"] == monthly(0.02)
     assert cost.monthly == round(sum(v for v in by_item.values() if v), 2)
 
 
@@ -265,11 +265,11 @@ def test_migration_to_existing_cluster_grows_same_node_type_and_maps_data_to_man
     assert items["EC2 t3.medium 추가"].quantity == 1
     assert "kubernetes_control_plane" not in items
     # 메모리 1 GiB(여유율 0) → 1 GiB 클래스 중 가장 싼 db.t4g.micro
-    assert items["postgres db.t4g.micro · hackathon/postgres"].monthly == monthly(0.01)
+    assert items["postgres db.t4g.micro / hackathon/postgres"].monthly == monthly(0.01)
     assert items["database"].quantity == 20
-    kafka = items["kafka_broker kafka.t3.small · hackathon/kafka-broker"]
+    kafka = items["kafka_broker kafka.t3.small / hackathon/kafka-broker"]
     assert kafka.quantity == 3
-    assert items["object · hackathon/object-storage"].quantity == 3
+    assert items["object / hackathon/object-storage"].quantity == 3
     assert any("관리형" in a for a in assumptions)
     # 변화 행: 데이터 서비스는 관리형으로 바뀌고, 합계는 늘어나는 비용과 같다
     kinds = {c.change for c in changes}
@@ -657,12 +657,12 @@ def test_transfer_public_ip_and_root_volumes_are_priced():
         ],
     )
     lines = {line.item: line for line in price_cloud(inv, sheet).lines}
-    assert lines["block_volume · node"].monthly == 2.0
+    assert lines["block_volume / node"].monthly == 2.0
     assert lines["public_ipv4"].monthly == round(3 * 0.005 * 730, 2)
-    assert lines["nat_processing · nat"].monthly == 0.5
-    assert lines["internet_egress · router"].monthly == 0.5
-    assert lines["lb_processing · alb"].monthly == 0.02
-    assert lines["inter_zone · x"].monthly is None
+    assert lines["nat_processing / nat"].monthly == 0.5
+    assert lines["internet_egress / router"].monthly == 0.5
+    assert lines["lb_processing / alb"].monthly == 0.02
+    assert lines["inter_zone / x"].monthly is None
 
 
 def test_one_time_costs_follow_transfer_direction():

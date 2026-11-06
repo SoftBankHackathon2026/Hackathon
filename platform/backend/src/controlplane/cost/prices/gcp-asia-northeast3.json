@@ -18,8 +18,8 @@
     "object": "Cloud Storage Standard"
   },
   "notes": {
-    "kafka_broker": "Managed Kafka 는 DCU 단위 과금이라 vCPU·메모리 → DCU 환산을 확인하기 전까지 단가 없음",
-    "nat_gateway": "Cloud NAT 는 IP 사용료만. 게이트웨이 VM 당 요금·처리 GB 제외",
+    "kafka_broker": "Managed Kafka 는 DCU 단위로 과금해요. vCPU와 메모리를 DCU로 바꾸는 공식 기준을 확인하기 전까지 가격 정보 없음",
+    "nat_gateway": "Cloud NAT 는 IP 사용료만 포함해요. 게이트웨이 VM 요금과 처리 GB 요금은 빠져 있어요",
     "transfer": "서울 리전에서 국내로 나가는 송신 SKU 를 확인하지 못해 데이터 전송은 단가 없음"
   },
   "compute": {

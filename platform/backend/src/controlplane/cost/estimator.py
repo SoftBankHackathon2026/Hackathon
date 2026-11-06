@@ -96,7 +96,7 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
         return [
             _priced(
                 "compute",
-                f"{sheet.label('compute')} {service.size} · {service.name}",
+                f"{sheet.label('compute')} {service.size} / {service.name}",
                 service.count,
                 "대",
                 sheet.monthly(price.hourly) if price else None,
@@ -105,13 +105,13 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
         ]
     if service.kind == "block_volume":
         line = _storage_line(sheet, "block", service.storage_gib)
-        return [line.model_copy(update={"item": f"{sheet.label('block_volume')} · {service.name}"})]
+        return [line.model_copy(update={"item": f"{sheet.label('block_volume')} / {service.name}"})]
     if service.kind == "postgres":
         price = sheet.managed_price("postgres", service.size)
         lines = [
             _priced(
                 "database",
-                f"{sheet.label('postgres')} {service.size} · {service.name}",
+                f"{sheet.label('postgres')} {service.size} / {service.name}",
                 service.count,
                 "대",
                 sheet.monthly(price.hourly) if price else None,
@@ -127,12 +127,12 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
         if price is None and rates is not None and service.vcpu:
             # 브로커 유형이 아니라 클러스터 vCPU·메모리로 과금하는 경우(GCP Managed Kafka)
             price = rates.price(service.vcpu, service.memory_gib)
-        size = service.size or f"vCPU {service.vcpu:g} · 메모리 {service.memory_gib:g} GiB"
+        size = service.size or f"vCPU {service.vcpu:g}, 메모리 {service.memory_gib:g} GiB"
         note = sheet.notes.get("kafka_broker") or "가격표에 없는 브로커 유형"
         lines = [
             _priced(
                 "messaging",
-                f"{sheet.label('kafka_broker')} {size} · {service.name}",
+                f"{sheet.label('kafka_broker')} {size} / {service.name}",
                 service.count,
                 "브로커" if service.size else "클러스터",
                 sheet.monthly(price.hourly) if price else None,
@@ -144,13 +144,13 @@ def _managed_lines(sheet: PriceSheet, service: ManagedService) -> list[CostLine]
         return lines
     if service.kind == "object_storage":
         line = _storage_line(sheet, "object", service.storage_gib)
-        return [line.model_copy(update={"item": f"{line.item} · {service.name}"})]
+        return [line.model_copy(update={"item": f"{line.item} / {service.name}"})]
     key = service.kind
     price = hourly.get(key)
     return [
         _priced(
             "network" if key != "kubernetes_control_plane" else "control_plane",
-            f"{sheet.label(key)} · {service.name}",
+            f"{sheet.label(key)} / {service.name}",
             service.count,
             "개",
             sheet.monthly(price) if price is not None else None,
@@ -223,7 +223,7 @@ def transfer_lines(inventory: CostInventory, sheet: PriceSheet) -> list[CostLine
         lines.append(
             _priced(
                 "transfer",
-                f"{sheet.label(usage.kind)} · {usage.name}",
+                f"{sheet.label(usage.kind)} / {usage.name}",
                 usage.gib_per_month,
                 "GB/월",
                 unit,
@@ -278,7 +278,7 @@ def price_onprem(spec: OnPremSpec, reading: OnPremReading | None = None) -> Cost
         ),
     ]
     if other:
-        lines.append(_priced("onprem", "회선·공간 등", 1, "월", other, None, other_basis))
+        lines.append(_priced("onprem", "회선/공간 등", 1, "월", other, None, other_basis))
     label = "지금 월 비용 (측정값 포함)" if reading is not None else "지금 월 비용 (운영자 입력)"
     return CostBreakdown.of(label, lines)
 
@@ -298,7 +298,7 @@ def price_equivalent(
                 1,
                 "대",
                 sheet.monthly(fit[1].hourly) if fit else None,
-                f"{node.vcpu:g} vCPU · {node.memory_gib:.1f} GiB 이상",
+                f"{node.vcpu:g} vCPU, {node.memory_gib:.1f} GiB 이상",
             )
         )
     volume_gib = sum(v.gib for v in inventory.volumes)
@@ -427,9 +427,9 @@ def capacity_assumptions(
     need_cpu: float, need_memory: float, free_cpu: float, free_memory: float, headroom: float
 ) -> list[str]:
     return [
-        f"파드 요청량(requests) 합계 vCPU {need_cpu:.2f} · 메모리 {need_memory:.1f} GiB "
+        f"파드 요청량(requests) 합계 vCPU {need_cpu:.2f}, 메모리 {need_memory:.1f} GiB "
         f"(여유율 {headroom:.0%} 포함)",
-        f"대상 노드의 남는 용량 vCPU {free_cpu:.2f} · 메모리 {free_memory:.1f} GiB 먼저 사용",
+        f"대상 노드의 여유 자원(vCPU {free_cpu:.2f}, 메모리 {free_memory:.1f} GiB)을 먼저 사용",
     ]
 
 
@@ -459,7 +459,7 @@ def _sum(lines: list[CostLine]) -> float | None:
 def _workload_summary(demands: list[WorkloadDemand]) -> str:
     vcpu = sum(d.vcpu for d in demands)
     memory = sum(d.memory_gib for d in demands)
-    return f"워크로드 {len(demands)}개 · 요청 vCPU {vcpu:.2f} · 메모리 {memory:.1f} GiB"
+    return f"워크로드 {len(demands)}개, 요청 vCPU {vcpu:.2f}, 메모리 {memory:.1f} GiB"
 
 
 def _data_source(service: ManagedService, demands: list[WorkloadDemand]) -> str:
@@ -468,14 +468,14 @@ def _data_source(service: ManagedService, demands: list[WorkloadDemand]) -> str:
     gib = sum(d.storage_gib for d in matched)
     replicas = sum(d.replicas for d in matched)
     label = ROLE_LABELS.get(service.kind, service.kind)
-    pods = f" · 파드 {replicas}개" if replicas > 1 else ""
+    pods = f", 파드 {replicas}개" if replicas > 1 else ""
     return (
-        f"{', '.join(d.name for d in matched) or service.name} ({label}{pods} · 디스크 {gib:g} GiB)"
+        f"{', '.join(d.name for d in matched) or service.name} ({label}{pods}, 디스크 {gib:g} GiB)"
     )
 
 
 def _target_label(lines: list[CostLine], service: ManagedService) -> str:
-    head = lines[0].item.split(" · ")[0]
+    head = lines[0].item.split(" / ")[0]
     if service.count > 1 and lines[0].unit in ("대", "브로커"):
         head = f"{head} × {service.count}"
     storage = sum(line.quantity for line in lines[1:])
@@ -506,7 +506,7 @@ def estimate_added(
         "데이터 서비스는 관리형으로 바꿈"
         if managed
         else "데이터 서비스는 대상 클러스터에 그대로 띄움",
-        "온디맨드 단가, 월 730시간. 약정 할인·크레딧·세금 제외",
+        "온디맨드 단가, 월 730시간. 약정 할인/크레딧/세금 제외",
     ]
     lines: list[CostLine] = []
     changes: list[CostChange] = []
@@ -550,15 +550,15 @@ def estimate_added(
                     count,
                     "대",
                     sheet.monthly(sheet.instance(name).hourly),
-                    f"부족분 vCPU {extra_cpu:.2f} · 메모리 {extra_memory:.1f} GiB"
-                    + (" · 기존 노드와 같은 유형" if existing else ""),
+                    f"모자란 자원 vCPU {extra_cpu:.2f}, 메모리 {extra_memory:.1f} GiB"
+                    + (", 기존 노드와 같은 유형으로 추가" if existing else ""),
                 )
             )
     lines += compute
     if on_nodes:
-        target_text = "기존 노드의 남는 용량"
+        target_text = "기존 노드의 여유 자원"
         if compute:
-            target_text = f"남는 용량 + {compute[0].item.removesuffix(' 추가')} {compute[0].quantity:g}대 추가"
+            target_text = f"여유 자원 + {compute[0].item.removesuffix(' 추가')} {compute[0].quantity:g}대 추가"
         after = _sum(compute) if compute else 0.0
         changes.append(
             CostChange(
@@ -619,7 +619,7 @@ def onprem_changes(
             change="moved",
             category="compute",
             source=_workload_summary(demands),
-            target="온프렘 노드의 남는 용량",
+            target="온프렘 노드의 여유 자원",
             before=None,
             after=0.0,
             delta=0.0,
@@ -650,7 +650,7 @@ def one_time_costs(
         )
     lines = [
         _priced(
-            "transfer", "데이터 첫 복사", moving_gib, "GB", unit, f"PVC 용량 기준(상한) · {note}"
+            "transfer", "데이터 첫 복사", moving_gib, "GB", unit, f"PVC 용량 기준(상한), {note}"
         ),
         _priced(
             "transfer",
@@ -658,7 +658,7 @@ def one_time_costs(
             cdc_gib,
             "GB",
             unit,
-            f"하루 {config.cdc_gib_per_day:g} GB 가정 · {note}",
+            f"하루 {config.cdc_gib_per_day:g} GB 가정, {note}",
         ),
     ]
     if monthly_increase is not None:
@@ -669,7 +669,7 @@ def one_time_costs(
                 config.dual_run_days,
                 "일",
                 monthly_increase / 30,
-                "전환을 마치기 전까지 대상 증가분을 원본과 함께 냄",
+                "전환을 마칠 때까지 늘어난 대상 비용을 원본 비용과 함께 내요",
             )
         )
     assumptions = [
@@ -710,5 +710,5 @@ def released_monthly(
     return (
         round(nodes * share + block, 2),
         f"원본에서 줄어드는 비용: 노드 비용의 {share:.0%}(요청량 비중) + 볼륨. "
-        "컨트롤 플레인·LB·관리형 서비스는 남는다고 봄",
+        "컨트롤 플레인, LB, 관리형 서비스 비용은 원본에 그대로 둠",
     )

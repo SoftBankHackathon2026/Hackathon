@@ -30,7 +30,7 @@ def _unread_issue(snapshot: EnvironmentSnapshot) -> EnvironmentIssue:
     status = snapshot.cluster.read_status
     detail = snapshot.config.name
     if status == 404:
-        detail = f"{detail} · ns {snapshot.config.app_namespace}"
+        detail = f"{detail}, ns {snapshot.config.app_namespace}"
     elif status in (401, 403):
         detail = READ_ACCESS_HINT.get(snapshot.config.provider, READ_ACCESS_HINT["onprem"])
     return EnvironmentIssue(
