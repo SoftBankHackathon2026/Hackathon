@@ -248,3 +248,6 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 - cutover PRECHECK 가 워커 `/status.known_targets` 로 **원본·대상 target 이 워커 설정에 있는지** 확인한다. 없으면 SWITCHING(자동 원복 없음)에서 `/target` 이 실패해 NEEDS_RECOVERY 가 되므로 미리 막는다. 워커 ConfigMap(gitops `apps/db-insert-worker`)에 귀환 대상 `onprem_return` 이 들어 있어야 한다.
 - COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
 - 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.
+# OpenBao 온프레미스 준비
+
+`python -m migration.openbao_infra`로 기존 OpenBao 탐색·점검, 선택한 Ubuntu 노드 한 대의 운영체제 서비스 설치, 인증·접근 권한과 고정 키 인계를 수행합니다. 실제 비밀값 이관과 Keycloak 서버 설치는 포함하지 않습니다. [사용법과 플랫폼 연동](docs/openbao-infra/README.md), [검증 범위](docs/openbao-infra/VALIDATION.md), [예시 설정](config.openbao-infra.example.yaml)을 참고하십시오.

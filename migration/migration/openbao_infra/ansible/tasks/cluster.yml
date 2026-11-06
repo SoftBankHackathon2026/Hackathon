@@ -1,0 +1,5 @@
+- name: Read cluster and verify selected node identities
+  openbao_cluster_info:
+    config: '{{ ob }}'
+    discover: '{{ ob_operation == ''discover'' }}'
+  register: cluster_result

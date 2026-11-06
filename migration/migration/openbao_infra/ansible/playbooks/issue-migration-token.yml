@@ -1,0 +1,61 @@
+- name: Read cluster identity
+  hosts: controllers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+- name: Operate only selected node
+  hosts: openbao_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+  - name: Acquire target operation lock
+    openbao_lock:
+      action: acquire
+      owner: '{{ ob_lock_owner }}'
+  - name: Perform owned operation
+    block:
+    - ansible.builtin.import_tasks: ../tasks/preflight.yml
+    - name: Require this owned installation for product changes
+      ansible.builtin.assert:
+        that:
+        - ob.target.mode == 'reuse' or host_check.report.owned
+        quiet: true
+    - name: Prepare private product control state
+      ansible.builtin.file:
+        path: '{{ ob_state }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+    - name: Copy reuse trust anchor
+      ansible.builtin.copy:
+        dest: '{{ ob_state }}/trust.pem'
+        content: '{{ ob_credentials.reuse_ca }}'
+        owner: root
+        group: root
+        mode: '0644'
+      when: ob.target.mode == 'reuse'
+    - name: Apply bounded product operation
+      openbao_manage:
+        action: issue-migration-token
+        config: '{{ ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict }}'
+        state_dir: '{{ ob_state }}'
+        credentials: '{{ ob_credentials }}'
+    - name: Fetch short lived migration token without stdout
+      ansible.builtin.fetch:
+        src: '{{ ob_state }}/migration.token'
+        dest: '{{ ob_work }}/migration.token'
+        flat: true
+      no_log: true
+    - name: Remove target temporary migration token
+      ansible.builtin.file:
+        path: '{{ ob_state }}/migration.token'
+        state: absent
+      no_log: true
+    always:
+    - name: Release only own operation lock
+      openbao_lock:
+        action: release
+        owner: '{{ ob_lock_owner }}'
