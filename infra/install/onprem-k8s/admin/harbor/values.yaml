@@ -3,6 +3,7 @@
 # 관리자 비밀번호는 bootstrap-secrets.sh 가 .secrets.env 의 HARBOR_ADMIN_PASSWORD 로 harbor/harbor-admin Secret 을 만든다.
 #
 # 최소화한 것: Trivy·메트릭·내부 TLS 끔, 모든 구성 요소 1개, PVC 최소, 요청량 작게, 워커 노드에 고정.
+# 한도는 2026-11-06 실사용(core 42Mi, registry 29Mi, DB 64Mi, jobservice 10Mi)의 3~4배로 줄였다.
 # 노출: 도메인·인증서 없이 NodePort HTTP (http://172.30.1.7:30002). LAN·Tailscale 안에서만 쓴다.
 expose:
   type: nodePort
@@ -50,22 +51,22 @@ core:
   replicas: 1
   nodeSelector: {kubernetes.io/hostname: k3s-worker}
   resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 384Mi}
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 192Mi}
 jobservice:
   replicas: 1
-  maxJobWorkers: 2
+  maxJobWorkers: 1
   nodeSelector: {kubernetes.io/hostname: k3s-worker}
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 192Mi}
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {memory: 96Mi}
 registry:
   replicas: 1
   nodeSelector: {kubernetes.io/hostname: k3s-worker}
   registry:
     resources:
       requests: {cpu: 10m, memory: 32Mi}
-      limits: {memory: 256Mi}
+      limits: {memory: 128Mi}
   controller:
     resources:
       requests: {cpu: 10m, memory: 16Mi}
@@ -76,7 +77,7 @@ database:
     nodeSelector: {kubernetes.io/hostname: k3s-worker}
     resources:
       requests: {cpu: 20m, memory: 64Mi}
-      limits: {memory: 256Mi}
+      limits: {memory: 192Mi}
 redis:
   type: internal
   internal:

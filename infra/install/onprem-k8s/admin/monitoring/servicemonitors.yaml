@@ -33,7 +33,7 @@ spec:
   endpoints:
     - targetPort: 8080
       path: /metrics
-      interval: 5s
+      interval: 15s
       relabelings:
         - action: replace
           sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
@@ -69,7 +69,7 @@ spec:
   endpoints:
     - port: http
       path: /metrics
-      interval: 5s
+      interval: 15s
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -87,4 +87,4 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
-      interval: 5s
+      interval: 15s
