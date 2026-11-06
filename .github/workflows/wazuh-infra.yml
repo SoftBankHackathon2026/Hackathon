@@ -1,0 +1,83 @@
+name: wazuh-infra
+
+on:
+  pull_request:
+    paths: ["migration/**", ".github/workflows/wazuh-infra.yml"]
+  push:
+    branches: [main]
+    paths: ["migration/**", ".github/workflows/wazuh-infra.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: migration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install optional infrastructure and test tools
+        run: python -m pip install '.[wazuh-infra,dev]' build wheel ruff==0.17.4
+      - name: Check source formatting and imports
+        run: |
+          ruff check --isolated --select E9,F,I migration/wazuh_infra tests/wazuh_infra
+          ruff format --check migration/wazuh_infra tests/wazuh_infra
+      - name: Run contracts, actual Ansible and existing migration checks
+        run: python -m pytest -ra
+      - name: Build and inspect package assets
+        run: |
+          python -m build --no-isolation
+          python -c 'from pathlib import Path; import zipfile; z=zipfile.ZipFile(next(Path("dist").glob("*.whl"))); names=z.namelist(); assert "migration/wazuh_infra/ansible/playbooks/install.yml" in names; assert "migration/wazuh_infra/ansible/templates/guard.py" in names; assert "migration/wazuh_infra/ansible/roles/install/tasks/main.yml" in names; assert not any("__pycache__" in p for p in names)'
+
+  indexer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: migration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install isolated test dependencies
+        run: python -m pip install '.[wazuh-infra,dev]'
+      - name: Start a fixed real Wazuh indexer on loopback only
+        run: |
+          cat > "$RUNNER_TEMP/wazuh-indexer-test.yml" <<'EOF'
+          network.host: 0.0.0.0
+          http.port: 9200
+          node.name: oneport-test-indexer
+          cluster.name: oneport-wazuh-isolated-test
+          discovery.type: single-node
+          plugins.security.disabled: true
+          path.data: /var/lib/wazuh-indexer
+          path.logs: /usr/share/wazuh-indexer/logs
+          EOF
+          chmod 644 "$RUNNER_TEMP/wazuh-indexer-test.yml"
+          docker run --detach --rm --name oneport-wazuh-test --memory 2g --publish 127.0.0.1:19200:9200 --env 'OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m' --mount "type=bind,src=$RUNNER_TEMP/wazuh-indexer-test.yml,dst=/usr/share/wazuh-indexer/config/opensearch.yml,readonly" wazuh/wazuh-indexer@sha256:e56f85ed9e79f113c0f2d2a7965171cd8e063262ec88e110086acdb1f69f2240
+      - name: Wait for the isolated node
+        run: |
+          python - <<'PY'
+          import time, urllib.request
+          for attempt in range(120):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:19200', timeout=2) as response:
+                      if response.status == 200:
+                          break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('Isolated Wazuh indexer did not become ready')
+          PY
+      - name: Verify failed-event preservation using the real indexer
+        run: WAZUH_TEST_INDEXER_URL=http://127.0.0.1:19200 python -m pytest tests/wazuh_infra/test_indexer_live.py -ra
+      - name: Remove only the isolated test container
+        if: always()
+        run: docker rm --force oneport-wazuh-test || true

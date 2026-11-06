@@ -1,0 +1,18 @@
+- name: Inspect a manually supplied existing endpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: Inspect HTTPS endpoint without replacing certificates
+    wazuh_endpoint:
+      url: '{{ wi.endpoint.url }}'
+      ca_file: '{{ wi.endpoint.ca_file }}'
+      username: '{{ wi.endpoint.username | default('''') }}'
+      password: '{{ wi_credentials.endpoint_password | default('''') }}'
+    no_log: true
+    register: wi_task_report
+    failed_when: false
+  - name: Store only the module report in the private controller workspace
+    wazuh_report:
+      report: '{{ wi_task_report.report | default({}) }}'
+      enforce: false
+    no_log: true

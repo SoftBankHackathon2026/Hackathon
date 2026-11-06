@@ -1,0 +1,35 @@
+- name: Read allowed cluster metadata
+  wazuh_cluster:
+    config: '{{ wi }}'
+  register: wi_cluster
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  failed_when: false
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_cluster.report | default({}) }}'
+    enforce: false
+  no_log: true
+- name: Inspect the selected physical host
+  wazuh_host:
+    config: '{{ wi }}'
+    expected_nodes: '{{ wi_cluster.report.nodes }}'
+    node_name: '{{ wi_node_name }}'
+    node_uid: '{{ wi_node_uid }}'
+    operation: '{{ wi_operation }}'
+    digest: '{{ wi_digest }}'
+    credentials: '{{ wi_credentials.aws }}'
+  register: wi_host
+  no_log: true
+  failed_when: false
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_host.report | default({}) }}'
+    enforce: false
+  no_log: true
+- name: Stop when host identity or prerequisites cannot be confirmed
+  ansible.builtin.assert:
+    that: not (wi_host.blocked | default(false))
+    fail_msg: WAZUH_HOST_CHECK_BLOCKED

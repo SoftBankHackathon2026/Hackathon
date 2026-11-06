@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wazuh infrastructure result v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "status",
+    "full_migration_verified"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "operation": {
+      "enum": [
+        "discover",
+        "inspect",
+        "assess",
+        "preflight",
+        "install",
+        "configure",
+        "verify",
+        "control"
+      ]
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "blocked",
+        "failed"
+      ]
+    },
+    "scope": {
+      "const": "infrastructure_only"
+    },
+    "full_migration_verified": {
+      "const": false
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "unknown",
+              "skipped"
+            ]
+          }
+        }
+      }
+    },
+    "reports": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "archive_integration_status": {
+      "const": "external_dependency_pending"
+    },
+    "capacity": {
+      "type": "object"
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    }
+  },
+  "additionalProperties": true
+}

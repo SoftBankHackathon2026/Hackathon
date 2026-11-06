@@ -1,0 +1,349 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 7200
+    },
+    "cluster": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kubeconfig": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "context": {
+          "type": "string"
+        },
+        "namespaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kubeconfig",
+        "context"
+      ],
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "string"
+          },
+          "ssh_host": {
+            "type": "string"
+          },
+          "ssh_user": {
+            "type": "string"
+          },
+          "private_key_file": {
+            "type": "string"
+          },
+          "known_hosts_file": {
+            "type": "string"
+          },
+          "become_password_ref": {
+            "type": "string"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "required": [
+          "name",
+          "uid",
+          "ssh_host",
+          "ssh_user",
+          "private_key_file",
+          "known_hosts_file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "installation_id": {
+          "type": "string"
+        },
+        "node_name": {
+          "type": "string"
+        },
+        "bind_address": {
+          "type": "string"
+        },
+        "dashboard_port": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_available_memory_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "heap_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_control_plane": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "reserve_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raw_budget_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index_budget_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "intermediate_budget_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_raw_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decoded_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "daily_raw_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "raw_path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "index_path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "index_factor_low": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "index_factor_high": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "cloudtrail",
+              "vpcflow",
+              "config",
+              "guardduty",
+              "waf",
+              "server_access",
+              "custom",
+              "cloudwatchlogs"
+            ]
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "bucket_owner": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "log_group": {
+            "type": "string"
+          },
+          "account_id": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "credentials_file": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string"
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "account_id",
+          "region",
+          "credentials_file"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "cloudwatchlogs"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "log_group"
+              ]
+            },
+            "else": {
+              "required": [
+                "bucket"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "tls": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "self_signed",
+            "provided"
+          ]
+        },
+        "certificate_ref": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "private_key_ref": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "ca_ref": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "endpoint": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "ca_file": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password_ref": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      },
+      "required": [
+        "url",
+        "ca_file"
+      ],
+      "additionalProperties": false
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "operator_password_ref": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "reader_password_ref": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "control": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "enum": [
+            "start",
+            "pause",
+            "status"
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "probe": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wazuh infrastructure platform input v1"
+}

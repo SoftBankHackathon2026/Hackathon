@@ -1,0 +1,5 @@
+include config.wazuh-infra.example.yaml
+recursive-include docs/wazuh-infra *.md *.json
+recursive-include tests/wazuh_infra *.py
+recursive-include migration/wazuh_infra/ansible *.cfg *.yml *.py
+global-exclude *.py[cod]

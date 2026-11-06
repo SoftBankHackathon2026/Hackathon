@@ -13,16 +13,32 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+wazuh-infra = [
+    "ansible-core>=2.20,<2.21",
+    "kubernetes>=37,<38",
+    "cryptography>=42",
+    "bcrypt>=4,<6",
+    "boto3>=1.34,<2",
+]
 dev = [
     "pytest>=8.0",
+    "jsonschema>=4,<5",
 ]
 
-[tool.setuptools]
-packages = ["migration"]
+[tool.setuptools.packages.find]
+include = ["migration", "migration.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"migration.wazuh_infra" = ["ansible/**/*.py", "ansible/**/*.yml", "ansible/ansible.cfg"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -ra"
 markers = [
     "integration: 실제 PostgreSQL이 필요한 테스트 (MIGRATION_TEST_DSN 설정 시 실행)",
+    "wazuh_live: 격리된 로컬 Wazuh indexer의 실제 처리 시험",
 ]

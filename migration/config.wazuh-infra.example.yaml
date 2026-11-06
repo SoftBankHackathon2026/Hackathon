@@ -1,0 +1,79 @@
+# 문서용 주소와 파일 참조를 실제 값으로 바꾸고 설정 파일에 0600 권한을 적용하십시오.
+schema_version: 1
+request_id: wazuh-prepare-001
+timeout_seconds: 1800
+cluster:
+  id: onprem-example
+  kubeconfig: /secure/onprem.kubeconfig
+  context: onprem
+  namespaces: []
+nodes:
+  - name: worker-01
+    uid: REPLACE-WITH-CURRENT-NODE-UID
+    ssh_host: 192.0.2.10
+    ssh_port: 22
+    ssh_user: ubuntu
+    private_key_file: /secure/ssh-key
+    known_hosts_file: /secure/known_hosts
+    # become_password_ref: /secure/sudo-password
+target:
+  installation_id: onprem-audit-001
+  node_name: worker-01
+  bind_address: 192.0.2.10
+  dashboard_port: 8443
+  min_available_memory_mb: 8192
+  heap_mb: 2048
+  allow_control_plane: false
+storage:
+  raw_path: /srv/oneport-audit/raw
+  index_path: /srv/oneport-audit/index
+  reserve_bytes: 10737418240
+  raw_budget_bytes: 10737418240
+  index_budget_bytes: 21474836480
+  intermediate_budget_bytes: 5368709120
+  # 아래 추정 근거는 선택 입력이며 모르면 생략합니다. 배율은 실제 표본으로 측정합니다.
+  # source_raw_bytes: 1073741824
+  # decoded_bytes: 4294967296
+  # index_factor_low: 1.0
+  # index_factor_high: 2.0
+  # daily_raw_bytes: 1073741824
+access:
+  operator_password_ref: /secure/wazuh-operator-password
+  reader_password_ref: /secure/wazuh-reader-password
+tls:
+  mode: self_signed
+  # provided 모드: dashboard용 인증서·키·신뢰 체인을 모두 제공합니다.
+  # certificate_ref: /secure/dashboard.crt
+  # private_key_ref: /secure/dashboard.key
+  # ca_ref: /secure/dashboard-ca.pem
+sources:
+  - id: account-cloudtrail
+    type: cloudtrail
+    bucket: example-audit-logs
+    prefix: AWSLogs/
+    account_id: '123456789012'
+    bucket_owner: '123456789012'
+    region: ap-northeast-2
+    credentials_file: /secure/aws-credentials
+    profile: audit-reader
+    start_date: 1970-JAN-01
+    max_pages: 10
+  # - id: eks-audit
+  #   type: cloudwatchlogs
+  #   log_group: /aws/eks/example/cluster
+  #   account_id: '123456789012'
+  #   region: ap-northeast-2
+  #   credentials_file: /secure/aws-credentials
+  #   profile: audit-reader
+  #   start_date: 1970-JAN-01
+control:
+  action: status  # start / pause / status. 별도 원본 이관 도구는 실행하지 않습니다.
+verification:
+  probe: false  # true는 새 시험 이벤트 하나를 Wazuh 입력에 보내 전체 이벤트 검색을 검사합니다.
+
+# 기존 주소만 inspect할 때는 schema_version, request_id, endpoint만으로 실행할 수 있습니다.
+# endpoint:
+#   url: https://audit.example.internal:8443
+#   ca_file: /secure/dashboard-ca.pem
+#   username: oneport_reader
+#   password_ref: /secure/wazuh-reader-password
