@@ -14,7 +14,7 @@ export function ConnectionPreviewApp() {
   const [gateway] = useState(() => createPreviewGateway(sessionStorage));
   const { route, go } = useRoute();
   useEffect(() => {
-    document.title = "환경 연결 미리보기 · Oneport";
+    document.title = "환경 연결 미리보기 - Oneport";
   }, []);
   return (
     <AppShell
@@ -80,7 +80,7 @@ function PreviewControls({
     <section className="connection-preview-tools" aria-label="개발용 상태 재현">
       <h3>미리보기 조작</h3>
       <p>
-        실제 단말·터널·고객 자원을 사용하지 않아요. 명령 복사 후 아래 버튼으로
+        실제 단말, 터널, 고객 자원을 사용하지 않아요. 명령 복사 후 아래 버튼으로
         다음 상태를 재현하세요.
       </p>
       {s?.device === "PENDING_APPROVAL" && (

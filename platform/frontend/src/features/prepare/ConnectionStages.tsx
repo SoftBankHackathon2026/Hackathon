@@ -42,7 +42,7 @@ export function DeviceApproval({
         <div>
           <dt>운영체제</dt>
           <dd>
-            {s.candidate?.os ?? "미확인"} · {s.candidate?.arch}
+            {s.candidate?.os ?? "미확인"}, {s.candidate?.arch}
           </dd>
         </div>
         <div>
@@ -92,7 +92,7 @@ export function DeviceApproval({
           </label>
           <p id="connection-code-help">
             승인까지{" "}
-            <strong>{remainingSeconds(s.approvalExpiresAt, now)}초</strong> ·
+            <strong>{remainingSeconds(s.approvalExpiresAt, now)}초</strong>,
             입력 {s.attemptsLeft}회 남음
           </p>
           <label className="connection-check">
