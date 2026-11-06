@@ -39,7 +39,7 @@ export function EnvironmentGraphs({
       <GraphPanel
         {...shared}
         title="쓰기 건수"
-        summary={`${sourceName} ${formatCount(sum((b) => b.source))} · ${targetName} ${formatCount(sum((b) => b.target))}`}
+        summary={`${sourceName} ${formatCount(sum((b) => b.source))}, ${targetName} ${formatCount(sum((b) => b.target))}`}
         format={formatCount}
         series={[
           {
@@ -147,7 +147,7 @@ export function EnvironmentTable({
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
     <div className="table-wrap">
-      <table className="dt">
+      <table className="pk-table">
         <thead>
           <tr>
             <th>환경</th>

@@ -71,5 +71,5 @@ export function eventTitle(title: string) {
   if (!match) return title;
   const stage = GATE_STAGES.find((s) => s.id === match[1])?.title ?? match[1];
   const outcome = OUTCOME_LABELS[match[2] as GateOutcome] ?? match[2];
-  return `정책 게이트 · ${stage} 단계 ${outcome}`;
+  return `정책 게이트, ${stage} 단계 ${outcome}`;
 }

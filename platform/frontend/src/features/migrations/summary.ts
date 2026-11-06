@@ -6,7 +6,7 @@ import type {
 import type { CardLine } from "../../components/SignalCard.tsx";
 import type { Posture } from "../../api/security.ts";
 import { formatCount, formatSeconds } from "../../lib/format.ts";
-import { isActive } from "./stages.ts";
+import { isActive, type Tone } from "./stages.ts";
 import { verifyTotal } from "./proof.ts";
 
 export function jobCounts(migrations: MigrationSummary[]) {
@@ -132,10 +132,10 @@ export function fleetVerifyLine(
 export function securityCompareLine(
   compare: ReturnType<typeof postureCompare>,
 ): CardLine {
-  if (!compare) return { tone: "none", text: "불러오는 중이에요" };
+  if (!compare) return { tone: "none", text: "-" };
   const score =
     compare.from !== null && compare.to !== null
-      ? ` · 보안 점수 ${compare.from}에서 ${compare.to}로`
+      ? `, 보안 점수 ${compare.from}에서 ${compare.to}로`
       : "";
   if (compare.regressions > 0)
     return {
@@ -148,8 +148,8 @@ export function securityCompareLine(
 export function envOverviewLine(environments: FleetEnvironment[]) {
   const withIssues = environments.filter((e) => e.issues.length > 0).length;
   return withIssues > 0
-    ? `환경 ${environments.length}곳 중 ${withIssues}곳에 확인된 문제가 있어요.`
-    : `환경 ${environments.length}곳 모두 확인된 문제가 없어요.`;
+    ? `환경 ${environments.length}곳 중 ${withIssues}곳에 경고가 있어요.`
+    : `환경 ${environments.length}곳 모두 경고가 없어요.`;
 }
 
 export type OverviewCard = {
@@ -194,7 +194,7 @@ export function overviewCards(migrations: MigrationSummary[]): OverviewCard[] {
         migrations.length === 0
           ? null
           : failed > 0
-            ? { tone: "bad", text: "확인 필요" }
+            ? { tone: "bad", text: "실패 있음" }
             : { tone: "ok", text: "무중단" },
       value: formatCount(failed),
       unit: "건",
@@ -214,12 +214,12 @@ export function overviewCards(migrations: MigrationSummary[]): OverviewCard[] {
       value: pauseText.value,
       unit: pauseText.unit,
       lines: pause
-        ? [`${pause.jobId} · FENCING–SWITCHING`]
+        ? [`${pause.jobId}, FENCING–SWITCHING`]
         : ["아직 전환한 작업이 없어요"],
     },
     {
       title: "데이터 일치",
-      label: verify.mismatch > 0 ? { tone: "bad", text: "확인 필요" } : null,
+      label: verify.mismatch > 0 ? { tone: "bad", text: "실패 있음" } : null,
       value: formatCount(verify.mismatch),
       unit: "건 불일치",
       lines: [
@@ -229,4 +229,56 @@ export function overviewCards(migrations: MigrationSummary[]): OverviewCard[] {
       ],
     },
   ];
+}
+
+export type SummaryItem = {
+  label: string;
+  value: string;
+  unit?: string;
+  tone?: Tone;
+  note?: string;
+};
+
+/** 이전 현황 한 줄 요약과 전체 상태. 문제가 있는 항목만 색을 준다. */
+export function overviewSummary(migrations: MigrationSummary[]): {
+  status: { tone: Tone; text: string } | null;
+  items: SummaryItem[];
+} {
+  const failed = writeTotals(migrations).failed;
+  const pause = longestPause(migrations);
+  const verify = fleetVerify(migrations);
+  const pauseText = splitUnit(pause ? formatSeconds(pause.seconds) : "-");
+  const problems = (failed > 0 ? 1 : 0) + (verify.mismatch > 0 ? 1 : 0);
+  return {
+    status:
+      migrations.length === 0
+        ? null
+        : problems > 0
+          ? { tone: "bad", text: "실패 있음" }
+          : { tone: "ok", text: "실패 없음" },
+    items: [
+      {
+        label: "실패한 쓰기",
+        value: formatCount(failed),
+        unit: "건",
+        tone: failed > 0 ? "bad" : undefined,
+      },
+      {
+        label: "최대 쓰기 중단",
+        value: pauseText.value,
+        unit: pauseText.unit,
+        note: pause ? pause.jobId : "전환 전",
+      },
+      {
+        label: "데이터 불일치",
+        value: formatCount(verify.mismatch),
+        unit: "건",
+        tone: verify.mismatch > 0 ? "bad" : undefined,
+        note:
+          verify.total === 0
+            ? undefined
+            : `검증 ${verify.total}건 중 ${verify.checked}건 완료`,
+      },
+    ],
+  };
 }

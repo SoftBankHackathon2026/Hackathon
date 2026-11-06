@@ -13,9 +13,9 @@ from controlplane.schemas.environments import AppDeletionRequest
 from controlplane.services.deployments import DeploymentService, deletion_info
 
 UNREGISTERED_NAMES = {
-    Runtime.ONPREM_HELM: "On-Premises · 연결 대기",
-    Runtime.AWS_ECS: "AWS · 담당자 연결 대기",
-    Runtime.GCP_CLOUD_RUN: "GCP · 담당자 연결 대기",
+    Runtime.ONPREM_HELM: "On-Premises, 연결 대기",
+    Runtime.AWS_ECS: "AWS, 담당자 연결 대기",
+    Runtime.GCP_CLOUD_RUN: "GCP, 담당자 연결 대기",
 }
 DELETION_NOT_FOUND = "삭제 기록을 찾을 수 없습니다."
 

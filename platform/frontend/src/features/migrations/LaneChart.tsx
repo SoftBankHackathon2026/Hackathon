@@ -44,7 +44,7 @@ export function LaneChart({
               <i
                 key={bar.name}
                 className={`pk-bar kind-${bar.kind}`}
-                title={`${bar.title} · ${formatClock(bar.from)}–${formatClock(bar.to)}`}
+                title={`${bar.title}, ${formatClock(bar.from)}–${formatClock(bar.to)}`}
                 style={{
                   left: pct(bar.from),
                   width: `${((bar.to - bar.from) / span) * 100}%`,

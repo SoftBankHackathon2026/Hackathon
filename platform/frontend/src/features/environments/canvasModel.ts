@@ -100,7 +100,7 @@ export function crossLinks(environments: FleetEnvironment[]) {
     {
       from: { envId: a.env.id, id: (a.component as EnvComponent).id },
       to: { envId: b.env.id, id: (b.component as EnvComponent).id },
-      label: cidr ? `Tailscale · ${cidr}` : "Tailscale",
+      label: cidr ? `Tailscale, ${cidr}` : "Tailscale",
     },
   ];
 }
@@ -112,6 +112,7 @@ export function statusCounts(components: EnvComponent[]) {
     healthy: count("healthy"),
     degraded: count("degraded"),
     down: count("down"),
+    idle: count("idle"),
     unknown: count("unknown"),
   };
 }

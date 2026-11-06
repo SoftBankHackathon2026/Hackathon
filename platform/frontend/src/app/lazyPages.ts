@@ -20,6 +20,11 @@ export const SecurityPage = lazy(() =>
     default: m.SecurityPage,
   })),
 );
+export const CostsPage = lazy(() =>
+  import("../features/costs/CostsPage").then((m) => ({
+    default: m.CostsPage,
+  })),
+);
 export const TeamPage = lazy(() =>
   import("../features/team/TeamPage").then((m) => ({ default: m.TeamPage })),
 );

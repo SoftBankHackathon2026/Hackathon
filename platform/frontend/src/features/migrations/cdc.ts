@@ -24,7 +24,7 @@ function connectorNode(
     return {
       ...base,
       name: connector.name,
-      detail: `${stateLabel(connector.state)} · 작업 ${connector.tasks_total}개 중 ${connector.tasks_running}개 실행`,
+      detail: `${stateLabel(connector.state)}, 작업 ${connector.tasks_total}개 중 ${connector.tasks_running}개 실행`,
       tone: stateTone(connector.state),
       flag: failing ? "커넥터 실패" : null,
     };

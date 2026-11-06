@@ -43,30 +43,21 @@ function Option({
   checked,
   onChange,
   count,
-  bar,
   children,
 }: {
   checked: boolean;
   onChange: () => void;
   count: number;
-  bar?: string;
   children: React.ReactNode;
 }) {
   return (
-    <label className="pk-option">
+    <label className={`pk-option${count === 0 ? " zero" : ""}`}>
       <input type="checkbox" checked={checked} onChange={onChange} />
-      {bar && <i className={`pk-statusbar ${bar}`} aria-hidden="true" />}
       <span className="pk-option-label">{children}</span>
       <span className="pk-option-count">{count}</span>
     </label>
   );
 }
-
-const STATUS_BARS: Record<string, string> = {
-  fail: "bar-fail",
-  unknown: "bar-unknown",
-  pass: "bar-pass",
-};
 
 export function FacetPanel({
   posture,
@@ -80,72 +71,104 @@ export function FacetPanel({
   onReset: () => void;
 }) {
   const counts = facetCounts(posture.controls, filters);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const groups: {
+    title: string;
+    options: {
+      key: string;
+      label: string;
+      checked: boolean;
+      count: number;
+      onChange: () => void;
+    }[];
+  }[] = [
+    {
+      title: "심각도",
+      options: ALL_SEVERITIES.map((s: Severity) => ({
+        key: s,
+        label: SEVERITY_LABELS[s],
+        checked: filters.severity.includes(s),
+        count: counts.severity[s],
+        onChange: () => onChange({ severity: toggle(filters.severity, s) }),
+      })),
+    },
+    {
+      title: "상태",
+      options: SHOWN_STATUSES.map((s: ControlStatus) => ({
+        key: s,
+        label: STATUS_LABELS[s],
+        checked: filters.status.includes(s),
+        count: counts.status[s],
+        onChange: () => onChange({ status: toggle(filters.status, s) }),
+      })),
+    },
+    {
+      title: "분류",
+      options: ALL_CATEGORIES.map((c: Category) => ({
+        key: c,
+        label: CATEGORY_LABELS[c],
+        checked: filters.category.includes(c),
+        count: counts.category[c],
+        onChange: () => onChange({ category: toggle(filters.category, c) }),
+      })),
+    },
+    {
+      title: "표준",
+      options: posture.standards.map((std) => ({
+        key: std.id,
+        label: std.id,
+        checked: filters.standard.includes(std.id),
+        count: counts.standard[std.id] ?? 0,
+        onChange: () =>
+          onChange({ standard: toggle(filters.standard, std.id) }),
+      })),
+    },
+    {
+      title: "환경",
+      options: posture.environments.map((env) => ({
+        key: env.env_id,
+        label: env.name,
+        checked: filters.env.includes(env.env_id),
+        count: counts.env[env.env_id] ?? 0,
+        onChange: () => onChange({ env: toggle(filters.env, env.env_id) }),
+      })),
+    },
+  ];
+  const shown = groups
+    .map((group) => ({
+      ...group,
+      options:
+        !q || group.title.toLowerCase().includes(q)
+          ? group.options
+          : group.options.filter((o) => o.label.toLowerCase().includes(q)),
+    }))
+    .filter((group) => group.options.length > 0);
   return (
     <aside className="pk-facets" aria-label="필터">
-      <Group title="심각도">
-        {ALL_SEVERITIES.map((s: Severity) => (
-          <Option
-            key={s}
-            bar={`sev-${s}`}
-            checked={filters.severity.includes(s)}
-            count={counts.severity[s]}
-            onChange={() => onChange({ severity: toggle(filters.severity, s) })}
-          >
-            {SEVERITY_LABELS[s]}
-          </Option>
-        ))}
-      </Group>
-      <Group title="상태">
-        {SHOWN_STATUSES.map((s: ControlStatus) => (
-          <Option
-            key={s}
-            bar={STATUS_BARS[s]}
-            checked={filters.status.includes(s)}
-            count={counts.status[s]}
-            onChange={() => onChange({ status: toggle(filters.status, s) })}
-          >
-            {STATUS_LABELS[s]}
-          </Option>
-        ))}
-      </Group>
-      <Group title="분류">
-        {ALL_CATEGORIES.map((c: Category) => (
-          <Option
-            key={c}
-            checked={filters.category.includes(c)}
-            count={counts.category[c]}
-            onChange={() => onChange({ category: toggle(filters.category, c) })}
-          >
-            {CATEGORY_LABELS[c]}
-          </Option>
-        ))}
-      </Group>
-      <Group title="표준">
-        {posture.standards.map((std) => (
-          <Option
-            key={std.id}
-            checked={filters.standard.includes(std.id)}
-            count={counts.standard[std.id] ?? 0}
-            onChange={() =>
-              onChange({ standard: toggle(filters.standard, std.id) })
-            }
-          >
-            {std.id}
-          </Option>
-        ))}
-      </Group>
-      <Group title="환경">
-        {posture.environments.map((env) => (
-          <Option
-            key={env.env_id}
-            checked={filters.env.includes(env.env_id)}
-            count={counts.env[env.env_id] ?? 0}
-            onChange={() => onChange({ env: toggle(filters.env, env.env_id) })}
-          >
-            {env.name}
-          </Option>
-        ))}
-      </Group>
+      <input
+        type="search"
+        className="pk-facet-search"
+        placeholder="필터 찾기"
+        aria-label="필터 찾기"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {shown.length === 0 && <p className="pk-empty">맞는 필터가 없어요.</p>}
+      {shown.map((group) => (
+        <Group key={group.title} title={group.title}>
+          {group.options.map((o) => (
+            <Option
+              key={o.key}
+              checked={o.checked}
+              count={o.count}
+              onChange={o.onChange}
+            >
+              {o.label}
+            </Option>
+          ))}
+        </Group>
+      ))}
       <button type="button" className="pk-reset" onClick={onReset}>
         필터 초기화
       </button>

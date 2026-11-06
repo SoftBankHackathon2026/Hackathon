@@ -76,6 +76,9 @@ jobs:
           raise SystemExit(1 if bad else 0)
           PY
 
+      - name: HTTP smoke regression (loaded / missing / unreachable policy)
+        run: python3 -m unittest discover -s policies -p 'test_smoke.py' -v
+
       # 파이썬 클라이언트(policy_client) 테스트. opa 가 있으므로 Rego 연동 케이스까지 돈다.
       - name: Setup Python
         uses: actions/setup-python@v5

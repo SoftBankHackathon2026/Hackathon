@@ -6,16 +6,16 @@ body {
   line-height: 1.6;
 }
 h1 {
-  font-size: 32px;
+  font-size: var(--fs-num);
   line-height: 1.22;
   margin: 16px 0;
 }
 h2 {
-  font-size: 19px;
+  font-size: var(--fs-xl);
   margin: 0 0 24px;
 }
 h3 {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   margin: 0;
 }
 button:focus-visible,
@@ -36,7 +36,7 @@ textarea {
   width: 100%;
   margin-top: 6px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-card);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -50,13 +50,13 @@ textarea:focus {
 }
 button {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   background: var(--accent);
   color: var(--text-knockout);
   width: 100%;
   padding: 13px;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
   cursor: pointer;
   margin-top: 8px;
@@ -68,7 +68,7 @@ button:disabled {
 }
 @media (max-width: 900px) {
   h1 {
-    font-size: 34px;
+    font-size: var(--fs-num);
   }
   header {
     padding: 0 20px;
@@ -81,7 +81,7 @@ button:disabled {
 }
 body {
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 [hidden] {
   display: none !important;
@@ -91,12 +91,12 @@ h1:focus {
   outline: none;
 }
 label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 input,
 select,
 textarea {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 10px 11px;
 }
 body {

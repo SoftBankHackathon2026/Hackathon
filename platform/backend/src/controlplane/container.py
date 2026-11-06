@@ -12,6 +12,9 @@ from controlplane.core.config import (
     ingest_token_from_environment,
     operator_token_from_environment,
 )
+from controlplane.cost.config import load_cost_config
+from controlplane.cost.service import CostService
+from controlplane.cost.store import CostStore
 from controlplane.demo_deployments.models import RunSettings
 from controlplane.demo_deployments.store import RunStore
 from controlplane.domain.fleet import FleetConfig
@@ -57,6 +60,7 @@ class Container:
     security: SecurityService
     ingest: IngestService | None
     ingest_token: SecretStr | None
+    costs: CostService
     enrollments: EnrollmentService | None = None
 
     @property
@@ -150,6 +154,11 @@ def build_container(
         security=SecurityService(source),
         ingest=IngestService(fleet_config, FleetJournal(store)) if store else None,
         ingest_token=ingest_token_from_environment(),
+        costs=CostService(
+            fleet_config,
+            load_cost_config(),
+            CostStore(store).get if store else (lambda env_id: None),
+        ),
         enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
         if store
         else None,

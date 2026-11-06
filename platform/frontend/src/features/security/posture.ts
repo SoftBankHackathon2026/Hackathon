@@ -19,9 +19,9 @@ export const CATEGORY_ORDER: Category[] = [
 export const CATEGORY_LABELS: Record<Category, string> = {
   network: "네트워크",
   workload: "워크로드",
-  identity: "ID·접근",
+  identity: "ID/접근",
   data: "데이터",
-  detection: "탐지·감사",
+  detection: "탐지/감사",
   governance: "거버넌스",
 };
 
@@ -195,8 +195,8 @@ export function envSecurityLine(env: {
   const total = env.passed + env.failed + env.unknown;
   const unknown = env.unknown > 0 ? `, ${env.unknown}개 미확인` : "";
   const score = hasEnoughEvidence(env.passed + env.failed, total)
-    ? ` · 보안 점수 ${env.score}`
-    : " · 미확인 항목이 많아 점수 없음";
+    ? `, 보안 점수 ${env.score}`
+    : ", 미확인 항목이 많아 점수 없음";
   if (env.failed > 0)
     return {
       tone: "bad",
@@ -248,9 +248,9 @@ export function scoreBand(score: number): ScoreBand {
 }
 
 export const BAND_LABELS: Record<ScoreBand, string> = {
-  high: "준수 높음",
-  mid: "준수 보통",
-  low: "준수 낮음",
+  high: "기준 충족",
+  mid: "보통",
+  low: "기준 미달",
 };
 
 export function complianceBar(

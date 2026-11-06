@@ -39,7 +39,7 @@ export function TransitionTimeline({
   if (!window)
     return (
       <p className="chart-empty" role="status">
-        표시할 데이터가 아직 부족해요.
+        전환을 시작하면 단계별 시간이 여기에 표시돼요.
       </p>
     );
   const { domain, points } = window;

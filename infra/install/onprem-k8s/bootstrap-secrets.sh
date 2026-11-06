@@ -31,6 +31,9 @@ fi
 if ! grep -q '^ARGOCD_OBSERVER_PASSWORD=' "$SECRETS_FILE"; then
   printf 'ARGOCD_OBSERVER_PASSWORD=%s\n' "$(openssl rand -base64 18 | tr -d '/+=')" >>"$SECRETS_FILE"
 fi
+if ! grep -q '^HARBOR_ADMIN_PASSWORD=' "$SECRETS_FILE"; then
+  printf 'HARBOR_ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 18 | tr -d '/+=')" >>"$SECRETS_FILE"
+fi
 
 set -a
 # shellcheck disable=SC1090
@@ -170,5 +173,12 @@ ALTER ROLE grafana_ro SET default_transaction_read_only = on;
 SQL' >/dev/null
 fi
 
-echo "Secrets reconciled in namespaces hackathon, argocd, monitoring."
+# --- Harbor 관리자 비밀번호 (admin/harbor/values.yaml 의 existingSecretAdminPassword)
+kubectl --kubeconfig "$KUBECONFIG_PATH" get namespace harbor >/dev/null 2>&1 || \
+  kubectl --kubeconfig "$KUBECONFIG_PATH" create namespace harbor >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n harbor create secret generic harbor-admin \
+  --from-literal=HARBOR_ADMIN_PASSWORD="$HARBOR_ADMIN_PASSWORD" \
+  --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG_PATH" apply -f -
+
+echo "Secrets reconciled in namespaces hackathon, argocd, monitoring, harbor."
 

@@ -177,7 +177,7 @@ GATE_OUTCOME_TITLES = {"allow": "허용", "deny": "거부", "hold": "보류", "i
 
 
 def gate_title(stage: str, outcome: str) -> str:
-    return f"정책 게이트 · {GATE_STAGE_TITLES.get(stage, stage)} {GATE_OUTCOME_TITLES.get(outcome, outcome)}"
+    return f"정책 게이트, {GATE_STAGE_TITLES.get(stage, stage)} {GATE_OUTCOME_TITLES.get(outcome, outcome)}"
 
 
 def migration_events(state: MigrationState) -> list[MigrationEvent]:

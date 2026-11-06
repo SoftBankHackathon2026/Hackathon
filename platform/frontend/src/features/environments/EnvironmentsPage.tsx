@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { SourceTag } from "../../components/Badge";
+import { RefreshStatus } from "../../components/RefreshStatus";
 import { PageActions } from "../../components/PageSlots";
 import {
   FilterSelect,
@@ -8,10 +8,10 @@ import {
   ScopeFilterRow,
 } from "../../components/PageKit";
 import { StatusDot } from "../../components/StatusDot";
-import { formatAgo } from "../../lib/format";
 import { fleetQueryOptions } from "../migrations/queries";
 import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
+import { clusterRailRows } from "./clusterModel";
 import { envRailRows } from "./model";
 
 function useViewportHeight() {
@@ -26,8 +26,10 @@ function useViewportHeight() {
 
 export function EnvironmentsPage({
   select,
+  nodes,
 }: {
   select?: { envId: string; id: string };
+  nodes?: { envId?: string; node?: string };
 }) {
   const { data: fleet } = useSuspenseQuery(fleetQueryOptions());
   const [envId, setEnvId] = useState("all");
@@ -41,8 +43,7 @@ export function EnvironmentsPage({
   return (
     <div className="pk-page">
       <PageActions>
-        <SourceTag source={fleet.source} />
-        <span className="updated-at">기준 {formatAgo(fleet.generated_at)}</span>
+        <RefreshStatus source={fleet.source} at={fleet.generated_at} />
       </PageActions>
       <PageHeader
         title="환경"
@@ -66,25 +67,41 @@ export function EnvironmentsPage({
             <section key={env.id} className="ux-block">
               <h2 className="ux-name">{env.name}</h2>
               <dl className="ux-kv">
-                {envRailRows(env).map((row) => (
-                  <div key={row.label}>
-                    <dt>{row.label}</dt>
-                    <dd>
-                      {row.tone ? (
-                        <StatusDot tone={row.tone}>{row.value}</StatusDot>
-                      ) : (
-                        row.value
-                      )}
-                    </dd>
-                  </div>
-                ))}
+                {[
+                  ...envRailRows(env).map((row) => ({
+                    ...row,
+                    href: undefined as string | undefined,
+                    title: undefined as string | undefined,
+                  })),
+                  ...clusterRailRows(env),
+                ].map((row) => {
+                  const body = row.tone ? (
+                    <StatusDot tone={row.tone}>{row.value}</StatusDot>
+                  ) : (
+                    row.value
+                  );
+                  return (
+                    <div key={row.label}>
+                      <dt>{row.label}</dt>
+                      <dd title={row.title}>
+                        {row.href ? (
+                          <a className="ux-link" href={row.href}>
+                            {body}
+                          </a>
+                        ) : (
+                          body
+                        )}
+                      </dd>
+                    </div>
+                  );
+                })}
               </dl>
             </section>
           ))}
           <section className="ux-block ux-divided">
-            <h2 className="ux-label">현재 문제</h2>
+            <h2 className="ux-label">경고</h2>
             {issues.length === 0 ? (
-              <p className="ux-muted">확인된 문제가 없어요.</p>
+              <p className="ux-muted">경고가 없어요.</p>
             ) : (
               <ul className="ux-issues">
                 {issues.map(({ env, issue }, i) => (
@@ -96,7 +113,7 @@ export function EnvironmentsPage({
                     </StatusDot>
                     <span className="ux-small">
                       {env.name}
-                      {issue.detail ? ` · ${issue.detail}` : ""}
+                      {issue.detail ? `, ${issue.detail}` : ""}
                     </span>
                   </li>
                 ))}
@@ -106,13 +123,22 @@ export function EnvironmentsPage({
         </aside>
         <div className="ux-main">
           <ArchitectureCanvas
-            key={select ? `${select.envId}/${select.id}` : ""}
+            key={
+              select
+                ? `${select.envId}/${select.id}`
+                : nodes
+                  ? `nodes/${nodes.envId ?? ""}/${nodes.node ?? ""}`
+                  : ""
+            }
             environments={environments}
             migrations={fleet.migrations}
             initialSelect={select}
+            initialNodes={nodes}
             height={Math.max(520, Math.round(viewport * 0.7))}
           />
-          <ComponentsList environments={environments} />
+          <section className="ux-components" aria-label="구성 요소">
+            <ComponentsList environments={environments} />
+          </section>
         </div>
       </div>
     </div>
