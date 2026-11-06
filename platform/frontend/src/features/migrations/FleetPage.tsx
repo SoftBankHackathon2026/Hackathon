@@ -70,7 +70,7 @@ export function FleetPage({
         title="마이그레이션"
         actions={
           <a className="pk-button" href="#prepare">
-            새 이전 준비
+            마이그레이션 준비
           </a>
         }
       />

@@ -1,7 +1,7 @@
 export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
-  | { view: "prepare" }
+  | { view: "prepare"; requestId?: string }
   | {
       view: "environments";
       select?: { envId: string; id: string };
@@ -14,7 +14,14 @@ export type Route =
 
 export function readRoute(hash = "#"): Route {
   const [head, id, extra, more] = hash.replace(/^#/, "").split("/");
-  if (head === "prepare") return { view: "prepare" };
+  if (head === "prepare") {
+    if (!id) return { view: "prepare" };
+    try {
+      return { view: "prepare", requestId: decodeURIComponent(id) };
+    } catch {
+      return { view: "prepare", requestId: "invalid-request" };
+    }
+  }
   if (head === "migrations" && id)
     return { view: "migration", id: decodeURIComponent(id) };
   if (head === "environments") {
@@ -82,7 +89,7 @@ export function routeTitle(route: Route, teamName: string) {
     case "migration":
       return route.id;
     case "prepare":
-      return "새 이전 준비";
+      return "마이그레이션 준비";
     case "environments":
       return "환경";
     case "security":
