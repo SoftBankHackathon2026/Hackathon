@@ -389,16 +389,20 @@ test('P pauses polling by physical key, so a Korean IME cannot block it',
       assert.equal(screen.context.polls, polls + 1);
     });
 
-test('the QR holds the public address; without one the panel says local only',
+test('the QR holds the public address; without one the panel says why',
     async () => {
+      const notes = (screen) => [Boolean(screen.part('local-note').hidden),
+        Boolean(screen.part('no-public-url').hidden)];
       const screen = await openViewer([], {pageUrl: 'http://proxy-side',
         publicUrl: 'https://app.example.com'});
       assert.equal(screen.context.qrText, 'https://app.example.com/');
-      assert.equal(screen.part('local-note').hidden, true);
-      const local = await openViewer([]);
-      assert.equal(local.context.qrText, undefined);
-      assert.equal(local.part('local-note').hidden, false);
-      assert.equal(local.part('qr').attributes.hidden, '');
+      assert.deepEqual(notes(screen), [true, true]);
+      const unset = await openViewer([]);
+      assert.equal(unset.context.qrText, undefined);
+      assert.equal(unset.part('qr').attributes.hidden, '');
+      assert.deepEqual(notes(unset), [true, false]);
+      const local = await openViewer([], {localOnly: true});
+      assert.deepEqual(notes(local), [false, true]);
     });
 
 test('the config keeps the public address apart from the polled one',
@@ -406,13 +410,16 @@ test('the config keeps the public address apart from the polled one',
       const {base} = await startViewer(t, [
         {id: 'a', name: 'A', url: 'http://10.0.0.1:8080/',
           public_url: 'https://app.example.com/'},
-        {id: 'b', name: 'B', url: 'http://10.0.0.2:8080', public_url: ''},
+        {id: 'b', name: 'B', url: 'http://10.0.0.2:8080', public_url: '',
+          local_only: true},
       ]);
       const {environments} =
         await (await fetch(`${base}/api/environments`)).json();
       assert.equal(environments[0].pageUrl, 'http://10.0.0.1:8080');
       assert.equal(environments[0].publicUrl, 'https://app.example.com');
       assert.equal(environments[1].publicUrl, null);
+      assert.equal(environments[0].localOnly, false);
+      assert.equal(environments[1].localOnly, true);
     });
 
 test('the version has its own row so a canary mix is never cut off', () => {

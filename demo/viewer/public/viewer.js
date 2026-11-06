@@ -299,10 +299,12 @@ function createPanel(environment, pollMillis, timeoutMillis) {
 
   if (environment.publicUrl) {
     drawQrCode(part('qr'), `${environment.publicUrl}/`);
-    part('local-note').hidden = true;
   } else {
     part('qr').setAttribute('hidden', '');
   }
+  const hasQr = Boolean(environment.publicUrl);
+  part('local-note').hidden = hasQr || !environment.localOnly;
+  part('no-public-url').hidden = hasQr || environment.localOnly;
   if (environment.pageUrl) {
     part('open').href = `${environment.pageUrl}/`;
     new ResizeObserver(fitFrame).observe(part('frame-box'));

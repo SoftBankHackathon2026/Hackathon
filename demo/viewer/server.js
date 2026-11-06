@@ -48,6 +48,7 @@ function loadConfig(file) {
       pageUrl: pageUrlOf(environment.url),
       // 폰이 여는 주소다. 뷰어가 쓰는 url 과 다를 수 있어 따로 둔다.
       publicUrl: pageUrlOf(environment.public_url),
+      localOnly: environment.local_only === true,
     })),
   };
 }
