@@ -25,7 +25,8 @@ class ActionModule(ActionBase):
     def run(self, tmp=None, task_vars=None):
         super().run(tmp, task_vars)
         report = native(self._task.args.get("report", {}))
-        if not isinstance(report, dict) or not report:
+        missing_report = not isinstance(report, dict) or not report
+        if missing_report:
             report = {
                 "kind": "runner",
                 "reason_codes": ["MODULE_REPORT_MISSING"],
@@ -37,9 +38,13 @@ class ActionModule(ActionBase):
             path, "x", opener=lambda p, flags: os.open(p, flags, 0o600)
         ) as stream:
             json.dump(report, stream, allow_nan=False)
-        failed = bool(self._task.args.get("enforce")) and (
-            bool(report.get("reason_codes"))
-            or any(c.get("status") == "fail" for c in report.get("checks", []))
+        failed = (
+            missing_report
+            or bool(self._task.args.get("enforce"))
+            and (
+                bool(report.get("reason_codes"))
+                or any(c.get("status") == "fail" for c in report.get("checks", []))
+            )
         )
         return {
             "changed": False,

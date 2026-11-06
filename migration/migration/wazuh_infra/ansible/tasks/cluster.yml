@@ -31,5 +31,7 @@
   no_log: true
 - name: Stop when host identity or prerequisites cannot be confirmed
   ansible.builtin.assert:
-    that: not (wi_host.blocked | default(false))
+    that:
+    - wi_host.report is defined
+    - not (wi_host.blocked | default(false))
     fail_msg: WAZUH_HOST_CHECK_BLOCKED
