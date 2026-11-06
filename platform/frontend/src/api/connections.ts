@@ -12,15 +12,15 @@ export const unavailableConnections: ConnectionGateway = {
   mode: "unavailable",
   available: false,
   reason:
-    "연결 서비스 준비 중이에요. 환경을 구성해 볼 수 있지만 명령 발급과 실제 연결은 아직 사용할 수 없어요.",
+    "연결 서비스 준비 중이에요. 실제 명령 발급과 환경정보 수집은 아직 사용할 수 없어요.",
   list: () => EMPTY,
   subscribe: () => () => {},
   create: unavailable,
   cancel: unavailable,
   approveDevice: unavailable,
   reject: unavailable,
-  inspect: unavailable,
-  approvePlan: unavailable,
+  collect: unavailable,
+  register: unavailable,
   reconnect: unavailable,
   revoke: unavailable,
 };

@@ -1,7 +1,7 @@
 import type {
   ConnectionGateway,
   ConnectionSnapshot,
-  ConnectionTarget,
+  CollectionContext,
 } from "./connectionTypes.ts";
 
 export class CopyFailure extends Error {
@@ -16,7 +16,7 @@ export class CopyFailure extends Error {
 // resolved later, preserving Safari's user activation across asynchronous work.
 export async function copyEnrollmentCommand(
   gateway: ConnectionGateway,
-  target: ConnectionTarget,
+  target: CollectionContext,
   previousId?: string,
 ) {
   if (!gateway.available)
