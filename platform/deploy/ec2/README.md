@@ -213,6 +213,24 @@ Caddy 사이트(인스턴스 `/opt/oneport/sites/*.caddy`, 저장소에 도메�
 bash /opt/oneport/releases/<커밋>/deploy.sh /opt/oneport/releases/<커밋> <레지스트리> <커밋>
 ```
 
+## Slack 에서 AI 에이전트 승인
+
+에이전트의 승인 대기 메시지에 승인, 거절, 플랫폼에서 보기 버튼이 붙어요. 버튼을 누르면 Slack 이 `https://<도메인>/api/v1/slack/interactions` 로 서명한 요청을 보내고, 플랫폼은 화면 승인 버튼과 같은 대기열에 결정을 넣어요. 에이전트는 지금처럼 플랫폼에서 결정을 가져가 처리해요.
+
+1. Slack 앱 설정의 Interactivity & Shortcuts 를 켜고 Request URL 에 위 주소를 넣어요.
+2. Basic Information 의 Signing Secret 을 인스턴스에 넣어요(값은 저장소에 두지 않아요).
+
+```bash
+install -m 0600 /dev/null /opt/oneport/secrets/slack.env
+echo 'ONEPORT_SLACK_SIGNING_SECRET=<signing secret>' >> /opt/oneport/secrets/slack.env
+echo 'ONEPORT_SLACK_APPROVERS=U0123,U0456' >> /opt/oneport/secrets/slack.env  # 선택: 승인할 수 있는 Slack 사용자 ID
+```
+
+3. 다시 배포하면 켜져요. 파일이 없으면 이 기능만 꺼진 채로 떠요(`503`).
+4. 에이전트 설정 `slack.buttons: true` 로 버튼을 붙여요. 플랫폼 쪽이 켜지기 전에는 버튼을 붙이지 않아요.
+
+승인자 목록을 비우면 메시지를 볼 수 있는 사람 누구나 승인할 수 있어요. 플랫폼 화면도 로그인 없이 승인할 수 있는 것과 같은 수준이에요.
+
 ## GCP 관리형 서비스 읽기 (Workload Identity Federation)
 
 비용 화면의 GCP 관리형 서비스(Cloud SQL, Managed Kafka, LB, Cloud NAT, VM, GCS)는 수집기가 GCP API 로 읽는다. 키 파일 없이 EC2 인스턴스 역할로 GCP 서비스 계정을 대신 쓴다.

@@ -71,7 +71,7 @@ def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore)
     )
     return Remediator(deps, job_id=cfg.job_id, plan=cfg.plan, declared_evidence=cfg.declared_evidence,
                       auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command,
-                      approve_url=cfg.platform_url)
+                      approve_url=cfg.platform_url, slack_buttons=cfg.slack_buttons)
 
 
 BUSY_STATES = frozenset({R.WAITING_APPROVAL, R.APPLYING})

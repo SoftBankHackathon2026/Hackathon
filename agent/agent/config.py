@@ -98,6 +98,7 @@ class AgentConfig:
     restart: RestartSettings
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
+    slack_buttons: bool = False
     approve_command: str = "python -m agent approve"
     platform_url: str | None = None
     platform_agent_id: str = "oneport-agent"
@@ -132,6 +133,12 @@ def _smoke_settings(smoke: Mapping[str, Any]) -> SmokeSettings:
         target_url=str(_required(smoke, "target_url", "smoke")), source_url=source_url, target_only=target_only,
         **{k: smoke[k] for k in optional if k in smoke},
     )
+
+
+def _flag(value: Any, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{name} 는 true/false 여야 한다")
+    return value
 
 
 def _thread_ts(value: Any) -> str | None:
@@ -182,6 +189,7 @@ def parse_config(raw: Mapping[str, Any], env: Mapping[str, str] | None = None) -
         restart=RestartSettings(**dict(raw.get("restart") or {})),
         slack_channel=(raw.get("slack") or {}).get("channel"),
         slack_thread_ts=_thread_ts((raw.get("slack") or {}).get("thread_ts")),
+        slack_buttons=_flag((raw.get("slack") or {}).get("buttons", False), "slack.buttons"),
         approve_command=str(raw.get("approve_command") or "python -m agent approve"),
         platform_url=(raw.get("platform") or {}).get("url") or None,
         platform_agent_id=str((raw.get("platform") or {}).get("agent_id") or "oneport-agent"),

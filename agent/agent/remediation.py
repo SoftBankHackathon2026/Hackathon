@@ -42,6 +42,7 @@ QUIET_STATES = frozenset({R.NOTHING_TO_FIX})
 
 
 UNVERIFIED_ALERT_AFTER = 3
+SLACK_SECTION_LIMIT = 2900
 
 
 def unverified(decision: Decision) -> bool:
@@ -75,10 +76,12 @@ class Remediator:
         self, deps: Deps, *, job_id: str, plan: Mapping[str, Any],
         declared_evidence: Mapping[str, Mapping[str, Any]], auto_apply: bool, stage: str = "pre_cutover",
         approve_command: str = "python -m agent approve", approve_url: str | None = None,
+        slack_buttons: bool = False,
     ) -> None:
         self.d = deps
         self.approve_command = approve_command
         self.approve_url = approve_url
+        self.slack_buttons = slack_buttons
         self.job_id, self.auto_apply, self.stage = job_id, auto_apply, stage
         self.declared_evidence = declared_evidence
         self.plan = {**plan, "digest": digest_of(dict(plan))}
@@ -201,7 +204,9 @@ class Remediator:
             return
         if not self.auto_apply:
             self.d.runs.update(run, R.WAITING_APPROVAL, "승인 대기")
-            self._notify(run, f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}\n*승인*  {self._approve_hint(run.run_id)}")
+            head = f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}"
+            blocks = self._approval_blocks(run.run_id, head, proposal) if self.slack_buttons else None
+            self._notify(run, f"{head}\n*승인*  {self._approve_hint(run.run_id)}", blocks)
             return
         self.d.runs.update(run, R.APPLYING, "자동 적용")
         self._apply(run, proposal, snapshot.version)
@@ -291,6 +296,38 @@ class Remediator:
             return
         run.detail["sandbox"] = trace if with_file else {k: v for k, v in trace.items() if k != "file"}
 
+    def _approval_blocks(self, run_id: str, head: str, proposal: Proposal) -> list[dict[str, Any]]:
+        keys = ", ".join(c.key for c in proposal.changes) or "설정"
+        buttons: list[dict[str, Any]] = [
+            {
+                "type": "button", "action_id": "agent_approve", "value": run_id, "style": "primary",
+                "text": {"type": "plain_text", "text": "승인"},
+                "confirm": {
+                    "title": {"type": "plain_text", "text": "승인할까요?"},
+                    "text": {"type": "plain_text", "text": f"{keys} 값을 설정 저장소에 쓰고 앱을 다시 시작해요."[:300]},
+                    "confirm": {"type": "plain_text", "text": "승인"},
+                    "deny": {"type": "plain_text", "text": "취소"},
+                },
+            },
+            {
+                "type": "button", "action_id": "agent_reject", "value": run_id, "style": "danger",
+                "text": {"type": "plain_text", "text": "거절"},
+            },
+        ]
+        if self.approve_url:
+            buttons.append({
+                "type": "button", "action_id": "agent_open",
+                "url": f"{self.approve_url.rstrip('/')}/#agent/{run_id}",
+                "text": {"type": "plain_text", "text": "플랫폼에서 보기"},
+            })
+        return [
+            {"type": "section", "text": {"type": "mrkdwn", "text": head[:SLACK_SECTION_LIMIT]}},
+            {"type": "actions", "block_id": "agent_decision", "elements": buttons},
+            {"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f"터미널에서는 `{self.approve_command} {run_id}`"},
+            ]},
+        ]
+
     def _approve_hint(self, run_id: str) -> str:
         command = f"`{self.approve_command} {run_id}`"
         if not self.approve_url:
@@ -301,8 +338,11 @@ class Remediator:
         events = self.d.runs.events(run.run_id)
         return events[-1]["message"] if events else None
 
-    def _notify(self, run: Run, text: str) -> None:
-        self.d.notifier.send(text)
+    def _notify(self, run: Run, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        if blocks:
+            self.d.notifier.send(text, blocks)
+        else:
+            self.d.notifier.send(text)
 
 
 def _codes(decision: Decision) -> str:

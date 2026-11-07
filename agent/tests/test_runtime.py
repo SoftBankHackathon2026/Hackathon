@@ -71,7 +71,9 @@ def test_broken_settings_file_is_ignored(tmp_path: Path) -> None:
 def test_snapshot_shows_config_without_secrets(tmp_path: Path) -> None:
     runtime, _ = make(tmp_path)
     snap = runtime.snapshot()
-    assert snap["slack"] == {"mode": "webhook", "enabled": True, "channel": None, "thread_ts": "1700000000.000100"}
+    assert snap["slack"] == {
+        "mode": "webhook", "enabled": True, "channel": None, "thread_ts": "1700000000.000100", "buttons": False,
+    }
     assert snap["fix"] == {"keys": ["DB_HOST", "DB_NAME", "DB_PORT"], "plan": {"DB_HOST": "db.svc", "DB_PORT": "5432", "DB_NAME": "app"}}
     assert snap["sandbox"] == {"runner": "opensandbox", "image": "oneport/codex-sandbox:latest", "model": "gpt-5.5"}
     assert "SECRETPART" not in json.dumps(snap)

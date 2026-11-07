@@ -183,6 +183,9 @@ function ConfigFacts({ config }: { config: ConfigView }) {
             {config.slack.channel}
           </ConfigRow>
         )}
+        <ConfigRow label="승인 버튼">
+          {onOffLabel(config.slack.buttons)}
+        </ConfigRow>
         <ConfigRow label="스레드" mono={config.slack.threadTs !== null}>
           {config.slack.threadTs ?? "채널에 바로 보내요"}
         </ConfigRow>
