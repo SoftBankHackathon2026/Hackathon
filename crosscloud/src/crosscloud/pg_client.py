@@ -18,6 +18,7 @@ import psycopg
 # 원가연 config 의 표 이름 규칙: 소문자 schema.table.
 _TABLE_NAME = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
 _STDERR_TAIL = 2000
+_VERSION = re.compile(r"\(PostgreSQL\) (\d+)")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -55,8 +56,8 @@ def split_table(name: str) -> tuple[str, str]:
     return schema, table
 
 
-def connect(login: PgLogin) -> psycopg.Connection:
-    """Login 으로 psycopg 연결을 연다(자동 커밋 꺼짐)."""
+def connect(login: PgLogin, *, autocommit: bool = False) -> psycopg.Connection:
+    """Login 으로 psycopg 연결을 연다(기본은 자동 커밋 꺼짐)."""
     endpoint = login.endpoint
     return psycopg.connect(
         host=endpoint.host,
@@ -67,7 +68,28 @@ def connect(login: PgLogin) -> psycopg.Connection:
         sslmode=endpoint.sslmode,
         connect_timeout=10,
         application_name="crosscloud",
+        autocommit=autocommit,
     )
+
+
+def scalar(conn: psycopg.Connection, query: str, params: tuple) -> object:
+    """첫 행 첫 열. 행이 없으면 None."""
+    row = conn.execute(query, params).fetchone()
+    return None if row is None else row[0]
+
+
+def find_table(conn: psycopg.Connection, table: str) -> tuple[int, str] | None:
+    """일반·분할 표의 (oid, 소유자). 없으면 None.
+
+    to_regclass 와 달리 스키마 USAGE 권한 없이도 이름으로 카탈로그를 찾는다.
+    """
+    schema, name = split_table(table)
+    return conn.execute(
+        "SELECT c.oid, pg_get_userbyid(c.relowner) FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relname = %s AND c.relkind IN ('r', 'p')",
+        (schema, name),
+    ).fetchone()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -77,10 +99,47 @@ class PgTools:
     Attributes:
         command_prefix: 도구 이름 앞에 붙일 명령(예: 컨테이너 안에서 돌리는
             `docker exec -i -e PGPASSWORD -e PGSSLMODE <이름>`). 비우면 PATH 의
-            도구를 쓴다. pg_dump 버전은 서버 주 버전 이상이어야 한다.
+            도구를 쓴다. 주 버전 규칙은 require_versions 가 지킨다.
     """
 
     command_prefix: tuple[str, ...] = ()
+
+    def major_version(self, tool: str) -> int:
+        """`<tool> --version` 의 주 버전(예: 16).
+
+        Raises:
+            PgToolError: 도구가 실패했거나 출력에서 버전을 못 읽었을 때.
+        """
+        completed = subprocess.run(
+            [*self.command_prefix, tool, "--version"],
+            capture_output=True,
+            check=False,
+        )
+        found = _VERSION.search(completed.stdout.decode("utf-8", "replace"))
+        if completed.returncode != 0 or found is None:
+            raise PgToolError(f"{tool} 버전을 읽지 못했다")
+        return int(found.group(1))
+
+    def require_versions(self, source_major: int, target_major: int) -> None:
+        """도구 주 버전이 서버와 맞는지 확인한다. 어긋나면 바로 멈춘다.
+
+        pg_dump 는 원본 서버와 같은 주 버전이어야 한다 — 새 pg_dump 의 덤프는
+        옛 서버가 모르는 설정(PG17 의 transaction_timeout 등)을 담는다.
+        psql 은 대상 서버와 같아야 하고, 원본보다 옛 대상으로는 내리지 않는다.
+
+        Raises:
+            PgToolError: 주 버전이 규칙에 어긋날 때.
+        """
+        dump, psql = self.major_version("pg_dump"), self.major_version("psql")
+        if dump != source_major or psql != target_major:
+            raise PgToolError(
+                f"도구 주 버전이 서버와 다르다: pg_dump {dump}·원본 "
+                f"{source_major}, psql {psql}·대상 {target_major}"
+            )
+        if source_major > target_major:
+            raise PgToolError(
+                f"원본 주 버전 {source_major} 이 대상 {target_major} 보다 높다"
+            )
 
     def dump_schema(self, login: PgLogin, tables: Sequence[str]) -> bytes:
         """표 정의만(데이터·소유자·권한 없이) 덤프한 SQL 을 메모리로 받는다.
