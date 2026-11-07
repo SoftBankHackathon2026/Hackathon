@@ -18,6 +18,23 @@ class InventoryReader(Protocol):
         ...
 
 
+def identity_omission(identity_id: str) -> model.Omission:
+    """워크로드 신원의 권한을 수집하지 않았다는 Omission 을 만든다.
+
+    작업 역할·서비스 계정으로 닿는 대응표 밖 의존(S3·SQS·ElastiCache 등)은
+    읽지 않는다. 그 빈자리를 사람 결정으로 올리기 위한 표시다.
+
+    Args:
+        identity_id: 작업 역할 ARN 또는 서비스 계정.
+
+    Returns:
+        `identity_grants:<신원>` Omission.
+    """
+    return model.Omission(
+        f"identity_grants:{identity_id}", "unsupported_type", None
+    )
+
+
 def unattested(
     workloads: tuple[model.Workload, ...],
 ) -> model.CollectionAttestation:

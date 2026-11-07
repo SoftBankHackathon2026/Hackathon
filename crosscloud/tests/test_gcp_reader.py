@@ -214,6 +214,8 @@ def test_unsupported_resources_become_omissions(first_slice):
         f"sqladmin:projects/{_PROJECT}/instances/mysql-db",
         f"artifactregistry:{_AR}/npm",
         f"compute:projects/{_PROJECT}/global/forwardingRules/classic-fr",
+        # 서비스 계정으로 닿는 대응표 밖 의존은 수집하지 않는다.
+        f"identity_grants:app@{_PROJECT}.iam.gserviceaccount.com",
     }
 
 
@@ -320,3 +322,47 @@ def test_authorized_get_json_raises_other_failures(monkeypatch):
 
     with pytest.raises(RuntimeError, match="500"):
         get_json(_SQL, {})
+
+
+def test_secret_volume_is_recorded_and_omitted():
+    service = _service()
+    service["template"]["volumes"] = [
+        {
+            "name": "db",
+            "secret": {
+                "secret": f"projects/{_PROJECT}/secrets/db-url",
+                "items": [{"version": "2", "path": "url"}],
+            },
+        },
+        {"name": "scratch", "emptyDir": {}},
+    ]
+    api = _FakeApi(_pages(services=[service]))
+
+    inventory = _read(api)
+
+    assert "secret_volume:request-api/db" in {
+        o.subject for o in inventory.omissions
+    }
+    assert (
+        model.SecretRef(
+            cloud="gcp",
+            native_id=f"projects/{_PROJECT}/secrets/db-url",
+            version="2",
+        )
+        in inventory.workloads[0].secret_refs
+    )
+
+
+def test_missing_service_account_means_default_compute_identity():
+    service = _service()
+    del service["template"]["serviceAccount"]
+    api = _FakeApi(_pages(services=[service]))
+
+    inventory = _read(api)
+
+    assert (
+        inventory.workloads[0].identity_id == "default_compute_service_account"
+    )
+    assert "identity_grants:default_compute_service_account" in {
+        o.subject for o in inventory.omissions
+    }

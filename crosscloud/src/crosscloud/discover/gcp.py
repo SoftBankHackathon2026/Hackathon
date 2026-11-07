@@ -23,6 +23,7 @@ from crosscloud.discover import env
 GetJson = Callable[[str, dict[str, str]], dict[str, Any]]
 
 _HTTP_FORBIDDEN = 403
+_DEFAULT_COMPUTE_IDENTITY = "default_compute_service_account"
 
 
 class GcpPermissionDeniedError(Exception):
@@ -313,12 +314,18 @@ def _workload(
         )
         secret_refs.append(ref)
         env_entries.append(env.classify_env(variable["name"], ref))
+    template = service["template"]
+    secret_refs.extend(_secret_volume_refs(name, template, omissions))
+    # serviceAccount 가 없으면 Cloud Run 은 Compute Engine 기본 서비스 계정을
+    # 쓴다.
+    identity_id = template.get("serviceAccount", _DEFAULT_COMPUTE_IDENTITY)
+    omissions.append(discover.identity_omission(identity_id))
     return model.Workload(
         name=name,
         cloud="gcp",
         platform="cloud_run",
         native_id=service["name"],
-        identity_id=service["template"].get("serviceAccount", ""),
+        identity_id=identity_id,
         image=_image(name, container["image"], omissions),
         code_repo=None,
         entries=(
@@ -333,6 +340,34 @@ def _workload(
         db_user=None,
         depends_on=tuple(ref.native_id for ref in secret_refs),
     )
+
+
+def _secret_volume_refs(
+    name: str, template: dict[str, Any], omissions: list[model.Omission]
+) -> list[model.SecretRef]:
+    # Secret 볼륨은 파일로 주입한다. 어느 env(*_FILE 등)가 그 파일을 읽는지는
+    # 수집하지 않으므로 사람이 확인한다.
+    refs = []
+    for volume in template.get("volumes", []):
+        secret = volume.get("secret")
+        if secret is None:
+            continue
+        omissions.append(
+            model.Omission(
+                f"secret_volume:{name}/{volume['name']}",
+                "unsupported_type",
+                None,
+            )
+        )
+        versions = [item.get("version") for item in secret.get("items", [])]
+        refs.append(
+            model.SecretRef(
+                cloud="gcp",
+                native_id=secret["secret"],
+                version=next((v for v in versions if v), "latest"),
+            )
+        )
+    return refs
 
 
 def _image(

@@ -174,7 +174,7 @@ class AwsInventoryReader:
                 model.Omission(f"env_files:{name}", "unsupported_type", None)
             )
         if task.get("taskRoleArn"):
-            omissions.append(_identity_omission(task["taskRoleArn"]))
+            omissions.append(discover.identity_omission(task["taskRoleArn"]))
         return model.Workload(
             name=name,
             cloud="aws",
@@ -379,13 +379,6 @@ def _secret_ref(
         cloud="aws",
         native_id=":".join(parts[:_SECRET_ARN_PARTS]),
         version=version_id or version_stage or "AWSCURRENT",
-    )
-
-
-def _identity_omission(identity_id: str) -> model.Omission:
-    # 신원의 권한(S3·SQS 등 대응표 밖 의존)은 수집하지 않는다.
-    return model.Omission(
-        f"identity_grants:{identity_id}", "unsupported_type", None
     )
 
 
