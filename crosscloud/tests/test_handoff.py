@@ -1,15 +1,11 @@
 import dataclasses
 import datetime
-import importlib
-import pathlib
-import sys
 
 import pytest
 import yaml
 
 from crosscloud import handoff, model
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _NOW = datetime.datetime(2026, 11, 7, 15, 30, 0, tzinfo=datetime.UTC)
 _TABLES = (handoff.AppTable("public.requests", ("id",)),)
 
@@ -248,18 +244,10 @@ def test_render_refuses_when_a_readiness_item_is_missing(tmp_path):
         handoff.render_cloud_config(_job(), _all_ready()[:-1], tmp_path)
 
 
-def _migration_plan_module():
-    sys.path.insert(0, str(_REPO_ROOT / "migration"))
-    try:
-        return importlib.import_module("migration.cloud.plan")
-    except ImportError:
-        pytest.skip("원가연 migration 패키지를 불러올 수 없다")
-    finally:
-        sys.path.pop(0)
-
-
-def test_rendered_config_is_accepted_by_migration_cloud_parser(tmp_path):
-    plan_module = _migration_plan_module()
+def test_rendered_config_is_accepted_by_migration_cloud_parser(
+    tmp_path, migration_module
+):
+    plan_module = migration_module("migration.cloud.plan")
     path, _ = handoff.render_cloud_config(_job(), _all_ready(), tmp_path)
 
     plan = plan_module.load(path)
@@ -270,8 +258,10 @@ def test_rendered_config_is_accepted_by_migration_cloud_parser(tmp_path):
     assert [t.name for t in plan.tables] == ["public.requests"]
 
 
-def test_reverse_job_flips_labels_and_gets_new_job_id(tmp_path):
-    plan_module = _migration_plan_module()
+def test_reverse_job_flips_labels_and_gets_new_job_id(
+    tmp_path, migration_module
+):
+    plan_module = migration_module("migration.cloud.plan")
     back = handoff.CloudJobConfig(
         job_id=handoff.new_job_id("gcp", "aws", _NOW),
         source=_TARGET,
