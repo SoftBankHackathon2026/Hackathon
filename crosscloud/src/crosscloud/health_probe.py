@@ -1,27 +1,30 @@
-"""앱 health 를 HTTP 로 점검한다 — 제어 어댑터와 트래픽 관문이 같이 쓴다.
+"""앱 준비 상태(readiness)를 HTTP 로 점검한다.
 
-health 주소는 DB 를 읽는 경로여야 한다(sample-app 은 /readyz. /healthz 는 DB
-를 읽지 않는다). 성공은 HTTP 200 뿐이다.
+점검 주소는 DB 를 읽는 경로여야 한다. sample-app 은 /readyz 다(/healthz 는 DB
+를 읽지 않는다). 성공은 HTTP 200 이면서 JSON 본문의 status 가 "ok" 일 때뿐이다
+(원가연 migration/ingress_client.py check_app_ready 와 같은 기준).
 
-  healthy = health_probe.is_healthy(url, timeout=5)
+  ready = health_probe.is_healthy(app_url + "/readyz", timeout=5)
   streak = health_probe.consecutive_successes(
       lambda: health_probe.is_healthy(url, timeout=5), needed=3,
       deadline_seconds=25, interval=1)
 """
 
 import collections.abc
+import json
 import time
 import urllib.error
 import urllib.request
 
 
 def is_healthy(url: str, timeout: float) -> bool:
-    """주소에 GET 해서 200 이면 True. 연결 실패·다른 코드는 False."""
+    """GET 이 200 이고 본문 status 가 ok 면 True. 그 밖은 모두 False."""
     request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status == 200
-    except (urllib.error.URLError, OSError):
+            body = json.loads(response.read().decode("utf-8"))
+            return response.status == 200 and _status_ok(body)
+    except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
@@ -54,3 +57,7 @@ def consecutive_successes(
         if streak < needed:
             sleep(interval)
     return streak
+
+
+def _status_ok(body: object) -> bool:
+    return isinstance(body, dict) and body.get("status") == "ok"

@@ -14,11 +14,18 @@ class _FakeTime:
         self.now += seconds
 
 
-def test_is_healthy_only_on_http_200():
+def test_is_healthy_only_on_http_200_with_status_ok():
     with http_fixture.serve(
-        {"/readyz": (200, b"{}"), "/down": (503, b"{}")}
+        {
+            "/readyz": (200, b'{"status":"ok"}'),
+            "/odd": (200, b'{"status":"degraded"}'),
+            "/text": (200, b"ok"),
+            "/down": (503, b'{"status":"unavailable"}'),
+        }
     ) as url:
         assert health_probe.is_healthy(url + "/readyz", timeout=2)
+        assert not health_probe.is_healthy(url + "/odd", timeout=2)
+        assert not health_probe.is_healthy(url + "/text", timeout=2)
         assert not health_probe.is_healthy(url + "/down", timeout=2)
         assert not health_probe.is_healthy(url + "/missing", timeout=2)
 
