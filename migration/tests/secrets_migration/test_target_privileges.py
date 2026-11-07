@@ -59,10 +59,23 @@ def test_least_privilege_token_passes_and_lifecycle_paths_are_probed():
     } <= set(bao.asked)
 
 
+def test_installer_metadata_read_and_list_is_allowed():
+    bao = FakeBao(extra={"kv/metadata/migration/orders/db": ["list", "read"]})
+    assert (
+        OpenBao(CONFIG, http=bao).inspect(["migration/orders/db"])["accessor"] == "kv_1"
+    )
+
+
+@pytest.mark.parametrize("caps", [["update"], ["delete", "read"], ["sudo"], None])
+def test_metadata_writes_are_overprivileged(caps):
+    bao = FakeBao(extra={"kv/metadata/migration/orders/db": caps})
+    with pytest.raises(SecretsError, match="MIGRATION_TOKEN_OVERPRIVILEGED"):
+        OpenBao(CONFIG, http=bao).inspect(["migration/orders/db"])
+
+
 @pytest.mark.parametrize(
     "path",
     [
-        "kv/metadata/migration/orders/db",
         "kv/delete/migration/orders/db",
         "kv/destroy/migration/orders/db",
         "kv/data/migration__outside_secret_migration__/probe",

@@ -173,8 +173,9 @@ class OpenBao:
         lifecycle = [
             path.replace("/data/", "/" + action + "/", 1)
             for path in required
-            for action in ("metadata", "delete", "destroy", "undelete")
+            for action in ("delete", "destroy", "undelete")
         ]
+        metadata = [path.replace("/data/", "/metadata/", 1) for path in required]
         denied = [
             outside,
             sibling,
@@ -182,7 +183,7 @@ class OpenBao:
             "sys/auth",
             "sys/policies/acl/unrelated",
         ]
-        requested = [*required, *denied]
+        requested = [*required, *metadata, *denied]
         response = self.http.request(
             "POST", "sys/capabilities-self", {"paths": requested}
         )
@@ -193,7 +194,12 @@ class OpenBao:
                 "MIGRATION_PERMISSION_MISSING",
             )
         require(
-            all(caps.get(p) == ["deny"] for p in denied),
+            all(caps.get(p) == ["deny"] for p in denied)
+            and all(
+                isinstance(caps.get(p), list)
+                and set(caps[p]) <= {"read", "list", "deny"}
+                for p in metadata
+            ),
             "MIGRATION_TOKEN_OVERPRIVILEGED",
         )
         return {
