@@ -143,7 +143,12 @@ docker compose up -d oneport-api
 
 - 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`, `platform/deploy/aws/cost.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.
 - 수동: Actions에서 `platform-ec2`를 `Run workflow`.
+- 배포 전에 [`platform-ci`](../../../.github/workflows/platform-ci.yml)의 백엔드·프론트 검사를 같은 커밋으로 먼저 돌려요(`workflow_call`). 검사가 실패하면 이미지도 올리지 않고 배포도 하지 않아요.
+- ECR 저장소는 태그를 덮어쓸 수 없어요. 같은 커밋을 다시 돌리면 이미 올라간 이미지는 빌드·push 를 건너뛰고 배포만 다시 해요.
 - 인스턴스에서는 `/opt/oneport/releases/<커밋>`에 풀린 `deploy.sh`가 `docker compose pull` → `up --wait` → `/healthz` 확인 순서로 돌아요. 최근 5개 릴리즈만 남겨요.
+- 이 중 하나라도 실패하면 `deploy.sh`가 덮어쓰기 전에 남겨 둔 직전 `ONEPORT_TAG`와 `compose.yaml`·`Caddyfile`·`fleet.json`·`cost.json`으로 되돌려 다시 띄우고, 실패로 끝나요. 워크플로도 실패로 표시돼요. 처음 배포처럼 직전 기록(`.env`)이 없으면 되돌리지 않아요.
+- `up --wait`는 API·DB·수집기 healthcheck 가 모두 healthy 가 될 때까지 기다려요. 수집기는 tick 마다 `/tmp/collector-heartbeat`를 갱신하고, 10분 넘게 갱신이 없으면 unhealthy 예요. docker 는 unhealthy 컨테이너를 스스로 재시작하지 않으니 `docker compose ps`로 보고 직접 재시작해요.
+- 컨테이너마다 `mem_limit`을 둬서(합계 약 1.3GiB) 하나가 메모리를 다 써도 t3.small(2GiB) 전체가 멈추지 않게 해요.
 
 되돌리기는 예전 커밋으로 워크플로를 다시 돌리거나, 인스턴스에서 그 커밋 폴더의 `deploy.sh`를 다시 부르면 돼요.
 

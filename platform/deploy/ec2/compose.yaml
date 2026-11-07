@@ -10,6 +10,9 @@
 #   /opt/oneport/settings.env          : ONEPORT_DOMAIN, ONEPORT_AUTH_MODE, ONEPORT_ALLOWED_HOSTS, ONEPORT_ALLOWED_ORIGINS
 #   /opt/oneport/secrets/              : postgres-password, database-url, ingest-token, access.env(있으면 접속 PIN)
 #   /opt/oneport/kube/                 : onprem.kubeconfig, aws.kubeconfig, gcp.kubeconfig
+#
+# 메모리 상한(mem_limit)은 t3.small(2GiB)에 맞춘다. 합계 약 1.3GiB 이고 나머지는 OS·dockerd·tailscaled·SSM 에이전트 몫이다.
+# 상한을 넘은 컨테이너만 OOM 으로 죽고 restart 로 다시 뜬다. 인스턴스 전체가 멈추지 않게 하는 것이 목적이다.
 name: oneport
 
 x-api: &api
@@ -38,6 +41,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U oneport -d oneport"]
       interval: 5s
       retries: 20
+    mem_limit: 384m
 
   oneport-api:
     <<: *api
@@ -59,12 +63,14 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8320/healthz', headers={'Host': 'localhost'}))"]
       interval: 10s
       retries: 6
+    mem_limit: 384m
 
   oneport-collector:
     <<: *api
     command: ["python", "-m", "controlplane.execution.fleet_collector"]
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
+      ONEPORT_COLLECTOR_HEARTBEAT: /tmp/collector-heartbeat
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
       ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
     volumes:
@@ -72,6 +78,14 @@ services:
       - ./kube:/etc/oneport/kube:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro
+    # 수집기는 DB 연결·마이그레이션을 마친 뒤 tick 마다 heartbeat 파일을 갱신한다.
+    # 파일이 없으면(아직 못 떴으면) 또는 10분 넘게 갱신이 없으면(tick 이 멈췄으면) unhealthy 다. deploy.sh 의 up --wait 가 이것을 기다린다.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/collector-heartbeat') > 600)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    mem_limit: 384m
 
   oneport-web:
     image: ${ONEPORT_REGISTRY}/ghost/oneport-platform-web:${ONEPORT_TAG}
@@ -81,6 +95,7 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     tmpfs: [/tmp, /var/cache/nginx]
+    mem_limit: 64m
     depends_on:
       oneport-api: {condition: service_healthy}
 
@@ -100,6 +115,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    mem_limit: 128m
     depends_on:
       - oneport-web
 

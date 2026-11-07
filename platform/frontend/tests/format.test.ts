@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   formatAgo,
+  formatRatio,
   formatSeconds,
   imageTag,
   shortRevision,
@@ -28,4 +29,14 @@ test("revision and image helpers", () => {
   assert.equal(shortRevision("0123456789abcdef"), "0123456");
   assert.equal(shortRevision("v1"), "v1");
   assert.equal(imageTag("ghcr.io/org/app:1.2"), "app:1.2");
+});
+
+test("formatRatio floors so only a full copy reads 100%", () => {
+  assert.equal(formatRatio(9996, 10000), "99.9%");
+  assert.equal(formatRatio(10000, 10000), "100.0%");
+  assert.equal(formatRatio(12000, 10000), "100.0%");
+  assert.equal(formatRatio(57, 100), "57.0%");
+  assert.equal(formatRatio(1, 3), "33.3%");
+  assert.equal(formatRatio(0, 10), "0.0%");
+  assert.equal(formatRatio(5, 0), "-");
 });

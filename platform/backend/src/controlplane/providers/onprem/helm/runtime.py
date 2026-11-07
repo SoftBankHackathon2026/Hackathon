@@ -10,7 +10,7 @@ from controlplane.providers.onprem.bindings import SecretRef
 from controlplane.providers.onprem.connection import connect
 from controlplane.providers.onprem.health_http import build_health_client, serves_release
 from controlplane.providers.onprem.helm.client import HelmClient
-from controlplane.providers.onprem.helm.kubeapi import READ_TIMEOUT, read_optional
+from controlplane.providers.onprem.helm.kubeapi import READ_TIMEOUT, observing, read_optional
 from controlplane.providers.onprem.helm.models import HelmPlan
 from controlplane.providers.onprem.helm.observation import RolloutState, observe, startup_issue
 from controlplane.providers.onprem.helm.plan import app_plan, fingerprint, release_name
@@ -49,13 +49,19 @@ class HelmRuntime:
         if self.clients:
             return
         s = self.settings
-        self.clients = connect(kubeconfig=s.kubeconfig, context=s.context, expected_server=s.server)
-        self.app = self._client_for(s.app_chart)
-        self.data = self._client_for(s.data_chart)
-        self.app.load_package()
-        self.data.load_package()
-        self.app.verify_version()
-        self.http = build_health_client(timeout=5)
+        clients = connect(kubeconfig=s.kubeconfig, context=s.context, expected_server=s.server)
+        try:
+            app = self._client_for(s.app_chart)
+            data = self._client_for(s.data_chart)
+            app.load_package()
+            data.load_package()
+            app.verify_version()
+            http = build_health_client(timeout=5)
+        except Exception:
+            clients.close()
+            raise
+        self.app, self.data, self.http = app, data, http
+        self.clients = clients
 
     def close(self):
         if self.clients:
@@ -126,14 +132,15 @@ class HelmRuntime:
         return ArgoProvider(self.clients, env), bound
 
     def _read_rollout(self, plan: HelmPlan) -> dict:
-        return self.clients.custom.get_namespaced_custom_object(
-            "argoproj.io",
-            "v1alpha1",
-            plan.namespace,
-            "rollouts",
-            plan.release,
-            _request_timeout=READ_TIMEOUT,
-        )
+        with observing():
+            return self.clients.custom.get_namespaced_custom_object(
+                "argoproj.io",
+                "v1alpha1",
+                plan.namespace,
+                "rollouts",
+                plan.release,
+                _request_timeout=READ_TIMEOUT,
+            )
 
     def _startup_issue(self, plan: HelmPlan, result: RolloutState, rollout: dict) -> str | None:
         try:
@@ -145,14 +152,15 @@ class HelmRuntime:
 
     def _apply_canary_traffic(self, plan: HelmPlan, result: RolloutState) -> None:
         traffic_name = plan.release + TRAFFIC_SUFFIX
-        traffic = self.clients.custom.get_namespaced_custom_object(
-            "traefik.io",
-            "v1alpha1",
-            plan.namespace,
-            "traefikservices",
-            traffic_name,
-            _request_timeout=READ_TIMEOUT,
-        )
+        with observing():
+            traffic = self.clients.custom.get_namespaced_custom_object(
+                "traefik.io",
+                "v1alpha1",
+                plan.namespace,
+                "traefikservices",
+                traffic_name,
+                _request_timeout=READ_TIMEOUT,
+            )
         meta = traffic.get("metadata", {})
         annotations = meta.get("annotations", {})
         if (
@@ -201,9 +209,10 @@ class HelmRuntime:
     def verify_hostname(self):
         env = self.settings.environment
         own = release_name(env.application, env.environment_id)
-        ingresses = self.clients.networking.list_namespaced_ingress(
-            env.namespace, _request_timeout=READ_TIMEOUT
-        ).items
+        with observing():
+            ingresses = self.clients.networking.list_namespaced_ingress(
+                env.namespace, _request_timeout=READ_TIMEOUT
+            ).items
         for ingress in ingresses:
             if (
                 any(rule.host == env.hostname for rule in (ingress.spec.rules or []))
@@ -211,14 +220,15 @@ class HelmRuntime:
             ):
                 raise ProviderConflict("Hostname is already owned by another deployment")
         try:
-            obj = self.clients.custom.get_namespaced_custom_object(
-                "argoproj.io",
-                "v1alpha1",
-                env.namespace,
-                "rollouts",
-                own,
-                _request_timeout=READ_TIMEOUT,
-            )
+            with observing():
+                obj = self.clients.custom.get_namespaced_custom_object(
+                    "argoproj.io",
+                    "v1alpha1",
+                    env.namespace,
+                    "rollouts",
+                    own,
+                    _request_timeout=READ_TIMEOUT,
+                )
         except ApiException as exc:
             if exc.status == 404:
                 return

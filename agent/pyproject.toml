@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghost-agent"
+version = "0.1.0"
+description = "이전 보류 원인(대상 설정 오류)을 Codex 로 고치고, 정책 안에서만 적용·보고하는 AI 에이전트"
+requires-python = ">=3.12"
+dependencies = [
+    "migration",
+    "psycopg[binary]>=3.2,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+aws = ["boto3>=1.34"]
+slack = ["slack_bolt>=1.18"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+packages = ["agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -ra"
+
+[tool.setuptools.package-data]
+agent = ["schema/*.json"]

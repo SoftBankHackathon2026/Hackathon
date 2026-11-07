@@ -1,6 +1,8 @@
 name: Platform CI
 
+# platform-ec2.yml 이 배포 전에 workflow_call 로 같은 검사를 부른다. 검사가 실패하면 배포하지 않는다.
 on:
+  workflow_call:
   pull_request:
     paths: ["platform/**", ".github/workflows/platform-ci.yml"]
   push:

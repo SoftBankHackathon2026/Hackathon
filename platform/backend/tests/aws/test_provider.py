@@ -325,6 +325,23 @@ def test_gateway_round_trip(provider, make_request, aws):
     assert gateway.observe(request, handle).code == "ecs_deployment_completed"
 
 
+def test_public_image_allowed_after_prepare_keeps_candidate_fingerprint(provider, make_request):
+    gateway = CandidateGateway({("shop", "aws-oneport"): OneportEcsCandidateDriver(provider)})
+    request = make_request()
+    provider.initialize(request)
+    prepared = gateway.prepare(request, R1)
+    provider.allow_public_image("docker.io/library/nginx@sha256:" + "b" * 64)
+    assert gateway.submit(request, prepared).submission.provider == "aws_ecs"
+
+
+def test_delete_app_finishes_after_policy_already_detached(provider, make_request, aws):
+    deploy(provider, make_request(), R1)
+    role = provider.environment.runtime_role_name
+    aws.roles[role]["policies"].clear()
+    assert provider.delete_app()[-1] == "runtime_role"
+    assert aws.roles == {}
+
+
 def test_delete_app_in_infra_order(provider, make_request, aws):
     deploy(provider, make_request(), R1)
     done = provider.delete_app()
