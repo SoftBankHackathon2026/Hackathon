@@ -188,6 +188,7 @@ class WorkerSettings:
     http_host: str = "0.0.0.0"
     latency_window: int = 10_000
     known_targets: tuple[str, ...] = ()   # 설정 파일의 targets 이름. cutover PRECHECK 가 /status 로 확인한다
+    max_generated: int | None = None
 
 
 def _percentile(samples: list[float], pct: float) -> float | None:
@@ -216,6 +217,15 @@ class Worker:
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         meta = _load_meta(settings.state_dir) or {}
+        if meta.get("max_generated") is not None and meta["max_generated"] != settings.max_generated:
+            raise WorkerError("cannot change a persisted demo budget; use a fresh state directory")
+        if settings.max_generated is not None and meta and meta.get("run_id") != settings.run_id:
+            raise WorkerError("bounded demo requires its original run_id and state directory")
+        self._generation_limit = meta.get("generation_limit", 0) if settings.max_generated is not None else None
+        if settings.max_generated is not None and not (
+            type(self._generation_limit) is int and 0 <= self._generation_limit <= settings.max_generated
+        ):
+            raise WorkerError("invalid saved generation limit")
         self._state = WorkerState(meta.get("state", "PAUSED" if meta else "RUNNING"))
         if self._state == WorkerState.SWITCHING:
             self._state = WorkerState.PAUSED
@@ -309,6 +319,9 @@ class Worker:
                 "run_id": self.settings.run_id,
                 "known_targets": list(self.settings.known_targets),
                 "rate_per_second": self.settings.rate_per_second,
+                "generation_limit": self._generation_limit,
+                "max_generated": self.settings.max_generated,
+                "generated_total": self._next_no,
                 "queue_length": len(self._queue),
                 "queue_oldest_age_seconds": oldest_age,
                 "in_flight": in_flight,
@@ -446,6 +459,8 @@ class Worker:
     def _persist_meta(self) -> None:
         with self._lock:
             meta = {"target": self._target, "phase": self._phase, "run_id": self.settings.run_id,
+                    "generation_limit": self._generation_limit,
+                    "max_generated": self.settings.max_generated,
                     "state": self._state.value, "unresolved": self._unresolved,
                     "updated_at": datetime.now(UTC).isoformat()}
             path = self.settings.state_dir / WORKER_META_FILE
@@ -488,8 +503,14 @@ class Worker:
 
     def generate_one(self) -> RequestRecord | None:
         """요청 하나를 만들어 영속 기록 후 대기열에 넣는다. 상한 초과면 거절 기록."""
-        rec = self._make_request()
         with self._lock:
+            if self._generation_limit is not None:
+                if self._next_no >= self._generation_limit or self._state != WorkerState.RUNNING:
+                    return None
+                # A full queue waits rather than consuming the finite demo budget.
+                if len(self._queue) >= self.settings.max_queue:
+                    return None
+            rec = self._make_request()
             reason: str | None = None
             if len(self._queue) >= self.settings.max_queue:
                 reason = f"queue_full: {len(self._queue)} >= {self.settings.max_queue}"
@@ -502,10 +523,21 @@ class Worker:
                 return None
             self.store.record_pending(rec)
             self.counters["generated"] += 1
-        with self._cond:
             self._queue.append(rec)
             self._cond.notify_all()
         return rec
+
+    def set_generation_limit(self, limit: int) -> dict[str, Any]:
+        """Absolute, persisted cap: replaying a cutover step never adds a new budget."""
+        with self._lock:
+            maximum = self.settings.max_generated
+            if maximum is None or type(limit) is not int or not 0 <= limit <= maximum:
+                raise WorkerError("generation limit outside configured demo budget")
+            if limit < self._generation_limit:
+                raise WorkerError("generation limit cannot decrease")
+            self._generation_limit = limit
+            self._persist_meta()
+            return self.status()
 
     def _generator_loop(self) -> None:
         interval = 1.0 / self.settings.rate_per_second if self.settings.rate_per_second > 0 else None
@@ -710,6 +742,8 @@ def make_handler(worker: Worker) -> type[BaseHTTPRequestHandler]:
                     self._send_json(200, worker.pause())
                 elif self.path == "/resume":
                     self._send_json(200, worker.resume())
+                elif self.path == "/generation-limit":
+                    self._send_json(200, worker.set_generation_limit(self._read_json().get("limit")))
                 elif self.path == "/drain":
                     body = self._read_json()
                     timeout = float(body.get("timeout", 60))
@@ -783,6 +817,7 @@ def build_settings(args: argparse.Namespace, config: Config) -> WorkerSettings:
         rate_per_second=args.rate,
         state_dir=state_dir,
         known_targets=tuple(config.targets),
+        max_generated=200 if config.cutover.demo_total_rows is not None else None,
         max_queue=args.max_queue,
         max_queue_age_seconds=args.max_queue_age,
         max_consecutive_failures=args.max_consecutive_failures,

@@ -55,6 +55,7 @@ class ApprovalRequired(RuntimeError):
 
 
 class WorkerPort(Protocol):
+    def set_generation_limit(self, limit: int) -> dict[str, Any]: ...
     def status(self) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
     def resume(self) -> dict[str, Any]: ...
@@ -117,9 +118,18 @@ class PgAdminPort:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.table = config.job.table
+        self._pools = {}
 
-    def _admin(self, target: str) -> psycopg.Connection[Any]:
-        return dbmod.connect(self.config.connection(target, "admin", application_name="migration-cutover"))
+    def _admin(self, target: str):
+        if target not in self._pools:
+            self._pools[target] = dbmod.connection_pool(
+                self.config.connection(target, "admin", application_name="migration-cutover"))
+        return self._pools[target].connection()
+
+    def close(self) -> None:
+        for pool in self._pools.values():
+            pool.close()
+        self._pools.clear()
 
     def _app_user(self, target: str) -> str:
         return self.config.target(target).user_spec("app").user
@@ -424,6 +434,14 @@ class Cutover:
         if src.get("cdc_replication") is False:
             problems.append("원본 CDC 계정에 REPLICATION 권한이 없다")
         ws = self.p.worker.status()
+        if self.cc.demo_total_rows is not None:
+            if (src.get("row_count") != 800 or tgt.get("row_count") != 0
+                    or self.p.db.count_rows(self.source, "seed") != 800):
+                problems.append("1000-row demo requires source=800 seed rows and an empty target")
+            if (ws.get("max_generated") != 200 or ws.get("generation_limit") != 0
+                    or ws.get("generated_total") != 0 or ws.get("queue_length") != 0
+                    or ws.get("in_flight") or ws.get("state") != "RUNNING"):
+                problems.append("1000-row demo requires a fresh bounded worker (200 maximum, 0 released)")
         if ws.get("target") != self.source:
             problems.append(f"워커 target={ws.get('target')} 이 원본 {self.source} 가 아니다")
         known = ws.get("known_targets")
@@ -475,9 +493,13 @@ class Cutover:
 
         info = self._wait("snapshot", snapshot_done)
         copy_count = self.p.db.count_rows(self.source)
+        if self.cc.demo_total_rows is not None and copy_count != 800:
+            raise CutoverError("demo source changed before live generation: expected 800 rows")
         self._save(CATCHING_UP, copying=info, source_count_at_copy=copy_count)
 
     def stage_catching_up(self) -> None:
+        if self.cc.demo_total_rows is not None:
+            self._step("demo_release_source", lambda: self.p.worker.set_generation_limit(100))
         base = int(self.job.checkpoint.get("source_count_at_copy", 0))
         need = base + self.cc.min_live_rows_after_snapshot
 
@@ -491,6 +513,8 @@ class Cutover:
             return ok, {"connectors": states, "source": src_n, "target": tgt_n, "need": need, "latest_applied": applied}
 
         info = self._wait("catching_up", caught_up)
+        if self.cc.demo_total_rows is not None and info["source"] != 900:
+            raise CutoverError("demo source must contain exactly 900 rows")
         self._save(READY, catching_up=info)
 
     def stage_ready(self) -> None:
@@ -626,10 +650,16 @@ class Cutover:
         ident = ((ws.get("last_switch") or {}).get("identity") or {})
         if ident and ident.get("database") not in (None, expected_db):
             raise CutoverError(f"워커가 붙은 DB 가 기대와 다르다: {ident}")
+        before = int((ws.get("committed_by_target") or {}).get(self.target, 0))
+        if self.cc.demo_total_rows is not None:
+            # Persist before releasing generation: a crash/retry must not move the baseline.
+            if "committed_on_target_before" not in self.job.checkpoint:
+                self._save(committed_on_target_before=before)
+            before = int(self.job.checkpoint["committed_on_target_before"])
+            self._step("demo_release_target", lambda: self.p.worker.set_generation_limit(200))
         self._step("worker_resume", lambda: {"state": self.p.worker.resume().get("state")})
         ingress_switch = self._switch_ingress() if self.ingress is not None else None
         traffic_switch = self._switch_traffic() if self.p.traffic is not None else None
-        before = int((ws.get("committed_by_target") or {}).get(self.target, 0))
         self._save(VERIFYING, switched=switched, committed_on_target_before=before,
                    switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ingress=ingress_switch,
                    traffic=traffic_switch)
@@ -698,6 +728,12 @@ class Cutover:
                                "mismatch": (ws.get("counters") or {}).get("mismatch")}
 
         info = self._wait("post_switch_rows", enough)
+        if self.cc.demo_total_rows is not None:
+            source_rows = self.p.db.count_rows(self.source)
+            target_rows = self.p.db.count_rows(self.target)
+            if source_rows != 900 or target_rows != 1000:
+                raise CutoverError(f"demo row budget mismatch: source={source_rows}, target={target_rows}")
+            info["demo_rows"] = {"source": source_rows, "target": target_rows}
         if int(info.get("mismatch") or 0) > 0:
             raise CutoverError(f"워커가 불변 필드 불일치를 기록했다: {info}")
         if self.p.db.app_can_insert(self.source):
@@ -881,6 +917,7 @@ def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | Non
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    cut = None
     try:
         config = load_config(args.config)
         state_dir = Path(args.state_dir or config.cutover.state_dir)
@@ -919,6 +956,9 @@ def main(argv: list[str] | None = None) -> int:
     except (CutoverError, ConnectError, WorkerClientError, IngressClientError, psycopg.Error) as exc:
         log.error("전환 실패: %s", exc)
         return EXIT_FAILED
+    finally:
+        if cut is not None and isinstance(cut.p.db, PgAdminPort):
+            cut.p.db.close()
 
 
 if __name__ == "__main__":

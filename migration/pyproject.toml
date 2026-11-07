@@ -9,6 +9,7 @@ description = "온프렘 PostgreSQL → AWS PostgreSQL 이전 데모 도구 (INS
 requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
     "PyYAML>=6.0,<7",
 ]
 

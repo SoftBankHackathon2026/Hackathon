@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import psycopg
@@ -84,14 +85,17 @@ def test_init_db_is_idempotent_and_roles_are_minimal(patched_env):
         assert dbmod.server_identity(conn).user == "migration_app"
 
 
-def test_seed_exact_1000_and_rerun(patched_env, state_dir):
+@pytest.mark.parametrize('count', [800, 1000])
+def test_seed_default_demo_and_legacy_counts_and_rerun(patched_env, state_dir, count):
     config = patched_env
-    assert seed.run(config, "onprem", state_dir=state_dir, count=1000) == 0
-    assert seed.run(config, "onprem", state_dir=state_dir, count=1000) == 0
+    if count == 800:
+        config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000))
+    assert seed.run(config, "onprem", state_dir=state_dir) == 0
+    assert seed.run(config, "onprem", state_dir=state_dir) == 0
     with dbmod.connect(config.connection("onprem", "verify")) as conn:
-        assert dbmod.count_rows(conn, "public.migration_demo", "seed") == 1000
+        assert dbmod.count_rows(conn, "public.migration_demo", "seed") == count
     store = RequestStore(state_dir)
-    assert len(store.committed_ids("onprem")) == 1000
+    assert len(store.committed_ids("onprem")) == count
     store.close()
 
 
