@@ -5,7 +5,7 @@ import socket
 import fake_ingress
 import pytest
 
-from crosscloud import cli
+from crosscloud import cli, cutover_cli
 
 
 def _free_port():
@@ -106,7 +106,7 @@ def test_build_adapter_server_listens_on_control_url_port(tmp_path):
         _args("serve-adapter", cloud, env, "http://127.0.0.1:9")
     )
 
-    server = cli.build_server(args)
+    server = cutover_cli.build_server(args)
     try:
         assert server.server_address == ("127.0.0.1", port)
     finally:
