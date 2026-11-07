@@ -1,5 +1,5 @@
 'use strict';
-// 운영자·에이전트 요청 서명 검사. 키는 전송하지 않는다(평문 HTTP 구간 대비).
+// 운영자·에이전트 요청 서명 검사. 키는 전송하지 않는다.
 //   X-Demo-Auth: <role>.<unix초>.<nonce>.<hex 서명>
 //   서명 = HMAC-SHA256(키, role\nMETHOD\npath\nunix초\nnonce\nsha256hex(body))
 // 같은 규칙을 public/hmac.js(브라우저)와 agent/agent.py(온프렘)가 따른다.

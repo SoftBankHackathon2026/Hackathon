@@ -4,9 +4,18 @@
 이미 만든 요청은 끝까지 보낸다. 왜 이렇게 나눴는지는 [DESIGN.md](DESIGN.md).
 
 ```
-server.js, lib/, public/   GKE 에 뜨는 상태판·명령 서버 (Node 22 내장 모듈만)
-agent/agent.py             온프렘 에이전트 (파이썬 표준 라이브러리만, migration-tools 이미지에서 실행)
-k8s/                       GKE 매니페스트. 온프렘 에이전트 매니페스트는 gitops apps/demo-traffic-agent
+server.js, lib/, public/   상태판·명령 서버 (Node 22 내장 모듈만)
+agent/agent.py             봇 스위치를 부르는 에이전트 (파이썬 표준 라이브러리만)
+```
+
+온프렘에서는 둘이 한 파드의 두 컨테이너로 돈다. 매니페스트는 gitops `apps/demo-traffic-control`
+(이 디렉터리의 파일을 ConfigMap 으로 올린다. 고칠 때는 양쪽을 같이 바꾼다).
+
+## 화면 열기 (온프렘)
+
+```bash
+kubectl --kubeconfig ~/.kube/oneport-onprem.yaml -n hackathon port-forward svc/demo-traffic-control 5060:80
+# http://127.0.0.1:5060 → 화면 아래 "운영자 키" 칸에 Secret demo-traffic-control 의 operator_key 를 넣는다
 ```
 
 ## 로컬 실행
@@ -26,22 +35,6 @@ python3 -I demo/traffic-control/agent/test_agent.py
 두 시험은 같은 서명 벡터를 확인한다. 브라우저(`public/hmac.js`)·서버(`lib/auth.js`)·에이전트(`agent.py`)가
 같은 서명을 만들어야 한다.
 
-## 배포
-
-GKE (`oneaction-dev`, 3분할 뷰어와 같은 클러스터):
-
-```bash
-TAG=$(git rev-parse HEAD)
-IMAGE=asia-northeast3-docker.pkg.dev/ghost-project-513812/ghost/demo-traffic-control:$TAG
-docker build --platform linux/amd64 -t $IMAGE demo/traffic-control && docker push $IMAGE
-kubectl -n demo-traffic-control create secret generic demo-traffic-control-keys \
-  --from-file=operator_key=/secure/operator_key --from-file=agent_key=/secure/agent_key
-sed "s/IMAGE_TAG/$TAG/" demo/traffic-control/k8s/demo-traffic-control.yaml | kubectl apply -f -
-```
-
-온프렘 에이전트는 gitops `apps/demo-traffic-agent` 로 배포한다. 같은 `agent_key` 를 온프렘 Secret
-`demo-traffic-agent` 에 넣는다.
-
 ## 버튼이 꺼지는 경우
 
 | 화면 문구 | 이유 |
@@ -50,4 +43,4 @@ sed "s/IMAGE_TAG/$TAG/" demo/traffic-control/k8s/demo-traffic-control.yaml | kub
 | 전환이 진행 중입니다 | 커넥터가 있거나, 끝나지 않은 전환 작업이 있거나, 워커가 SWITCHING |
 | 시연 예산 모드 | 워커에 `max_generated` 가 있다. 생성량은 전환 도구가 정한다 |
 | 미지원 버전 | 워커·봇 이미지에 생성 스위치가 아직 없다 |
-| BOT_CONTROL_TOKEN 이 없습니다 | 에이전트 Secret 에 봇 제어 토큰이 없다 |
+| BOT_CONTROL_TOKEN 이 없습니다 | Secret 에 봇 제어 토큰이 없다 |
