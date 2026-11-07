@@ -21,8 +21,13 @@
 | `src/crosscloud/mapping/` | 서비스 대응표, 판정, 원가연 지원 제한 검사 |
 | `src/crosscloud/cli.py` | `crosscloud` 명령 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
+| `src/crosscloud/secret_transfer/` | Secret 값 이관(AWS↔GCP). 값은 메모리 bytes 로만 다루고 SHA-256 으로 대조 |
+| `src/crosscloud/datapath.py` | 원가연 전환 도구용 DB 로그인(admin·app·cdc·sink·verify)과 대상 스키마 준비 |
+| `src/crosscloud/db_readiness.py` | datapath 준비 결과를 카탈로그 질의로 점검(원가연 PRECHECK 전) |
+| `src/crosscloud/pg_client.py` | PostgreSQL 접속 정보와 pg_dump·psql 호출. 비밀번호는 명령줄에 넣지 않는다 |
 | `src/crosscloud/audit_copy/` | 감사 기록 이관 최소판. 원본 바이트 복사기, bundle·manifest, CloudTrail 오프라인 검증기 |
 | `terraform/audit/` | 감사 기록 보존 버킷 2개(GCS 보존 정책 미잠금, S3 Object Lock 활성) |
+| `terraform/aws/` | AWS 쪽 이전 자원 한 벌(VPC·RDS·Secret 그릇·ECR·ECS+ALB). 설명은 `terraform/aws/README.md` |
 | `tests/` | 단위 시험 |
 
 `Inventory` 스키마는 비밀로 의심되거나 분류가 불명인 env 값을 받지 않는다
@@ -62,6 +67,19 @@ bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 
 명령은 `python -m crosscloud.audit_copy.cli --help` 로 본다. 버킷은
 `terraform/audit/` 가 만들고, 잠그지 않는다.
 
+## Secret 값 이관
+
+`secret_transfer` 는 원본 Secret 의 현재 값을 메모리로만 읽어 대상 Secret 에
+새 버전으로 쓰고 SHA-256 으로 대조한다. 하나라도 실패하면 이 실행이 쓴 버전을
+되돌린다.
+
+*   **재시도:** 응답을 잃었거나 중간에 끊겼으면(되돌리기 전) 같은 `run_id` 로
+    다시 돌린다. 이미 쓴 버전을 다시 만들지 않는다. 실패해서 되돌린 뒤에는 새
+    `run_id` 로 돌린다 — AWS 는 같은 토큰으로 되돌린 버전을 `token_reused` 로
+    거부한다.
+*   **GCP 권한:** 현재 값을 버전 목록에서 고르므로, crosscloud 를 실행하는 GCP
+    신원에 `secretmanager.versions.list` 가 필요하다(secretAccessor 에는 없다).
+
 ## 사용법
 
 Python 3.12 이상이 필요하다. 이 디렉토리에서 실행한다.
@@ -78,7 +96,24 @@ ruff format --check .
 python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
 ```
 
-같은 검사를 CI(`.github/workflows/crosscloud.yml`)가 PR 마다 돌린다.
+`datapath` 통합 시험은 시험 전용 PostgreSQL 이 있어야 돈다(없으면 건너뛰고
+커버리지가 80% 아래로 떨어진다). 운영 DB 를 가리키지 않는다.
+
+```shell
+docker run -d --name r4-pg16 --label com.crosscloud.bench=r4 \
+    -e POSTGRES_PASSWORD=local-only -p 127.0.0.1:55432:55432 \
+    postgres:16 -c port=55432
+export CROSSCLOUD_TEST_PG_DSN="host=127.0.0.1 port=55432 user=postgres password=local-only dbname=postgres sslmode=disable"
+# 컨테이너 안의 pg_dump·psql 을 쓴다. 도구 주 버전이 서버와 다르면
+# datapath 가 거부한다(새 pg_dump 의 덤프는 옛 서버에서 실패한다).
+export CROSSCLOUD_TEST_PG_TOOLS="docker exec -i -e PGPASSWORD -e PGSSLMODE -e PGCONNECT_TIMEOUT r4-pg16"
+python -m pytest
+docker rm -f r4-pg16
+```
+
+같은 검사를 CI(`.github/workflows/crosscloud.yml`)가 PR 마다 돌린다. CI 는
+PostgreSQL 서비스 컨테이너를 띄우고, 그 안의 pg_dump·psql 로 통합 시험과
+서버 로그 카나리 시험까지 돌린다.
 
 원본을 파악하고 판정한다. 읽기 전용이며 비밀값을 조회하지 않는다. AWS 는
 기본 자격 증명 체인, GCP 는 ADC(`gcloud auth application-default login`)를

@@ -247,3 +247,54 @@ def test_live_config_without_components_inherits_default_layout(monkeypatch, tmp
     assert config.environment("gcp").boundary == GCP.boundary
     assert config.environment("gcp").cluster_path == GCP.cluster_path
     assert config.environment("custom").components == []
+
+
+def _migration_config(tmp_path, monkeypatch, worker_url):
+    import json
+
+    from controlplane.integrations.config import load_fleet_config
+
+    raw = {
+        "mode": "live",
+        "environments": [],
+        "migrations": [
+            {
+                "job_id": "forward_001",
+                "direction": "forward",
+                "source_env": "onprem",
+                "target_env": "aws",
+                "data_source": "onprem",
+                "data_target": "aws",
+                "worker_url": worker_url,
+                "connect_url": "${ONEPORT_TEST_CONNECT_URL}",
+            }
+        ],
+    }
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setenv("ONEPORT_FLEET_CONFIG", str(path))
+    return load_fleet_config().migrations[0]
+
+
+def test_fleet_config_fills_placeholders_from_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "ONEPORT_TEST_WORKER_URL", "http://192.0.2.10:30880/worker,http://192.0.2.11:30880/worker"
+    )
+    monkeypatch.setenv("ONEPORT_TEST_CONNECT_URL", 'http://192.0.2.10:30880/c"x')
+    job = _migration_config(tmp_path, monkeypatch, "${ONEPORT_TEST_WORKER_URL}")
+    assert job.worker_url == "http://192.0.2.10:30880/worker,http://192.0.2.11:30880/worker"
+    assert job.connect_url == 'http://192.0.2.10:30880/c"x'
+
+
+def test_fleet_config_placeholder_without_value_disables_status(monkeypatch, tmp_path):
+    monkeypatch.delenv("ONEPORT_TEST_WORKER_URL", raising=False)
+    monkeypatch.delenv("ONEPORT_TEST_CONNECT_URL", raising=False)
+    job = _migration_config(tmp_path, monkeypatch, "${ONEPORT_TEST_WORKER_URL}")
+    assert not job.worker_url
+    assert not job.connect_url
+
+
+def test_fleet_config_expands_only_oneport_placeholders(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME_URL", "http://leak")
+    job = _migration_config(tmp_path, monkeypatch, "${HOME_URL}")
+    assert job.worker_url == "${HOME_URL}"

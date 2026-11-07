@@ -4,7 +4,7 @@
 #   KUBECONFIG=<관리자 kubeconfig> platform/deploy/reader/make-kubeconfig.sh <context 이름> <출력 파일> [API 주소]
 #
 # API 주소를 생략하면 관리자 kubeconfig 의 주소를 쓴다. 수집기에서 닿는 주소여야 한다.
-#   온프렘 k3s : https://172.30.1.10:6443 (Tailscale 경로)
+#   온프렘 k3s : https://<온프렘 마스터 IP>:6443 (Tailscale 경로)
 #   GKE        : 공개 엔드포인트. GKE master authorized networks 에 AWS NAT 공인 IP 를 넣는다
 set -euo pipefail
 context=${1:?context 이름}
