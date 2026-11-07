@@ -12,13 +12,15 @@ import pytest
 from helm_fakes import rollout_state
 from kubernetes.client.exceptions import ApiException
 
-from controlplane.domain.models import Runtime, Strategy
+from controlplane.domain.models import Migration, Runtime, Strategy
+from controlplane.execution import reconciler
 from controlplane.providers.contracts import ProviderConflict, ReleaseKey
 from controlplane.providers.onprem.helm import data
 from controlplane.providers.onprem.helm.models import HelmReceipt, HelmRelease
 from controlplane.providers.onprem.helm.runtime import HelmRuntime
 from controlplane.providers.onprem.helm.settings import HelmSettings
 from controlplane.providers.onprem.helm.worker import HelmWorker
+from controlplane.repositories.releases import MIGRATION_MARGIN_SECONDS
 
 
 @pytest.fixture
@@ -231,6 +233,33 @@ def finish(w, row):
         if row["state"] in {"succeeded", "failed", "uncertain"}:
             return row
     pytest.fail("workflow did not terminate")
+
+
+def test_unexpected_database_error_still_records_uncertain(workflow, monkeypatch):
+    w = workflow
+    row = w.enqueue("aborted-transaction-key-1")
+    monkeypatch.setattr(reconciler, "prepare_public_image", lambda store, conn, row: True)
+    monkeypatch.setattr(w.worker, "_step", lambda conn, row: conn.execute("SELECT 1/0"))
+    with w.store.worker_lock() as conn:
+        w.worker._advance(conn, w.store.get(row["id"]) | {"expired": False})
+    row = w.store.get(row["id"])
+    assert row["state"] == "uncertain" and row["error_code"] == "DivisionByZero"
+
+
+def test_release_deadline_covers_the_longest_migration(workflow, settings):
+    w = workflow
+    request = w.request.model_copy(deep=True)
+    request.resources.database = "postgresql"
+    request.migration = Migration(argv=["migrate"], timeout_seconds=1800, backward_compatible=True)
+    row = w.store.enqueue(
+        request,
+        "long-migration-key-0001",
+        settings.fingerprint(),
+        runtime=Runtime.ONPREM_HELM,
+        timeout_seconds=720,
+    )
+    budget = (row["deadline"] - row["created_at"]).total_seconds()
+    assert budget >= 1800 + MIGRATION_MARGIN_SECONDS
 
 
 def test_first_release_is_private_until_test_then_public_and_reuses_name(workflow):

@@ -497,6 +497,9 @@ def test_collector_tick_keeps_going_when_one_environment_fails():
     saved, facts = [], []
 
     class Store:
+        def get(self, env_id):
+            return None
+
         def put(self, inventory):
             saved.append(inventory.env_id)
 
@@ -539,6 +542,9 @@ def test_collector_keeps_running_with_unknown_meter():
     saved = []
 
     class Store:
+        def get(self, env_id):
+            return None
+
         def put(self, inventory):
             saved.append(inventory)
 

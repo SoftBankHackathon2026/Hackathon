@@ -109,6 +109,25 @@ def test_failed_production_check_rolls_back_inside_bake(harness):
     assert h.runtime.provider.live_release() == first["id"]
 
 
+def test_unobserved_rollback_stops_polling(harness, monkeypatch):
+    from oneport_aws.execution import oneport_ecs_rollback
+
+    monkeypatch.setattr(oneport_ecs_rollback, "RESTORE_POLL_LIMIT", 2)
+    h = harness
+    first = enqueue(h, h.make_request(), "first-release-key-013")
+    run(h, first["id"], {"waiting"})
+    h.aws.advance("shop", "SUCCESSFUL")
+    run(h, first["id"], {"succeeded"})
+
+    second = enqueue(h, h.make_request(), "second-release-key-13")
+    run(h, second["id"], {"waiting"})
+    h.aws.advance("shop", "IN_PROGRESS", "BAKE_TIME")
+    h.runtime.probe.side_effect = lambda request, key: key.value == first["id"]
+    run(h, second["id"], {"restore_checking"})
+    row = run(h, second["id"], {"failed", "uncertain"}, limit=4)
+    assert row["state"] == "uncertain" and row["error_code"] == "rollback_unobserved"
+
+
 def test_bake_already_over_is_not_rolled_back_blindly(harness):
     h = harness
     row = enqueue(h, h.make_request(), "first-release-key-004")

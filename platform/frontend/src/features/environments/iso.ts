@@ -85,6 +85,9 @@ export function layoutBounds(layout: CanvasLayout, mode: ViewMode, lift = 56) {
 
 export type View = { x: number; y: number; k: number };
 
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 3;
+
 export function fitView(
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
   width: number,
@@ -94,10 +97,9 @@ export function fitView(
 ): View {
   const w = Math.max(bounds.maxX - bounds.minX, 1);
   const h = Math.max(bounds.maxY - bounds.minY, 1);
-  const k = Math.min(
-    (width - 2 * padding) / w,
-    (height - 2 * padding) / h,
-    maxScale,
+  const k = Math.max(
+    MIN_ZOOM,
+    Math.min((width - 2 * padding) / w, (height - 2 * padding) / h, maxScale),
   );
   return {
     k,
@@ -112,7 +114,7 @@ export function zoomAt(
   cx: number,
   cy: number,
 ): View {
-  const k = Math.min(3, Math.max(0.2, view.k * factor));
+  const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.k * factor));
   const ratio = k / view.k;
   return { k, x: cx - (cx - view.x) * ratio, y: cy - (cy - view.y) * ratio };
 }

@@ -93,3 +93,8 @@ export function nearestIndex(xs: number[], target: number) {
   }
   return Math.abs(xs[low] - target) <= Math.abs(xs[high] - target) ? low : high;
 }
+
+export function clampIndex(index: number | null, length: number) {
+  if (index === null || length === 0) return null;
+  return Math.min(Math.max(index, 0), length - 1);
+}

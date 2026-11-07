@@ -9,6 +9,7 @@ import {
   categoryMatrix,
   compareRows,
   envTotals,
+  pickJob,
   sortedChanges,
   topResources,
 } from "../src/features/costs/costView.ts";
@@ -146,4 +147,12 @@ test("changes are sorted by monthly change with unpriced rows last", () => {
     rows.map((r: { delta: number | null }) => r.delta),
     [80, 1, null],
   );
+});
+
+test("pickJob keeps a listed job and falls back to the first one", () => {
+  const jobs = [{ job_id: "a" }, { job_id: "b" }] as MigrationCost[];
+  assert.equal(pickJob(jobs, "b"), "b");
+  assert.equal(pickJob(jobs, "gone"), "a");
+  assert.equal(pickJob(jobs, ""), "a");
+  assert.equal(pickJob([], "a"), "");
 });
