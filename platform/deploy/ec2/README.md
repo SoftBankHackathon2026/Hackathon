@@ -153,6 +153,49 @@ EOF
 2. 위 파일을 `/opt/oneport/sites/homelab.caddy`로 두고 `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 3. 도메인의 A 레코드를 이 서버 고정 IP 로 바꿔요. Caddy 가 그 도메인 인증서를 받아요(80 이 열려 있어야 해요).
 
+## 공용 도메인 전환 (컷오버)
+
+컷오버가 앱의 공용 도메인을 원본에서 대상 환경으로 옮겨요. DNS 는 이 서버 고정 IP 에 그대로 두고, Caddy 가 요청마다 표식 파일을 보고 경로를 골라서 TTL 없이 바로 바뀌어요. 서버를 다시 띄워도 표식이 남아 있어요.
+
+```
+브라우저 ──▶ <공용 도메인> (A 레코드 = 이 서버 고정 IP)
+  Caddy ── routes/<앱>@aws 있음 ──▶ AWS ALB (<AWS 앱 도메인>)
+        └─ 없음(기본) ───────────▶ 홈랩 Traefik (<홈랩 앱 도메인>)
+```
+
+- 컷오버(`migration/migration/cutover.py`)의 SWITCHING 단계가 대상 쓰기와 접수 큐를 연 뒤 플랫폼 API `POST /api/v1/ingest/traffic/<앱>`(보고용 토큰)를 불러요. API 는 `/opt/oneport/routes/<앱>@<경로>` 표식 하나만 남겨요. VERIFYING 단계에서 경로가 대상인지 다시 확인해요.
+- 되돌리기(대상→원본) 작업은 같은 코드로 원본 쪽 표식을 남겨요.
+- 마이그레이션 설정의 `traffic:` 절로 켜요. 플랫폼 주소·토큰은 러너 Pod 환경변수(`ONEPORT_PLATFORM_URL`, `ONEPORT_INGEST_TOKEN`)를 써요.
+
+```yaml
+traffic:
+  app: sample-app
+  targets: {onprem: onprem, aws: aws}   # job target → 경로 이름
+```
+
+Caddy 사이트(인스턴스 `/opt/oneport/sites/*.caddy`, 저장소에 도메인을 적지 않아요):
+
+```caddyfile
+<공용 도메인> {
+	@aws file {
+		root /srv/routes
+		try_files sample-app@aws
+	}
+	handle @aws {
+		reverse_proxy https://<AWS 앱 도메인> {
+			header_up Host <AWS 앱 도메인>
+		}
+	}
+	handle {
+		reverse_proxy http://<홈랩 Traefik 주소> {
+			header_up Host <홈랩 앱 도메인>
+		}
+	}
+}
+```
+
+손으로 옮길 때는 표식을 직접 바꿔요: `touch /opt/oneport/routes/sample-app@aws` (되돌리기는 그 파일을 지워요).
+
 ## 배포
 
 - 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`, `platform/deploy/aws/cost.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.

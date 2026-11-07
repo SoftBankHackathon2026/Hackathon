@@ -55,6 +55,7 @@ from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
+from controlplane.services.traffic import TrafficRoutes, routes_from_environment
 
 if TYPE_CHECKING:
     from migration_connection.control.service import ConnectionService
@@ -86,6 +87,7 @@ class Container:
     enrollments: EnrollmentService | None = None
     connections: ConnectionService | None = None
     agent: AgentService | None = None
+    traffic: TrafficRoutes | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -213,4 +215,5 @@ def build_container(
         if store
         else None,
         agent=AgentService(AgentJournal(store)) if store else None,
+        traffic=routes_from_environment(),
     )
