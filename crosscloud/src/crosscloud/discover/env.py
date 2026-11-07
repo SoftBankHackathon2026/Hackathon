@@ -34,8 +34,9 @@ _SECRET_KEY_WORDS = (
     "ACCESS_KEY",
 )
 # 키를 '_' 로 나눈 조각이 이것과 같으면 비밀로 본다. 짧은 단어라 부분 문자열로
-# 찾으면 오탐이 많다.
-_SECRET_KEY_SEGMENTS = frozenset({"KEY", "PWD", "PW", "PASS"})
+# 찾으면 오탐이 많다. JWT·BEARER 는 Kubescape 의 컨테이너 env 비밀 키 이름
+# 목록에서 왔다.
+_SECRET_KEY_SEGMENTS = frozenset({"KEY", "PWD", "PW", "PASS", "JWT", "BEARER"})
 # 조각이 이것으로 끝나도 비밀로 본다(PGPASS·DBPASS·DBPWD 처럼 붙여 쓴 이름).
 _SECRET_KEY_SEGMENT_SUFFIXES = ("PASS", "PWD")
 # 비밀일 수도 아닐 수도 있는 조각. 값을 버리고 사람이 확인한다.

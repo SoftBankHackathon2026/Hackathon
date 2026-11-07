@@ -576,7 +576,11 @@ def _app_grants(
     """원본 app 의 실효 권한.
 
     직접 받은 것뿐 아니라 그룹 역할·PUBLIC 에서 상속한 권한도 has_*_privilege
-    로 계산한다. 대상에는 이것을 app 에 직접 GRANT 한다.
+    로 계산한다. 대상에는 이것을 app 에 직접 GRANT 한다. has_*_privilege 가
+    그룹 상속과 PUBLIC 을 포함한다는 것은 공식 문서 문장이 아니라 통합 시험
+    test_target_app_mirrors_privileges_inherited_by_source_app(PostgreSQL 16,
+    INHERIT 기본값 그룹 역할·PUBLIC GRANT)으로 확인했다. 컬럼 단위 GRANT 는
+    표 단위 함수에 잡히지 않아 미러하지 않는다.
     """
     pairs = [pg_client.split_table(t) for t in tables]
     rows = source.execute(

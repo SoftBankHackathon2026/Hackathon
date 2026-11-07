@@ -240,3 +240,33 @@ def _cli_output(value: bytes, fingerprint: str) -> dict:
             }
         ]
     }
+
+
+def test_bundle_keeps_backfill_generation_timestamp_of_a_digest():
+    # 이관 뒤에는 원위치 S3 메타데이터를 다시 얻을 수 없다. backfill 다이제스트
+    # 검증(생성 시각 ±1시간 공개키 재조회)에 필요한 값이라 bundle 에 남긴다.
+    backfill = dataclasses.replace(
+        _DIGEST,
+        metadata=(
+            ("backfill-generation-timestamp", "2026-11-07T09:00:00Z"),
+            ("signature", "abcd"),
+            ("signature-algorithm", "SHA256withRSA"),
+        ),
+    )
+
+    document = archive_files.bundle_to_json("r1", (backfill,), (_KEY,))
+
+    (entry,) = document["digest_signatures"]
+    assert entry["backfill_generation_timestamp"] == "2026-11-07T09:00:00Z"
+    assert archive_files.bundle_from_json(document).signatures == {
+        _DIGEST.source_uri: cloudtrail_verify.DigestSignature(
+            signature="abcd", algorithm="SHA256withRSA"
+        )
+    }
+
+
+def test_bundle_omits_backfill_timestamp_for_standard_digest():
+    document = archive_files.bundle_to_json("r1", (_DIGEST,), (_KEY,))
+
+    (entry,) = document["digest_signatures"]
+    assert "backfill_generation_timestamp" not in entry
