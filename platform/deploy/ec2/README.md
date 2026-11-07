@@ -106,8 +106,12 @@ ONEPORT_DOMAIN=<도메인>
 ONEPORT_AUTH_MODE=demo
 ONEPORT_ALLOWED_HOSTS=<도메인>,localhost
 ONEPORT_ALLOWED_ORIGINS=https://<도메인>
+ONEPORT_ONPREM_WORKER_URL=http://<노드1 IP>:30880/worker,http://<노드2 IP>:30880/worker
+ONEPORT_ONPREM_CONNECT_URL=http://<노드1 IP>:30880/connect,http://<노드2 IP>:30880/connect
 EOF
 ```
+
+온프렘 노드 주소는 공개 레포에 두지 않아요. `fleet.json` 의 `${ONEPORT_ONPREM_WORKER_URL}`·`${ONEPORT_ONPREM_CONNECT_URL}` 자리표시를 API·수집기가 이 값으로 채워요. 비우면 워커·Connect 상태 수집만 건너뛰어요.
 
 **4. 읽기 전용 kubeconfig** 세 개를 `/opt/oneport/kube/`에 넣고 `chown 10001:10001`, `chmod 0400` 해요.
 

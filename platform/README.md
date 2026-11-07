@@ -49,7 +49,7 @@ npm run dev
        ServiceAccount (EKS)    │   Tailscale  │   공개 엔드포인트 │
                                ▼              ▼                 ▼
                       EKS kube API   온프렘 kube API·워커·Connect   GKE kube API
-                                     (172.30.1.10·.7, 상태 프록시)
+                                     (온프렘 노드 IP, 상태 프록시)
  온프렘 워커 Pod 의 보고기 ── Tailscale ──▶ (내부 Ingress, 선택) ──▶ POST /api/v1/ingest/...
 ```
 
@@ -84,7 +84,7 @@ npm run dev
 
 | 준비물 | 방법 |
 |---|---|
-| 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://172.30.1.10:6443` |
+| 읽기 kubeconfig | [`infra/install/onprem-k8s/generate-kubeconfig.sh`](../infra/install/onprem-k8s)의 `hackathon-user`(`view` + argoproj 읽기)를 써요. API 주소는 `https://<온프렘 마스터 IP>:6443` |
 | 노드 정보 | `hackathon-user`는 노드 목록을 못 읽어서 클러스터 정보의 노드별 할당 가능량·상태가 비어요. 노드 이름·사용량·요청량은 metrics 와 파드 목록으로 채워요. 채우려면 `hackathon-user`에 `nodes` list 를 더해요 |
 | 워커·Connect 상태 | gitops `apps/platform-status-proxy` (`SoftBankHackathon2026/gitops#19`). nginx 프록시가 `GET /worker/status`, `GET /connect/connectors/<job>-(source\|sink)/status`만 넘겨요. 워커 제어 API(`/pause`, `/target` 등)와 Kafka Connect REST는 열지 않아요. NodePort `30880`, NetworkPolicy는 LAN(노드 IP 제외)만 허용 |
 | 보고기 | 마이그레이션 담당 작업이에요. 보고기가 닿을 플랫폼 주소(내부 Ingress 등)를 정한 뒤 `deploy/onprem/reporter-sidecar.patch.yaml`을 gitops `apps/db-insert-worker`에 patch로 붙이고, `oneport-fleet-reporter` ConfigMap과 `oneport-ingest` Secret을 만들어요 (`deploy/onprem/kustomization.yaml` 주석) |
@@ -111,7 +111,7 @@ npm run dev
 | `environments[].cluster_path` | 클러스터 안 구성 요소를 그릴 위치(VPC › 서브넷 › 클러스터). 비우면 기본값을 써요 |
 | `environments[].data_services`, `boundary` | 화면에 그릴 이름. Terraform 출력과 맞춰요 |
 | `environments[].declared` | kube API로 알 수 없는 클라우드 보안 사실. Terraform에 있는 그대로 `true`/`false`, 모르면 빼요(미확인) |
-| `migrations[].worker_url`, `connect_url` | 온프렘 읽기 전용 상태 프록시. 두 노드 주소를 쉼표로 적어요(`http://172.30.1.10:30880/worker,http://172.30.1.7:30880/worker`, Connect는 `/connect`). 프록시 NodePort가 `externalTrafficPolicy: Local`이라 프록시 파드가 있는 노드만 응답하고, 수집기는 응답하는 주소로 넘어가 다음부터 그 주소를 먼저 써요 |
+| `migrations[].worker_url`, `connect_url` | 온프렘 읽기 전용 상태 프록시. 레포의 `fleet.json`에는 `${ONEPORT_ONPREM_WORKER_URL}`, `${ONEPORT_ONPREM_CONNECT_URL}` 자리표시만 두고, 실제 값은 배포 환경변수로 넣어요(EC2 는 `/opt/oneport/settings.env`, EKS 는 Secret `oneport-secrets` 의 같은 이름 키). 두 노드 주소를 쉼표로 적어요(`http://<노드1 IP>:30880/worker,http://<노드2 IP>:30880/worker`, Connect는 `/connect`). 값이 없으면 워커·Connect 상태 수집을 건너뛰어요. 설정 파일의 `${ONEPORT_...}` 자리표시는 모두 이렇게 환경변수로 채워요. 프록시 NodePort가 `externalTrafficPolicy: Local`이라 프록시 파드가 있는 노드만 응답하고, 수집기는 응답하는 주소로 넘어가 다음부터 그 주소를 먼저 써요 |
 
 [`deploy/aws/settings.env`](deploy/aws/settings.env)는 port-forward 접속 기준(`localhost`)이에요. Ingress 를 더하면 그 주소를 `ONEPORT_ALLOWED_HOSTS`·`ONEPORT_ALLOWED_ORIGINS`에 넣어요.
 
@@ -149,7 +149,7 @@ kubectl -n oneport port-forward svc/oneport-web 18080:8080
 - `database-url`은 DSN 한 줄, `ingest-token`은 32자 이상이에요. GKE 를 붙일 때 `gcp.kubeconfig`를 더해요. 없으면 그 환경만 "연결하지 못했어요"로 보여요.
 - 플랫폼 DB 는 기존 RDS 안의 `oneport_platform` 데이터베이스와 같은 이름의 전용 사용자예요(슈퍼유저 아님, `PUBLIC` 접속 권한 회수). 새 RDS 를 만들지 않아요.
 - API 는 배포 Provider 설정 없이 `ONEPORT_DATABASE_URL_FILE`만으로 실측 모드가 돼요. 배포 기능을 안 쓰므로 운영자 토큰도 필요 없어요.
-- 온프렘(`172.30.1.10`)은 VPC → 홈랩 경로(oneaction-infra `infra/tailscale` 의 `tailnet_routes`, 라우터 `--accept-routes`)가 있어야 읽혀요.
+- 온프렘(마스터 노드 IP)은 VPC → 홈랩 경로(oneaction-infra `infra/tailscale` 의 `tailnet_routes`, 라우터 `--accept-routes`)가 있어야 읽혀요.
 
 로컬에서 같은 구성을 띄울 때는 이렇게 해요.
 

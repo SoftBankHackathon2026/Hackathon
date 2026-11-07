@@ -11,8 +11,11 @@ dependencies = [
     "boto3>=1.36,<2",
     "cryptography>=43",
     "google-auth[requests]>=2.30,<3",
+    "google-cloud-secret-manager>=2.20,<3",
     "google-cloud-storage>=2.18,<4",
+    "google-crc32c>=1.5,<2",
     "jsonschema>=4.23,<5",
+    "psycopg[binary]>=3.2,<4",
     "requests>=2.31,<3",
 ]
 
