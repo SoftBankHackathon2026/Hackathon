@@ -137,3 +137,16 @@ extra를 포함한다. 현재 Kubernetes37 도구의 python-dateutil>=3 제약�
 python-dateutil<3 제약이 충돌하므로, 인프라 구성용 Kubernetes extras와 AWS 증거
 수집은 별도 환경/프로세스로 운용한다. 인프라 도구의 기존 의존성을 낮추지 않는다.
 정책 CI는 policy-runtime extra를 명시 설치해 SDK 시험을 실행한다.
+
+### 앱 관측 오류 진단
+
+앱 관측 실패는 `target_app_db.detail.code`로 구분한다. DNS/TLS/timeout/
+연결 실패, 실행기 실패, HTTP 오류, 앱의 명시적 `503 DB_UNAVAILABLE`,
+잘못된 JSON/응답을 서로 구분한다. HTTP 오류에는 상태코드, 실패 관측에는
+소요시간(ms)을 남긴다. 응답 본문·원래 예외 문자열·URL은 정책 입력에 남기지 않는다.
+관측 오류는 여전히 error이며 정책 허용으로 바꾸지 않는다.
+
+`CUTOVER_POLICY_COLLECTOR_SETTINGS`를 사용하는 runner는 앱을 직접 조회한다.
+실배포에서 이 경로와 AWS 읽기 자격증명 공급을 연결해야 하며, 외부 PC의
+`kubectl exec`로 관측을 대신하면 제어망 오류가 다시 필수 검사에 섞인다.
+본 진단 변경만으로 운영 runner 배선이나 왕복 검증이 완료된 것은 아니다.
