@@ -254,3 +254,10 @@ def test_outputs_reject_unreadable_json_without_echoing_it(paths):
         _runner(paths, fake).outputs()
 
     assert _CANARY not in str(excinfo.value)
+
+
+def test_outputs_reject_json_that_is_not_an_object(paths):
+    fake = FakeRun({"output": _ok("[]")})
+
+    with pytest.raises(terraform.TerraformError, match="객체"):
+        _runner(paths, fake).outputs()
