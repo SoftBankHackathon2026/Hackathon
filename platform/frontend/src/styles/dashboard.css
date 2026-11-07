@@ -4046,7 +4046,19 @@ body {
   padding-bottom: 0;
 }
 .shell .pl-tools .pk-filter {
+  height: 32px;
+  min-height: 0;
   background: var(--surface-subtle);
+}
+.shell .pl-tools .seg button {
+  min-height: 0;
+  padding: 3px 12px;
+  line-height: 20px;
+}
+.shell .pl-tools .pk-filter select {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .shell .pl-tools input[type="search"] {
   width: 280px;
