@@ -1,6 +1,7 @@
 """원본 Secret 값을 대상 Secret 에 옮기고 SHA-256 으로 대조한다.
 
-  results = run.transfer_secrets(items, allowed, aws_store, gcp_store, run_id)
+  results = run.transfer_secrets(
+      items, allowed, aws_store, gcp_store, run_id, target_name_prefix="ccx-r1")
   ...
   run.roll_back_transfer(results, gcp_store)   # 이 실행이 쓴 버전만 폐기
 
@@ -16,6 +17,7 @@ import logging
 from collections.abc import Sequence
 from typing import Literal
 
+from crosscloud.provision import residue
 from crosscloud.secret_transfer import store
 
 _log = logging.getLogger(__name__)
@@ -34,7 +36,13 @@ ErrorClass = Literal[
 
 @dataclasses.dataclass(frozen=True)
 class SecretTransferItem:
-    """옮길 Secret 한 쌍. 대상 그릇은 Terraform 이 미리 만든다."""
+    """옮길 Secret 한 쌍. 대상 그릇은 Terraform 이 미리 만든다.
+
+    대상 그릇 이름은 두 클라우드 모두 `<실행 접두사>-<키>` 다(AWS
+    modules/base storage.tf, GCP target_base main.tf). 대상 식별자는 그 짧은
+    이름이나 전체 리소스 이름(GCP `projects/…/secrets/<이름>`, AWS Secret ARN)
+    이다.
+    """
 
     source_secret_id: str
     target_secret_id: str
@@ -70,6 +78,8 @@ def transfer_secrets(
     source: store.SecretStore,
     target: store.SecretStore,
     run_id: str,
+    *,
+    target_name_prefix: str,
 ) -> tuple[SecretTransferResult, ...]:
     """허용 목록 안의 Secret 만 옮기고, 하나씩 대조한다.
 
@@ -81,19 +91,24 @@ def transfer_secrets(
         source: 원본 클라우드 저장소.
         target: 대상 클라우드 저장소.
         run_id: 이 실행의 식별자. 쓰기 토큰의 재료다.
+        target_name_prefix: 이 실행의 이름 접두사(`ccx-<run>`). 대상 그릇
+            이름이 `접두사-` 로 시작하지 않으면 아무 값도 읽지 않고 멈춘다 —
+            이 실행이 만들지 않은 남의 Secret 에 버전을 더하지 않는다.
 
     Returns:
         쌍마다 결과. 모두 verified 다.
 
     Raises:
         TypeError: allowed_source_ids 가 frozenset 이 아닐 때.
-        SecretTransferError: 허용 목록 밖·안전하지 않은 로그 설정·읽기·쓰기·
-            대조 실패. 어떤 예외로 끝나든 이 실행이 쓴 버전(대조 전 버전
-            포함)을 먼저 되돌린다.
+        ValueError: target_name_prefix 가 실행 접두사 형식이 아닐 때.
+        SecretTransferError: 허용 목록 밖·접두사 밖 대상·안전하지 않은 로그
+            설정·읽기·쓰기·대조 실패. 어떤 예외로 끝나든 이 실행이 쓴
+            버전(대조 전 버전 포함)을 먼저 되돌린다.
     """
     if not isinstance(allowed_source_ids, frozenset):
         raise TypeError("allowed_source_ids 는 frozenset 이어야 한다")
     _refuse_unlisted(items, allowed_source_ids)
+    _refuse_foreign_targets(items, target_name_prefix)
     try:
         store.refuse_sdk_debug_logging()
     except store.UnsafeLoggingError as e:
@@ -152,6 +167,30 @@ def _refuse_unlisted(
     )
     if unlisted:
         raise SecretTransferError("not_allowed", ", ".join(unlisted))
+
+
+def _refuse_foreign_targets(
+    items: Sequence[SecretTransferItem], name_prefix: str
+) -> None:
+    residue.check_name_prefix(name_prefix)
+    foreign = sorted(
+        {
+            i.target_secret_id
+            for i in items
+            if not _short_name(i.target_secret_id).startswith(f"{name_prefix}-")
+        }
+    )
+    if foreign:
+        raise SecretTransferError("not_allowed", ", ".join(foreign))
+
+
+def _short_name(secret_id: str) -> str:
+    # GCP 전체 이름은 마지막 조각, AWS ARN 은 `:secret:` 뒤(이름-무작위 6자).
+    if secret_id.startswith("projects/"):
+        return secret_id.rsplit("/", 1)[1]
+    if secret_id.startswith("arn:"):
+        return secret_id.partition(":secret:")[2]
+    return secret_id
 
 
 def _transfer_one(

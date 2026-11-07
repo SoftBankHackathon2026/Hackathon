@@ -8,9 +8,10 @@ from crosscloud.secret_transfer import run, store
 
 _CANARY = b"canary-7f3a91-should-not-leak"
 _RUN_ID = "ccx-s1-forward"
+_PREFIX = "ccx-s1"
 
 
-def _item(source="src/db-url", target="tgt-db-url"):
+def _item(source="src/db-url", target="ccx-s1-db-url"):
     return run.SecretTransferItem(
         source_secret_id=source, target_secret_id=target
     )
@@ -25,10 +26,15 @@ def test_transfer_copies_value_and_reports_verified():
     target = MemorySecretStore()
 
     results = run.transfer_secrets(
-        (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+        (_item(),),
+        frozenset({"src/db-url"}),
+        source,
+        target,
+        _RUN_ID,
+        target_name_prefix=_PREFIX,
     )
 
-    assert target.read_current("tgt-db-url") == _CANARY
+    assert target.read_current("ccx-s1-db-url") == _CANARY
     assert [r.verified for r in results] == [True]
     assert results[0].written.created is True
 
@@ -39,11 +45,12 @@ def test_transfer_refuses_unlisted_secret_before_reading_any_value():
 
     with pytest.raises(run.SecretTransferError, match="src/other"):
         run.transfer_secrets(
-            (_item(), _item("src/other", "tgt-other")),
+            (_item(), _item("src/other", "ccx-s1-other")),
             frozenset({"src/db-url"}),
             source,
             target,
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert source.reads == []
@@ -56,7 +63,12 @@ def test_transfer_refuses_missing_source_value():
 
     with pytest.raises(run.SecretTransferError) as excinfo:
         run.transfer_secrets(
-            (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+            (_item(),),
+            frozenset({"src/db-url"}),
+            source,
+            target,
+            _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert excinfo.value.error_class == "source_missing"
@@ -66,20 +78,21 @@ def test_transfer_mismatch_rolls_back_this_run_and_hides_value(caplog):
     caplog.set_level(logging.DEBUG, logger="crosscloud")
     source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
     target = MemorySecretStore()
-    target.corrupt_read_back_for.add("tgt-db-url")
+    target.corrupt_read_back_for.add("ccx-s1-db-url")
 
     with pytest.raises(run.SecretTransferError) as excinfo:
         run.transfer_secrets(
-            (_item("src/a", "tgt-a"), _item()),
+            (_item("src/a", "ccx-s1-a"), _item()),
             frozenset({"src/a", "src/db-url"}),
             source,
             target,
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert excinfo.value.error_class == "mismatch"
-    assert target.read_current("tgt-a") is None
-    assert target.read_current("tgt-db-url") is None
+    assert target.read_current("ccx-s1-a") is None
+    assert target.read_current("ccx-s1-db-url") is None
     text = _all_text(excinfo.value) + caplog.text
     text += "".join(traceback.format_exception(excinfo.value))
     assert _CANARY.decode() not in text
@@ -88,19 +101,20 @@ def test_transfer_mismatch_rolls_back_this_run_and_hides_value(caplog):
 def test_transfer_write_failure_rolls_back_earlier_items():
     source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
     target = MemorySecretStore()
-    target.fail_add_for.add("tgt-db-url")
+    target.fail_add_for.add("ccx-s1-db-url")
 
     with pytest.raises(run.SecretTransferError) as excinfo:
         run.transfer_secrets(
-            (_item("src/a", "tgt-a"), _item()),
+            (_item("src/a", "ccx-s1-a"), _item()),
             frozenset({"src/a", "src/db-url"}),
             source,
             target,
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert excinfo.value.error_class == "target_write_failed"
-    assert target.read_current("tgt-a") is None
+    assert target.read_current("ccx-s1-a") is None
     assert _CANARY.decode() not in "".join(
         traceback.format_exception(excinfo.value)
     )
@@ -112,23 +126,33 @@ def test_results_and_logs_never_contain_value(caplog):
     target = MemorySecretStore()
 
     results = run.transfer_secrets(
-        (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+        (_item(),),
+        frozenset({"src/db-url"}),
+        source,
+        target,
+        _RUN_ID,
+        target_name_prefix=_PREFIX,
     )
 
     assert _CANARY.decode() not in _all_text(*results) + caplog.text
 
 
 def test_roll_back_retires_only_versions_this_run_created():
-    target = MemorySecretStore({"tgt-db-url": b"older"})
+    target = MemorySecretStore({"ccx-s1-db-url": b"older"})
     source = MemorySecretStore({"src/db-url": _CANARY})
     results = run.transfer_secrets(
-        (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+        (_item(),),
+        frozenset({"src/db-url"}),
+        source,
+        target,
+        _RUN_ID,
+        target_name_prefix=_PREFIX,
     )
 
     outcomes = run.roll_back_transfer(results, target)
 
     assert outcomes == ("retired",)
-    assert target.read_current("tgt-db-url") == b"older"
+    assert target.read_current("ccx-s1-db-url") == b"older"
 
 
 @pytest.mark.parametrize(
@@ -155,6 +179,7 @@ def test_transfer_refuses_when_client_debug_logging_is_on(logger_name):
                 source,
                 MemorySecretStore(),
                 _RUN_ID,
+                target_name_prefix=_PREFIX,
             )
     finally:
         logger.setLevel(previous)
@@ -174,6 +199,7 @@ def test_transfer_reports_source_read_failure():
             source,
             MemorySecretStore(),
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert excinfo.value.error_class == "source_read_failed"
@@ -183,7 +209,9 @@ def test_transfer_reports_source_read_failure():
     ("error", "expected"),
     [
         (
-            store.SecretStoreError("read_version", "tgt-db-url", "Unavailable"),
+            store.SecretStoreError(
+                "read_version", "ccx-s1-db-url", "Unavailable"
+            ),
             run.SecretTransferError,
         ),
         (RuntimeError("connection reset"), RuntimeError),
@@ -192,47 +220,54 @@ def test_transfer_reports_source_read_failure():
 def test_read_back_failure_rolls_back_the_version_just_written(error, expected):
     source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
     target = MemorySecretStore()
-    target.fail_read_back_for["tgt-db-url"] = error
+    target.fail_read_back_for["ccx-s1-db-url"] = error
 
     with pytest.raises(expected):
         run.transfer_secrets(
-            (_item("src/a", "tgt-a"), _item()),
+            (_item("src/a", "ccx-s1-a"), _item()),
             frozenset({"src/a", "src/db-url"}),
             source,
             target,
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
-    assert target.read_current("tgt-a") is None
-    assert target.read_current("tgt-db-url") is None
+    assert target.read_current("ccx-s1-a") is None
+    assert target.read_current("ccx-s1-db-url") is None
 
 
 def test_rollback_continues_past_a_failed_retire():
     source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
     target = MemorySecretStore()
-    target.corrupt_read_back_for.add("tgt-db-url")
-    target.fail_retire_for.add("tgt-db-url")
+    target.corrupt_read_back_for.add("ccx-s1-db-url")
+    target.fail_retire_for.add("ccx-s1-db-url")
 
     with pytest.raises(run.SecretTransferError) as excinfo:
         run.transfer_secrets(
-            (_item("src/a", "tgt-a"), _item()),
+            (_item("src/a", "ccx-s1-a"), _item()),
             frozenset({"src/a", "src/db-url"}),
             source,
             target,
             _RUN_ID,
+            target_name_prefix=_PREFIX,
         )
 
     assert excinfo.value.error_class == "mismatch"
-    assert target.read_current("tgt-a") is None
+    assert target.read_current("ccx-s1-a") is None
 
 
 def test_roll_back_reports_failed_retire():
     target = MemorySecretStore()
     source = MemorySecretStore({"src/db-url": _CANARY})
     results = run.transfer_secrets(
-        (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+        (_item(),),
+        frozenset({"src/db-url"}),
+        source,
+        target,
+        _RUN_ID,
+        target_name_prefix=_PREFIX,
     )
-    target.fail_retire_for.add("tgt-db-url")
+    target.fail_retire_for.add("ccx-s1-db-url")
 
     assert run.roll_back_transfer(results, target) == ("failed",)
 
@@ -246,4 +281,71 @@ def test_allowed_ids_must_be_a_frozenset():
             MemorySecretStore({"src/db-url": _CANARY}),
             MemorySecretStore(),
             _RUN_ID,
+            target_name_prefix=_PREFIX,
+        )
+
+
+@pytest.mark.parametrize(
+    "target_id",
+    [
+        "app-db-url",
+        "ccx-s10-db-url",
+        "ccx-s1",
+        "projects/p/secrets/app-db-url",
+        "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:app-AbCdEf",
+    ],
+)
+def test_transfer_refuses_target_outside_run_prefix_before_reading(target_id):
+    source = MemorySecretStore({"src/db-url": _CANARY})
+    target = MemorySecretStore()
+
+    with pytest.raises(run.SecretTransferError) as excinfo:
+        run.transfer_secrets(
+            (_item(target=target_id),),
+            frozenset({"src/db-url"}),
+            source,
+            target,
+            _RUN_ID,
+            target_name_prefix=_PREFIX,
+        )
+
+    assert excinfo.value.error_class == "not_allowed"
+    assert target_id in str(excinfo.value)
+    assert source.reads == []
+    assert target.versions == {}
+
+
+@pytest.mark.parametrize(
+    "target_id",
+    [
+        "projects/p/secrets/ccx-s1-db-url",
+        "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:"
+        "ccx-s1-db-url-AbCdEf",
+    ],
+)
+def test_transfer_accepts_full_resource_names_inside_run_prefix(target_id):
+    source = MemorySecretStore({"src/db-url": _CANARY})
+    target = MemorySecretStore()
+
+    results = run.transfer_secrets(
+        (_item(target=target_id),),
+        frozenset({"src/db-url"}),
+        source,
+        target,
+        _RUN_ID,
+        target_name_prefix=_PREFIX,
+    )
+
+    assert [r.verified for r in results] == [True]
+
+
+def test_transfer_rejects_malformed_target_name_prefix():
+    with pytest.raises(ValueError):
+        run.transfer_secrets(
+            (_item(),),
+            frozenset({"src/db-url"}),
+            MemorySecretStore({"src/db-url": _CANARY}),
+            MemorySecretStore(),
+            _RUN_ID,
+            target_name_prefix="ccx",
         )
