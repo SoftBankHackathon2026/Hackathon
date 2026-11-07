@@ -1,29 +1,24 @@
-"""GCP 잔여 검사 — Cloud Asset 검색과 서비스 계정 목록으로 접두사 자원을 찾는다.
+"""GCP 잔여 검사 — 우리가 만드는 자원 종류마다 서비스 API 를 직접 조회한다.
 
-한 회차는 질의 둘이다.
+crosscloud GCP 모듈(registry·target_base·target_app)과 감사 버킷이 만드는 자원
+종류마다 gcloud 목록 명령을 하나씩 부른다. 서비스 API 직접 조회라 실시간이다.
+Cloud Asset 검색은 색인이라 변경을 늦게 반영해, 빈 결과를 잔여 0 근거로 쓸 수
+없어 쓰지 않는다.
 
-*   `gcloud asset search-all-resources`: 프로젝트 안의 모든 자원 종류(Cloud Run·
-    Cloud SQL·Secret Manager·Artifact Registry·부하 분산기 구성 요소 등)를 한
-    번에 검색한다. 이름 구문 검색(name:"ccx-r1")으로 후보를 받은 뒤, 전체 리소스
-    이름의 마지막 조각이 접두사로 시작하는 것만 남긴다 — 구문 검색은 단어
-    단위라 `team-ccx-r1` 같은 이름도 돌려줄 수 있다.
-*   `gcloud iam service-accounts list`: 서비스 계정은 Cloud Asset 이 이름을
-    숫자 ID(…/serviceAccounts/<숫자>)로 돌려줄 수 있어 이름으로는 못 거른다.
-    IAM API 를 직접 불러 이메일 앞부분으로 거른다. Cloud Asset 결과의 서비스
-    계정은 쓰지 않는다.
+명령마다 `--filter=<필드>~<접두사>` 로 서버 쪽에서 좁힌 뒤, 이름의 마지막 조각
+(서비스 계정은 이메일 앞부분)이 접두사 자체이거나 `접두사-` 로 시작하는 것만
+남긴다. 목록 하나라도 실패하면 잔여 0 이 아니라 오류다.
 
-Cloud Asset 은 실시간 조회가 아니라 색인이라 자원 변경을 몇 분 늦게 반영할 수
-있다. 그래서 빈 결과 한 번으로 잔여 0 을 확정하지 않고, 간격을 두고 여러 회차
-연속으로 비어야 0 으로 본다. 잔여가 보이면 그 회차에서 바로 돌려준다.
+새 자원 종류를 모듈에 더하면 _LISTINGS 에도 더해야 한다 — 이 표에 없는
+종류는 잔여 검사가 보지 않는다.
 
-전제: 프로젝트에 cloudasset.googleapis.com 이 켜져 있고, 호출 신원에
-cloudasset.assets.searchAllResources 와 iam.serviceAccounts.list 권한이 있다.
+전제: 각 서비스 API 가 프로젝트에 켜져 있고, 호출 신원에 각 목록 권한이
+있다(프로젝트 Viewer 로 충분하다).
 """
 
 import dataclasses
 import json
 import subprocess
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -36,109 +31,151 @@ _STDERR_TAIL_LINES = 10
 
 
 @dataclasses.dataclass(frozen=True)
+class _Listing:
+    """자원 종류 하나를 조회하는 gcloud 목록 명령.
+
+    Attributes:
+        kind: ResidueItem.kind 에 넣는 자원 종류(Cloud Asset 형식 이름).
+        words: gcloud 명령 단어(list 앞까지).
+        regional: 리전을 받는 명령이면 그 플래그 이름(--region 등).
+        filter_field: 서버 쪽 filter 를 걸 필드.
+        name_path: 목록 항목에서 이름을 읽는 점 구분 경로.
+    """
+
+    kind: str
+    words: tuple[str, ...]
+    regional: str | None = None
+    filter_field: str = "name"
+    name_path: str = "name"
+
+
+_LISTINGS = (
+    _Listing("sqladmin.googleapis.com/Instance", ("sql", "instances")),
+    _Listing(
+        "run.googleapis.com/Service",
+        ("run", "services"),
+        regional="--region",
+        filter_field="metadata.name",
+        name_path="metadata.name",
+    ),
+    _Listing(
+        "artifactregistry.googleapis.com/Repository",
+        ("artifacts", "repositories"),
+        regional="--location",
+    ),
+    _Listing("secretmanager.googleapis.com/Secret", ("secrets",)),
+    _Listing(
+        SERVICE_ACCOUNT,
+        ("iam", "service-accounts"),
+        filter_field="email",
+        name_path="email",
+    ),
+    _Listing(
+        "compute.googleapis.com/ForwardingRule", ("compute", "forwarding-rules")
+    ),
+    _Listing(
+        "compute.googleapis.com/TargetHttpProxy",
+        ("compute", "target-http-proxies"),
+    ),
+    _Listing("compute.googleapis.com/UrlMap", ("compute", "url-maps")),
+    _Listing(
+        "compute.googleapis.com/BackendService", ("compute", "backend-services")
+    ),
+    _Listing(
+        "compute.googleapis.com/NetworkEndpointGroup",
+        ("compute", "network-endpoint-groups"),
+    ),
+    _Listing("compute.googleapis.com/Address", ("compute", "addresses")),
+    _Listing("storage.googleapis.com/Bucket", ("storage", "buckets")),
+)
+
+
+@dataclasses.dataclass(frozen=True)
 class GcpResidueScanner:
     """GCP 프로젝트 하나에서 실행 접두사 자원을 찾는다(ResidueScanner 구현).
 
     Attributes:
         project: GCP 프로젝트 ID.
-        confirmations: 잔여 0 으로 보려면 연속으로 비어야 하는 회차 수.
-        recheck_seconds: 빈 회차 뒤 다음 회차까지 기다리는 초.
+        region: 리전 단위 자원(Cloud Run·Artifact Registry)을 볼 리전. 모듈의
+            region 입력과 같아야 한다.
         gcloud: gcloud 실행 파일.
         run: 명령 실행 함수. 시험에서 바꿔 끼운다.
-        sleep: 기다리는 함수. 시험에서 바꿔 끼운다.
     """
 
     project: str
-    confirmations: int = 3
-    recheck_seconds: float = 60
+    region: str
     gcloud: str = "gcloud"
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
-    sleep: Callable[[float], None] = time.sleep
 
     def scan(self, name_prefix: str) -> tuple[residue.ResidueItem, ...]:
-        """residue.ResidueScanner.scan 계약을 따른다.
-
-        잔여가 없으면 confirmations 회차를 모두 돌아 그만큼 시간이 걸린다
-        (기본 약 2분).
-        """
+        """residue.ResidueScanner.scan 계약을 따른다."""
         residue.check_name_prefix(name_prefix)
-        for round_number in range(self.confirmations):
-            if round_number:
-                self.sleep(self.recheck_seconds)
-            items = self._search_assets(name_prefix) + self._list_accounts(
-                name_prefix
-            )
-            if items:
-                return items
-        return ()
-
-    def _search_assets(
-        self, name_prefix: str
-    ) -> tuple[residue.ResidueItem, ...]:
-        assets = self._gcloud_list(
-            "asset",
-            "search-all-resources",
-            f"--scope=projects/{self.project}",
-            f'--query=name:"{name_prefix}"',
-            keys={"name", "assetType"},
-        )
         return tuple(
-            residue.ResidueItem(
-                cloud="gcp", kind=asset["assetType"], native_id=asset["name"]
-            )
-            for asset in assets
-            if asset["assetType"] != SERVICE_ACCOUNT
-            and residue.is_named_with_prefix(
-                asset["name"].rsplit("/", 1)[-1], name_prefix
-            )
+            item
+            for listing in _LISTINGS
+            for item in self._scan_one(listing, name_prefix)
         )
 
-    def _list_accounts(
-        self, name_prefix: str
+    def _scan_one(
+        self, listing: _Listing, name_prefix: str
     ) -> tuple[residue.ResidueItem, ...]:
-        accounts = self._gcloud_list(
-            "iam",
-            "service-accounts",
+        args = [
+            self.gcloud,
+            *listing.words,
             "list",
             f"--project={self.project}",
-            f"--filter=email~^{name_prefix}[-@]",
-            keys={"email", "name"},
-        )
+        ]
+        if listing.regional:
+            args.append(f"{listing.regional}={self.region}")
+        args += [
+            f"--filter={listing.filter_field}~{name_prefix}",
+            "--format=json",
+        ]
+        command = "gcloud " + " ".join(listing.words)
+        names = _names(command, self._run(command, args), listing.name_path)
         return tuple(
-            residue.ResidueItem(
-                cloud="gcp", kind=SERVICE_ACCOUNT, native_id=account["name"]
-            )
-            for account in accounts
-            if residue.is_named_with_prefix(
-                account["email"].split("@", 1)[0], name_prefix
-            )
+            residue.ResidueItem(cloud="gcp", kind=listing.kind, native_id=name)
+            for name in names
+            if residue.is_named_with_prefix(_short_name(name), name_prefix)
         )
 
-    def _gcloud_list(self, *args: str, keys: set[str]) -> list[dict[str, Any]]:
-        """Gcloud 목록 명령을 JSON 으로 돌리고 각 객체에 keys 가 있는지 본다."""
-        result = self.run(
-            [self.gcloud, *args, "--format=json"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        command = f"gcloud {args[0]} {args[1]}"
+    def _run(self, command: str, args: list[str]) -> str:
+        result = self.run(args, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             tail = result.stderr.strip().splitlines()[-_STDERR_TAIL_LINES:]
             raise residue.ResidueScanError(
                 f"{command} 실패(종료 코드 {result.returncode}): "
                 + "\n".join(tail)
             )
-        try:
-            items = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise residue.ResidueScanError(
-                f"{command} 결과가 JSON 이 아니다(위치 {error.pos})"
-            ) from None
-        if not isinstance(items, list) or not all(
-            isinstance(item, dict) and keys <= item.keys() for item in items
-        ):
-            raise residue.ResidueScanError(
-                f"{command} 결과가 {sorted(keys)} 를 가진 객체 목록이 아니다"
-            )
-        return items
+        return result.stdout
+
+
+def _names(command: str, stdout: str, name_path: str) -> list[str]:
+    """JSON 목록 결과에서 각 항목의 이름(name_path)을 읽는다."""
+    try:
+        items = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise residue.ResidueScanError(
+            f"{command} 결과가 JSON 이 아니다(위치 {error.pos})"
+        ) from None
+    if not isinstance(items, list):
+        raise residue.ResidueScanError(f"{command} 결과가 목록이 아니다")
+    names = [_lookup(item, name_path) for item in items]
+    if not all(isinstance(name, str) for name in names):
+        raise residue.ResidueScanError(
+            f"{command} 결과 항목에 문자열 {name_path} 가 없다"
+        )
+    return names
+
+
+def _lookup(item: Any, path: str) -> Any:
+    for key in path.split("."):
+        if not isinstance(item, dict):
+            return None
+        item = item.get(key)
+    return item
+
+
+def _short_name(name: str) -> str:
+    """전체 리소스 이름의 마지막 조각. 서비스 계정 이메일은 @ 앞부분."""
+    return name.rsplit("/", 1)[-1].split("@", 1)[0]

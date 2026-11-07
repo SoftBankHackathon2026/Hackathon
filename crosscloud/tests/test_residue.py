@@ -29,173 +29,172 @@ def test_check_name_prefix_rejects_anything_else(prefix):
         residue.check_name_prefix(prefix)
 
 
-class FakeGcloud:
-    """gcloud 호출을 기록하고, 질의 종류(asset·iam)별로 회차마다 결과를 낸다.
+# 우리 모듈이 만드는 자원 종류마다 서비스 API 목록 명령 하나(실시간 조회).
+# (종류, gcloud 명령 단어, 고정 플래그, filter 대상 필드, 이름 필드 경로)
+_LISTINGS = [
+    ("sqladmin.googleapis.com/Instance", "sql instances", (), "name", "name"),
+    (
+        "run.googleapis.com/Service",
+        "run services",
+        ("--region=asia-northeast3",),
+        "metadata.name",
+        "metadata.name",
+    ),
+    (
+        "artifactregistry.googleapis.com/Repository",
+        "artifacts repositories",
+        ("--location=asia-northeast3",),
+        "name",
+        "name",
+    ),
+    ("secretmanager.googleapis.com/Secret", "secrets", (), "name", "name"),
+    (
+        "iam.googleapis.com/ServiceAccount",
+        "iam service-accounts",
+        (),
+        "email",
+        "email",
+    ),
+    (
+        "compute.googleapis.com/ForwardingRule",
+        "compute forwarding-rules",
+        (),
+        "name",
+        "name",
+    ),
+    (
+        "compute.googleapis.com/TargetHttpProxy",
+        "compute target-http-proxies",
+        (),
+        "name",
+        "name",
+    ),
+    ("compute.googleapis.com/UrlMap", "compute url-maps", (), "name", "name"),
+    (
+        "compute.googleapis.com/BackendService",
+        "compute backend-services",
+        (),
+        "name",
+        "name",
+    ),
+    (
+        "compute.googleapis.com/NetworkEndpointGroup",
+        "compute network-endpoint-groups",
+        (),
+        "name",
+        "name",
+    ),
+    ("compute.googleapis.com/Address", "compute addresses", (), "name", "name"),
+    ("storage.googleapis.com/Bucket", "storage buckets", (), "name", "name"),
+]
 
-    결과 목록의 마지막 값은 그 뒤 회차에도 계속 쓴다. 문자열은 성공한
-    표준 출력이고, CompletedProcess 는 그대로 돌려준다.
+
+class FakeGcloud:
+    """gcloud 목록 호출을 기록하고 명령 단어(예: "sql instances")별 결과를 낸다.
+
+    정하지 않은 명령은 빈 목록("[]")을 낸다. 문자열은 성공한 표준 출력이고,
+    CompletedProcess 는 그대로 돌려준다.
     """
 
-    def __init__(self, assets=("[]",), accounts=("[]",)):
-        self.results = {"asset": list(assets), "iam": list(accounts)}
+    def __init__(self, results=None):
+        self.results = results or {}
         self.calls = []
 
     def __call__(self, args, *, capture_output, text, check):
         assert capture_output and text and not check
         self.calls.append(list(args))
-        queue = self.results[args[1]]
-        result = queue.pop(0) if len(queue) > 1 else queue[0]
+        result = self.results.get(_words(args), "[]")
         if isinstance(result, str):
             return subprocess.CompletedProcess([], 0, stdout=result, stderr="")
         return result
 
 
-class FakeSleep:
-    def __init__(self):
-        self.waits = []
-
-    def __call__(self, seconds):
-        self.waits.append(seconds)
+def _words(args):
+    """gcloud 다음부터 'list' 앞까지의 명령 단어."""
+    return " ".join(args[1 : args.index("list")])
 
 
-def _assets(*names, asset_type="type/x"):
-    return json.dumps(
-        [{"name": name, "assetType": asset_type} for name in names]
-    )
+def _item(name_path, value):
+    """이름 필드 경로(점 구분)에 value 를 둔 목록 항목 하나."""
+    item = value
+    for key in reversed(name_path.split(".")):
+        item = {key: item}
+    return item
 
 
-def _accounts(*emails):
-    return json.dumps(
-        [
-            {
-                "email": email,
-                "name": f"projects/ghost-proj/serviceAccounts/{email}",
-                "uniqueId": "1234567890",
-            }
-            for email in emails
-        ]
-    )
-
-
-def _failure(stderr):
-    return subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
-
-
-def _scanner(fake, sleep=None):
+def _scanner(fake):
     return residue_gcp.GcpResidueScanner(
-        project="ghost-proj", run=fake, sleep=sleep or FakeSleep()
+        project="ghost-proj", region="asia-northeast3", run=fake
     )
 
 
-_SQL = "//sqladmin.googleapis.com/projects/ghost-proj/instances/ccx-r1-db"
-
-
-def test_gcp_scan_queries_assets_and_service_accounts_scoped_to_project():
+def test_gcp_scan_lists_each_resource_kind_directly_once():
     fake = FakeGcloud()
 
-    _scanner(fake).scan("ccx-r1")
-
-    assert fake.calls[:2] == [
-        [
-            "gcloud",
-            "asset",
-            "search-all-resources",
-            "--scope=projects/ghost-proj",
-            '--query=name:"ccx-r1"',
-            "--format=json",
-        ],
-        [
-            "gcloud",
-            "iam",
-            "service-accounts",
-            "list",
-            "--project=ghost-proj",
-            "--filter=email~^ccx-r1[-@]",
-            "--format=json",
-        ],
-    ]
-
-
-def test_gcp_scan_confirms_clean_only_after_repeated_empty_rounds():
-    fake = FakeGcloud()
-    sleep = FakeSleep()
-
-    items = _scanner(fake, sleep).scan("ccx-r1")
+    items = _scanner(fake).scan("ccx-r1")
 
     assert items == ()
-    assert [args[1] for args in fake.calls] == ["asset", "iam"] * 3
-    assert sleep.waits == [60, 60]
-
-
-def test_gcp_scan_reports_residue_that_appears_after_index_delay():
-    fake = FakeGcloud(assets=("[]", _assets(_SQL)))
-    sleep = FakeSleep()
-
-    items = _scanner(fake, sleep).scan("ccx-r1")
-
-    assert items == (
-        residue.ResidueItem(cloud="gcp", kind="type/x", native_id=_SQL),
-    )
-    assert sleep.waits == [60]
-
-
-def test_gcp_scan_returns_residue_at_once_without_waiting():
-    fake = FakeGcloud(assets=(_assets(_SQL),))
-    sleep = FakeSleep()
-
-    items = _scanner(fake, sleep).scan("ccx-r1")
-
-    assert len(items) == 1
-    assert sleep.waits == []
-
-
-def test_gcp_scan_keeps_only_resources_named_with_the_prefix():
-    fake = FakeGcloud(
-        assets=(
-            _assets(
-                _SQL,
-                "//run.googleapis.com/projects/p/locations/r/services/ccx-r1",
-                "//run.googleapis.com/projects/p/locations/r/services/"
-                "ccx-r12-app",
-                "//compute.googleapis.com/projects/p/global/addresses/"
-                "team-ccx-r1",
-            ),
-        )
-    )
-
-    items = _scanner(fake).scan("ccx-r1")
-
-    assert [item.native_id for item in items] == [
-        _SQL,
-        "//run.googleapis.com/projects/p/locations/r/services/ccx-r1",
+    expected = [
+        [
+            "gcloud",
+            *words.split(),
+            "list",
+            "--project=ghost-proj",
+            *flags,
+            f"--filter={field}~ccx-r1",
+            "--format=json",
+        ]
+        for _, words, flags, field, _ in _LISTINGS
     ]
+    assert fake.calls == expected
 
 
-def test_gcp_scan_finds_service_account_named_by_numeric_id_via_email():
-    numeric = (
-        "//iam.googleapis.com/projects/ghost-proj/serviceAccounts/1234567890"
+@pytest.mark.parametrize(
+    ("kind", "words", "name_path"),
+    [(kind, words, name_path) for kind, words, _, _, name_path in _LISTINGS],
+)
+def test_gcp_scan_finds_residue_of_each_kind(kind, words, name_path):
+    name = (
+        "ccx-r1-run@ghost-proj.iam.gserviceaccount.com"
+        if kind == residue_gcp.SERVICE_ACCOUNT
+        else "projects/ghost-proj/locations/r/things/ccx-r1-x"
     )
-    fake = FakeGcloud(
-        assets=(_assets(numeric, asset_type=residue_gcp.SERVICE_ACCOUNT),),
-        accounts=(
-            _accounts(
-                "ccx-r1-run@ghost-proj.iam.gserviceaccount.com",
-                "ccx-r12-run@ghost-proj.iam.gserviceaccount.com",
-                "team-ccx-r1@ghost-proj.iam.gserviceaccount.com",
-            ),
-        ),
-    )
+    fake = FakeGcloud({words: json.dumps([_item(name_path, name)])})
 
     items = _scanner(fake).scan("ccx-r1")
 
     assert items == (
-        residue.ResidueItem(
-            cloud="gcp",
-            kind=residue_gcp.SERVICE_ACCOUNT,
-            native_id="projects/ghost-proj/serviceAccounts/"
-            "ccx-r1-run@ghost-proj.iam.gserviceaccount.com",
-        ),
+        residue.ResidueItem(cloud="gcp", kind=kind, native_id=name),
     )
+
+
+def test_gcp_scan_keeps_only_names_with_the_exact_prefix():
+    names = [
+        "projects/123/secrets/ccx-r1",
+        "projects/123/secrets/ccx-r1-db-url",
+        "projects/123/secrets/ccx-r12-db-url",
+        "projects/123/secrets/team-ccx-r1",
+    ]
+    fake = FakeGcloud({"secrets": json.dumps([{"name": n} for n in names])})
+
+    items = _scanner(fake).scan("ccx-r1")
+
+    assert [item.native_id for item in items] == names[:2]
+
+
+def test_gcp_scan_matches_service_accounts_by_email_local_part():
+    emails = [
+        "ccx-r1-run@ghost-proj.iam.gserviceaccount.com",
+        "ccx-r12-run@ghost-proj.iam.gserviceaccount.com",
+        "team-ccx-r1@ghost-proj.iam.gserviceaccount.com",
+    ]
+    fake = FakeGcloud(
+        {"iam service-accounts": json.dumps([{"email": e} for e in emails])}
+    )
+
+    items = _scanner(fake).scan("ccx-r1")
+
+    assert [item.native_id for item in items] == emails[:1]
 
 
 def test_gcp_scan_refuses_bad_prefix_before_querying():
@@ -207,30 +206,30 @@ def test_gcp_scan_refuses_bad_prefix_before_querying():
     assert fake.calls == []
 
 
-@pytest.mark.parametrize(
-    ("assets", "accounts", "match"),
-    [
-        (_failure("ERROR: cloudasset disabled"), "[]", "cloudasset"),
-        ("[]", _failure("ERROR: iam.serviceAccounts.list denied"), "denied"),
-    ],
-)
-def test_gcp_scan_failure_is_an_error_not_a_clean_result(
-    assets, accounts, match
-):
-    fake = FakeGcloud(assets=(assets,), accounts=(accounts,))
+@pytest.mark.parametrize("words", ["sql instances", "storage buckets"])
+def test_gcp_scan_failure_of_any_listing_is_an_error(words):
+    failure = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="ERROR: API has not been used in project"
+    )
+    fake = FakeGcloud({words: failure})
 
-    with pytest.raises(residue.ResidueScanError, match=match):
+    with pytest.raises(residue.ResidueScanError, match=words):
         _scanner(fake).scan("ccx-r1")
 
 
 @pytest.mark.parametrize(
-    "stdout", ["not json", '{"name": "x"}', "[1]", '[{"name": "x"}]']
+    "stdout",
+    ["not json", '{"name": "x"}', "[1]", '[{"id": "x"}]', '[{"name": 1}]'],
 )
-@pytest.mark.parametrize("query", ["asset", "iam"])
-def test_gcp_scan_unreadable_output_is_an_error(stdout, query):
-    results = {"assets": ("[]",), "accounts": ("[]",)}
-    results["assets" if query == "asset" else "accounts"] = (stdout,)
-    fake = FakeGcloud(**results)
+def test_gcp_scan_unreadable_output_is_an_error(stdout):
+    fake = FakeGcloud({"compute url-maps": stdout})
 
-    with pytest.raises(residue.ResidueScanError):
+    with pytest.raises(residue.ResidueScanError, match="compute url-maps"):
+        _scanner(fake).scan("ccx-r1")
+
+
+def test_gcp_scan_reads_nested_name_path():
+    fake = FakeGcloud({"run services": '[{"metadata": {"labels": {}}}]'})
+
+    with pytest.raises(residue.ResidueScanError, match="metadata.name"):
         _scanner(fake).scan("ccx-r1")
