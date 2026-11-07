@@ -63,6 +63,9 @@ DecisionReason = Literal[
     "non_http_entry",
     "plaintext_secret_in_env",
     "env_value_unconfirmed",
+    "file_injected_config",
+    "source_not_scanned",
+    "infra_coupling",
     "coupling_unconfirmed",
     "transition_support_limit",
 ]

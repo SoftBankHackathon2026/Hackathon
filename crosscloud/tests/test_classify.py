@@ -30,6 +30,7 @@ def _workload(
     platform="ecs",
     entries=(_HTTP_ENTRY,),
     env=(),
+    code_repo="src/request-api",
 ):
     return model.Workload(
         name=name,
@@ -38,7 +39,7 @@ def _workload(
         native_id=f"id/{name}",
         identity_id="role/app",
         image=model.ImageRef(registry_repo="repo", digest="sha256:" + "a" * 64),
-        code_repo=None,
+        code_repo=code_repo,
         entries=entries,
         env=env,
         secret_refs=(),
@@ -208,7 +209,7 @@ def test_env_classifications_raise_decisions():
     ]
 
 
-def test_potential_only_coupling_needs_confirmation():
+def test_couplings_stop_for_human_decision():
     def coupling(certainty, workload="request-api"):
         return model.InfraCoupling(
             workload=workload,
@@ -229,8 +230,33 @@ def test_potential_only_coupling_needs_confirmation():
 
     report = classify.classify(inventory, "aws_to_gcp", schema_sql=None)
 
+    # R3(AI 적응)가 본선에서 빠져 확정 결합도 자동으로 진행하지 않는다.
     assert [(d.subject, d.reason) for d in report.decisions] == [
         ("request-api", "coupling_unconfirmed"),
+        ("worker", "infra_coupling"),
+    ]
+
+
+def test_unscanned_workload_is_not_coupling_free():
+    inventory = _inventory(workloads=(_workload(code_repo=None),))
+
+    report = classify.classify(inventory, "aws_to_gcp", schema_sql=None)
+
+    (decision,) = report.decisions
+    assert decision.subject == "request-api"
+    assert decision.reason == "source_not_scanned"
+
+
+def test_file_injected_config_needs_decision():
+    env = (
+        model.EnvEntry("DATABASE_URL_FILE", "plain_nonsecret", "/s/db", None),
+    )
+    inventory = _inventory(workloads=(_workload(env=env),))
+
+    report = classify.classify(inventory, "aws_to_gcp", schema_sql=None)
+
+    assert [(d.subject, d.reason) for d in report.decisions] == [
+        ("request-api/DATABASE_URL_FILE", "file_injected_config"),
     ]
 
 

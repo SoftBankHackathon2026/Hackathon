@@ -78,7 +78,8 @@ def test_discover_prints_inventory_and_report(capsys):
     assert document["inventory"]["cloud"] == "aws"
     assert document["report"]["direction"] == "aws_to_gcp"
     assert [d["reason"] for d in document["report"]["decisions"]] == [
-        "plaintext_secret_in_env"
+        "plaintext_secret_in_env",
+        "source_not_scanned",
     ]
     assert made[0].region == "r"
 

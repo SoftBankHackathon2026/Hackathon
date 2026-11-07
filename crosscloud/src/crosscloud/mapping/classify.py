@@ -178,29 +178,49 @@ def _entry_decisions(
 def _env_decisions(
     workloads: tuple[model.Workload, ...],
 ) -> tuple[model.HumanDecision, ...]:
+    return tuple(
+        decision
+        for workload in workloads
+        for entry in workload.env
+        for decision in _env_entry_decisions(workload.name, entry)
+    )
+
+
+def _env_entry_decisions(
+    workload: str, entry: model.EnvEntry
+) -> list[model.HumanDecision]:
+    subject = f"{workload}/{entry.key}"
     decisions = []
-    for workload in workloads:
-        for entry in workload.env:
-            subject = f"{workload.name}/{entry.key}"
-            if entry.classification == "suspected_secret":
-                decisions.append(
-                    model.HumanDecision(
-                        subject=subject,
-                        reason="plaintext_secret_in_env",
-                        signal="env 이름·값이 비밀로 보인다(값은 버렸다)",
-                        options=("move_to_secret_store", "enter_in_target"),
-                    )
-                )
-            elif entry.classification == "unknown":
-                decisions.append(
-                    model.HumanDecision(
-                        subject=subject,
-                        reason="env_value_unconfirmed",
-                        signal="비밀인지 판단할 수 없다(값은 버렸다)",
-                        options=("confirm_plain", "treat_as_secret"),
-                    )
-                )
-    return tuple(decisions)
+    if entry.classification == "suspected_secret":
+        decisions.append(
+            model.HumanDecision(
+                subject=subject,
+                reason="plaintext_secret_in_env",
+                signal="env 이름·값이 비밀로 보인다(값은 버렸다)",
+                options=("move_to_secret_store", "enter_in_target"),
+            )
+        )
+    elif entry.classification == "unknown":
+        decisions.append(
+            model.HumanDecision(
+                subject=subject,
+                reason="env_value_unconfirmed",
+                signal="비밀인지 판단할 수 없다(값은 버렸다)",
+                options=("confirm_plain", "treat_as_secret"),
+            )
+        )
+    # *_FILE 은 파일로 주입한 설정(Secret 볼륨 등)을 가리킨다. 그 파일의 내용과
+    # 공급원은 수집하지 않았다.
+    if entry.key.upper().endswith("_FILE"):
+        decisions.append(
+            model.HumanDecision(
+                subject=subject,
+                reason="file_injected_config",
+                signal="파일로 주입한 설정 — 내용·공급원을 수집하지 않았다",
+                options=HUMAN_CHOICES,
+            )
+        )
+    return decisions
 
 
 def _coupling_decisions(
@@ -209,16 +229,42 @@ def _coupling_decisions(
     certainties: dict[str, set[str]] = {}
     for coupling in inventory.couplings:
         certainties.setdefault(coupling.workload, set()).add(coupling.certainty)
-    return tuple(
-        model.HumanDecision(
-            subject=workload,
+    decisions = []
+    for workload in inventory.workloads:
+        found = certainties.get(workload.name, set())
+        decision = _coupling_decision(workload, found)
+        if decision is not None:
+            decisions.append(decision)
+    return tuple(decisions)
+
+
+def _coupling_decision(
+    workload: model.Workload, certainties: set[str]
+) -> model.HumanDecision | None:
+    # 소스를 보지 않은 것을 결합 0건으로 치지 않는다.
+    if workload.code_repo is None:
+        return model.HumanDecision(
+            subject=workload.name,
+            reason="source_not_scanned",
+            signal="소스를 검사하지 않았다(--repo 없음 또는 소스 파일 0개)",
+            options=("provide_source", "confirm_no_coupling"),
+        )
+    # 본선은 AI 적응(R3)을 하지 않으므로 확정 결합도 자동으로 진행하지 않는다.
+    if "mandatory" in certainties:
+        return model.HumanDecision(
+            subject=workload.name,
+            reason="infra_coupling",
+            signal="앱 코드가 클라우드 인증·SDK 를 직접 부른다",
+            options=HUMAN_CHOICES,
+        )
+    if "potential" in certainties:
+        return model.HumanDecision(
+            subject=workload.name,
             reason="coupling_unconfirmed",
             signal="potential 결합만 있다",
             options=("confirm_coupling", "confirm_no_coupling"),
         )
-        for workload, found in certainties.items()
-        if found == {"potential"}
-    )
+    return None
 
 
 def _omission_decisions(
