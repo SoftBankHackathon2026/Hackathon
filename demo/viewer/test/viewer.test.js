@@ -519,3 +519,57 @@ test('versions and chart segments match sample-app', () => {
       [{environment: 'aws', firstIndex: 0, rates: [1]}]);
   assert.deepEqual(createVersionTracker().shares(), []);
 });
+
+test('many viewers share one app request per poll interval', async (t) => {
+  let calls = 0;
+  const app = await startApp(t, (request, response) => {
+    calls += 1;
+    setTimeout(() => response.end('{"environment":"aws"}'), 50);
+  });
+  const {base} = await startViewer(t, [{id: 'aws', name: 'AWS', url: app}],
+      {pollMillis: 300});
+  const answers = await Promise.all(
+      Array.from({length: 20}, () => liveOf(base, 'aws')));
+  assert.equal(calls, 1);
+  assert.ok(answers.every((answer) => answer.reachable === true));
+  await liveOf(base, 'aws');
+  assert.equal(calls, 1);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await liveOf(base, 'aws');
+  assert.equal(calls, 2);
+});
+
+test('only GET is served; other methods get 405', async (t) => {
+  const {base} = await startViewer(t, []);
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    for (const route of ['/', '/api/live?id=aws', '/api/environments']) {
+      assert.equal((await fetch(`${base}${route}`, {method})).status, 405,
+          `${method} ${route}`);
+    }
+  }
+});
+
+test('a hosted viewer never claims a panel is laptop-only', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const file = path.join(directory, 'config.json');
+  fs.writeFileSync(file, JSON.stringify({environments: [
+    {id: 'a', name: 'A', url: 'http://10.0.0.1', local_only: true}]}));
+  const viewer = createViewerServer(file, {hosted: true});
+  closeAfter(t, viewer);
+  const {environments} =
+    await (await fetch(`${await listen(viewer)}/api/environments`)).json();
+  assert.equal(environments[0].localOnly, false);
+});
+
+test('the deployed config polls only public addresses', () => {
+  const config = JSON.parse(fs.readFileSync(
+      path.join(__dirname, '..', 'config.demo.json'), 'utf8'));
+  for (const environment of config.environments) {
+    const {hostname} = new URL(environment.url);
+    assert.ok(!['localhost', '127.0.0.1', '::1'].includes(hostname),
+        environment.id);
+    assert.equal(environment.public_url, environment.url, environment.id);
+    assert.notEqual(environment.local_only, true, environment.id);
+  }
+});
