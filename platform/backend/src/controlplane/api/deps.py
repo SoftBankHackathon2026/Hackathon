@@ -22,6 +22,7 @@ from controlplane.services.ingest import IngestService
 from controlplane.services.migration_tasks import MigrationTaskService
 from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
+from controlplane.services.pod_logs import PodLogService
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
 from controlplane.services.traffic import TrafficRoutes
@@ -63,6 +64,12 @@ def get_migrations(container: ContainerDep) -> MigrationService:
 
 def get_fleet(container: ContainerDep) -> FleetService:
     return container.fleet
+
+
+def get_pod_logs(container: ContainerDep) -> PodLogService:
+    if container.pod_logs is None:
+        raise NotConfigured("로그 보기가 설정되지 않았어요.")
+    return container.pod_logs
 
 
 def get_security(container: ContainerDep) -> SecurityService:
@@ -157,6 +164,7 @@ def get_enrollments(container: ContainerDep) -> EnrollmentService:
 MigrationsDep = Annotated[MigrationService, Depends(get_migrations)]
 EnrollmentsDep = Annotated[EnrollmentService, Depends(get_enrollments)]
 FleetDep = Annotated[FleetService, Depends(get_fleet)]
+PodLogsDep = Annotated[PodLogService, Depends(get_pod_logs)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
 IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]

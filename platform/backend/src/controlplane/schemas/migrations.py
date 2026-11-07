@@ -67,6 +67,8 @@ class ComponentView(BaseModel):
     detail: str
     depends_on: list[str] = Field(default_factory=list)
     placement: list[str] = Field(default_factory=list)
+    namespace: str | None = None
+    logs: bool = False
     pods: list[PodView] | None = Field(default=None, exclude_if=lambda pods: pods is None)
     endpoints: list[EndpointView] = Field(default_factory=list)
 
@@ -365,3 +367,22 @@ class ClaimedCommand(BaseModel):
     target_env: str
     data_source: str
     data_target: str
+
+
+class PodLogLine(BaseModel):
+    at: datetime | None
+    message: str
+
+
+class PodLogs(BaseModel):
+    env_id: str
+    component_id: str
+    pod: str
+    container: str
+    containers: list[str]
+    previous: bool
+    tail: int
+    lines: list[PodLogLine]
+    truncated: bool
+    redacted: int
+    fetched_at: datetime

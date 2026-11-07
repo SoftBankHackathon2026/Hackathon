@@ -16,6 +16,8 @@ export function SidePanel({
   position,
   onMove,
   onClose,
+  onBack,
+  wide,
   actions,
   children,
 }: {
@@ -26,6 +28,8 @@ export function SidePanel({
   position?: { index: number; total: number };
   onMove?: (step: 1 | -1) => void;
   onClose: () => void;
+  onBack?: () => void;
+  wide?: boolean;
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -34,8 +38,12 @@ export function SidePanel({
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, select, textarea")) return;
-      if (event.key === "Escape") onClose();
-      else if (onMove && (event.key === "ArrowDown" || event.key === "j")) {
+      if (event.key === "Escape") {
+        if (onBack) {
+          event.stopPropagation();
+          onBack();
+        } else onClose();
+      } else if (onMove && (event.key === "ArrowDown" || event.key === "j")) {
         event.preventDefault();
         onMove(1);
       } else if (onMove && (event.key === "ArrowUp" || event.key === "k")) {
@@ -43,9 +51,10 @@ export function SidePanel({
         onMove(-1);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onMove]);
+    const capture = Boolean(onBack);
+    window.addEventListener("keydown", onKey, { capture });
+    return () => window.removeEventListener("keydown", onKey, { capture });
+  }, [onClose, onBack, onMove]);
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, [id]);
@@ -60,13 +69,26 @@ export function SidePanel({
   }, [onClose]);
   const panel = (
     <aside
-      className="fp"
+      className={wide ? "fp fp-wide" : "fp"}
       role="dialog"
       aria-modal="false"
       aria-labelledby="fp-title"
     >
       <header className="fp-head">
         <div className="fp-crumb">
+          {onBack && (
+            <button
+              type="button"
+              className="fp-back"
+              aria-label="뒤로"
+              title="뒤로 (Esc)"
+              onClick={onBack}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M10 4l-4 4 4 4" />
+              </svg>
+            </button>
+          )}
           <span>{kind}</span>
           {id && <span className="fp-id">{id}</span>}
           {position && (
@@ -136,7 +158,7 @@ export function SidePanel({
             <kbd>↓</kbd> 이전/다음
           </>
         )}
-        <kbd>Esc</kbd> 닫기
+        <kbd>Esc</kbd> {onBack ? "뒤로" : "닫기"}
       </footer>
     </aside>
   );

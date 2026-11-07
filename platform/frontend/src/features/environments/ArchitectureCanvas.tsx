@@ -31,6 +31,8 @@ import {
 } from "./CanvasPanels";
 import { layoutCanvas } from "./canvasLayout";
 import { migrationPath } from "./canvasModel";
+import { PathJobs } from "./PathJobs";
+import { pickJob } from "./pathJobOrder";
 import {
   buildMarkers,
   groupCounts,
@@ -73,8 +75,7 @@ export function ArchitectureCanvas({
   const [hidden, setHidden] = useState<Severity[]>([]);
   const [secGroup, setSecGroup] = useState<OverlayGroup | null>(null);
   const posture = useQuery(postureQueryOptions()).data;
-  const job =
-    migrations.find((m) => m.job_id === jobId) ?? migrations[0] ?? null;
+  const job = pickJob(migrations, jobId);
   const detail = useQuery({
     ...migrationQueryOptions(job?.job_id ?? ""),
     enabled: overlay === "path" && job !== null,
@@ -181,23 +182,6 @@ export function ArchitectureCanvas({
           ))}
         </div>
         <div className="canvas-tools">
-          {overlay === "path" &&
-            grouping === "boundary" &&
-            migrations.length > 0 && (
-              <label className="tool-select">
-                작업
-                <select
-                  value={job?.job_id ?? ""}
-                  onChange={(event) => setJobId(event.target.value)}
-                >
-                  {migrations.map((m) => (
-                    <option key={m.job_id} value={m.job_id}>
-                      {m.job_id}, {STATUS_LABELS[m.status]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
           <span className="tool-group">
             <span className="sub">그룹 기준</span>
             <Segmented<Grouping>
@@ -238,6 +222,14 @@ export function ArchitectureCanvas({
           )}
         </div>
       </div>
+      {overlay === "path" && migrations.length > 0 && (
+        <PathJobs
+          migrations={migrations}
+          environments={environments}
+          selected={job?.job_id ?? null}
+          onSelect={setJobId}
+        />
+      )}
       {grouping === "node" ? (
         <div className="canvas-frame" data-panel-owner>
           {overlay !== "infra" && (

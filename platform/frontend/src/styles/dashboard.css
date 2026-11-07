@@ -3932,3 +3932,287 @@ body {
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
 }
+
+.path-jobs {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.path-jobs-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.path-jobs-head a {
+  margin-left: auto;
+}
+.path-jobs-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.path-job {
+  display: grid;
+  gap: 2px;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--ink);
+  text-align: left;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.path-job.active {
+  border-color: var(--line-strong);
+}
+.path-job[aria-selected="true"] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--paper-3);
+}
+.path-job-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.path-job-route,
+.path-job-stage {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+/* 파드 로그: 사이드 패널을 넓혀 위 도구줄은 고정, 아래 로그만 스크롤 */
+.fp.fp-wide {
+  width: min(980px, 96vw);
+}
+.fp-wide .fp-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.shell .fp-back {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 2px 0 -6px;
+  padding: 0;
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+}
+.shell .fp-back:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+.fp-back svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pl-pod {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  word-break: break-all;
+}
+.shell .cp-pod-logs {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.shell .cp-pod-logs:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.cp-pod-main > .cp-pod-restarts {
+  margin-left: auto;
+}
+.pl {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.pl-tools {
+  display: grid;
+  gap: 8px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.pl-tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  min-width: 0;
+}
+.pl-spacer {
+  flex: 1;
+}
+.shell .pl-search {
+  flex: 0 1 320px;
+  min-width: 160px;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: var(--fs-md);
+}
+.pl-count {
+  color: var(--text-tertiary);
+  font: var(--type-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shell .pl-toggle,
+.shell .pl-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.shell .pl-toggle:hover:not(:disabled),
+.shell .pl-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.shell .pl-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.shell .pl-toggle:disabled,
+.shell .pl-action:disabled {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text-disabled);
+}
+.pl-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-disabled);
+}
+.pl-live.on {
+  background: var(--success);
+  animation: pl-pulse 1.6s ease-in-out infinite;
+}
+@keyframes pl-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.pl-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pl-log:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pl-line {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 14px;
+  padding: 0 24px;
+}
+.pl-line:hover {
+  background: var(--surface-subtle);
+}
+.pl-line time {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.pl-msg {
+  color: var(--text);
+  white-space: pre;
+}
+.pl-log.wrap .pl-msg {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pl-line.error {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+.pl-line.error .pl-msg {
+  color: var(--danger);
+}
+.pl-line.warn .pl-msg {
+  color: var(--warning-contrast, var(--warning));
+}
+.pl-msg mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: inherit;
+}
+.pl-empty {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  margin: 0;
+  padding: 24px;
+  color: var(--text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--fs-md);
+}
+.pl-empty p {
+  margin: 0;
+}
+.shell .pl-jump {
+  position: absolute;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--surface);
+  font: var(--type-label);
+  box-shadow: 0 4px 14px rgb(25 31 40 / 0.18);
+}
+.pl-status {
+  margin: 0;
+  padding: 8px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font: var(--type-label);
+}
+@media (max-width: 640px) {
+  .pl-tools,
+  .pl-status {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+  .pl-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    padding: 2px 16px;
+  }
+}
