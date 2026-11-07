@@ -47,6 +47,12 @@ class FakeTrail:
     signatures: dict[str, str] = dataclasses.field(default_factory=dict)
     digest_uris: list[str] = dataclasses.field(default_factory=list)
     log_uris: list[str] = dataclasses.field(default_factory=list)
+    # 이관 시점에 기록해 두는 다이제스트 목록. 시험이 지우거나 바꾸지 않는다.
+    recorded_digest_uris: list[str] = dataclasses.field(default_factory=list)
+    # 다음 다이제스트의 이전 링크를 위조할 때만 쓴다(버킷·서명).
+    forged_previous_bucket: str | None = None
+    forged_previous_signature: str | None = None
+    forged_previous_key: str | None = None
     _previous: tuple[str, str] | None = None
 
     def add_hour(self, hour: int, *, validation_on: bool = True) -> None:
@@ -71,6 +77,7 @@ class FakeTrail:
         uri = f"s3://{BUCKET}/{key}"
         self.objects[uri] = gzip.compress(content)
         self.digest_uris.append(uri)
+        self.recorded_digest_uris.append(uri)
         return uri
 
     def _add_log(self, start: datetime.datetime) -> tuple[str, bytes]:
@@ -93,6 +100,16 @@ class FakeTrail:
     ) -> None:
         key = _digest_key(end, backfill=False)
         previous_key, previous_signature = self._previous or (None, None)
+        previous_bucket = BUCKET if previous_key else None
+        if self.forged_previous_bucket is not None:
+            previous_bucket = self.forged_previous_bucket
+        if self.forged_previous_signature is not None:
+            previous_signature = self.forged_previous_signature
+        if self.forged_previous_key is not None:
+            previous_key = self.forged_previous_key
+        self.forged_previous_bucket = None
+        self.forged_previous_signature = None
+        self.forged_previous_key = None
         document = {
             "awsAccountId": ACCOUNT,
             "digestStartTime": start.strftime(_TIME_FORMAT),
@@ -101,7 +118,7 @@ class FakeTrail:
             "digestS3Object": key,
             "digestPublicKeyFingerprint": FINGERPRINT,
             "digestSignatureAlgorithm": "SHA256withRSA",
-            "previousDigestS3Bucket": BUCKET if previous_key else None,
+            "previousDigestS3Bucket": previous_bucket,
             "previousDigestS3Object": previous_key,
             "previousDigestSignature": previous_signature,
             "logFiles": [
@@ -120,10 +137,14 @@ class FakeTrail:
         self.objects[uri] = gzip.compress(content)
         self.signatures[uri] = signature
         self.digest_uris.append(uri)
+        self.recorded_digest_uris.append(uri)
         self._previous = (key, signature)
 
 
-def sign(document: dict, content: bytes) -> str:
+def sign(
+    document: dict, content: bytes, key: rsa.RSAPrivateKey | None = None
+) -> str:
+    """key 를 주지 않으면 trail 의 시험용 키로 서명한다(위조 시험은 다른 키)."""
     previous = document["previousDigestSignature"] or "null"
     to_sign = (
         f"{document['digestEndTime']}\n"
@@ -131,7 +152,8 @@ def sign(document: dict, content: bytes) -> str:
         f"{hashlib.sha256(content).hexdigest()}\n"
         f"{previous}"
     ).encode()
-    signature = private_key().sign(to_sign, padding.PKCS1v15(), hashes.SHA256())
+    signer = key or private_key()
+    signature = signer.sign(to_sign, padding.PKCS1v15(), hashes.SHA256())
     return signature.hex()
 
 
