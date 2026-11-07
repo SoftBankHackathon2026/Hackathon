@@ -3986,3 +3986,21 @@ body {
   color: var(--ink-2);
   font-size: var(--fs-xs);
 }
+
+.plan-delete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.plan-delete button {
+  margin-left: auto;
+}
+.plan-delete [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+}

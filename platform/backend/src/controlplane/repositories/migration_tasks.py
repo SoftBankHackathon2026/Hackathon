@@ -12,6 +12,8 @@ class TaskRepository(Protocol):
 
     def add(self, task: MigrationConfig, created_by: str | None) -> None: ...
 
+    def remove(self, job_id: str) -> bool: ...
+
 
 class MigrationTaskJournal:
     def __init__(self, releases: ReleaseStore) -> None:
@@ -31,6 +33,15 @@ class MigrationTaskJournal:
                 (task.job_id, Jsonb(task.model_dump(mode="json")), created_by),
             )
 
+    def remove(self, job_id: str) -> bool:
+        with self._releases.connect() as conn:
+            conn.execute("DELETE FROM fleet_cutover_commands WHERE job_id=%s", (job_id,))
+            conn.execute("DELETE FROM fleet_data_mappings WHERE job_id=%s", (job_id,))
+            row = conn.execute(
+                "DELETE FROM fleet_migration_tasks WHERE job_id=%s RETURNING job_id", (job_id,)
+            ).fetchone()
+        return row is not None
+
 
 class MemoryMigrationTasks:
     def __init__(self) -> None:
@@ -44,3 +55,9 @@ class MemoryMigrationTasks:
     def add(self, task: MigrationConfig, created_by: str | None) -> None:
         with self._lock:
             self._rows.append(task)
+
+    def remove(self, job_id: str) -> bool:
+        with self._lock:
+            before = len(self._rows)
+            self._rows = [task for task in self._rows if task.job_id != job_id]
+            return len(self._rows) != before

@@ -339,6 +339,7 @@ class PlanRoute(BaseModel):
 
 class TaskPlan(BaseModel):
     job_id: str
+    removable: bool = False
     route: PlanRoute
     phases: list[PlanPhaseView]
 

@@ -2,7 +2,7 @@ export const UNAUTHORIZED_EVENT = "oneport:unauthorized";
 
 export type RequestOptions = {
   token?: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   body?: unknown;
   headers?: Record<string, string>;
   signal?: AbortSignal;
