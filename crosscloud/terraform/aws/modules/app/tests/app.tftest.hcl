@@ -13,7 +13,8 @@ variables {
   vpc_id                  = "vpc-0123"
   subnet_ids              = ["subnet-a", "subnet-b"]
   cluster_arn             = "arn:aws:ecs:ap-northeast-2:111122223333:cluster/ccx-r1"
-  log_group_name          = "/ecs/ccx-r1"
+  log_group_name          = "ccx-r1-ecs"
+  db_ssl_ca               = null
   task_execution_role_arn = "arn:aws:iam::111122223333:role/ccx-r1-exec"
   image                   = "kty1021/sample-app:abc123"
   port                    = 8080
@@ -59,5 +60,33 @@ run "secrets_injected_by_reference_only" {
       "DATABASE_URL",
     )
     error_message = "DB 접속 대상은 평문 env 로 렌더링하지 않는다."
+  }
+}
+
+run "db_ssl_ca_is_given_as_plain_env_when_set" {
+  command = plan
+
+  variables {
+    db_ssl_ca = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+  }
+
+  assert {
+    condition = contains(
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],
+      "DB_SSL_CA",
+    )
+    error_message = "RDS CA 번들을 DB_SSL_CA env 로 넣어야 앱이 인증서를 검증한다."
+  }
+}
+
+run "no_db_ssl_ca_env_when_unset" {
+  command = plan
+
+  assert {
+    condition = !contains(
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],
+      "DB_SSL_CA",
+    )
+    error_message = "CA 가 없으면 DB_SSL_CA env 를 만들지 않는다."
   }
 }

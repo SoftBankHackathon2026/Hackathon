@@ -40,6 +40,11 @@ run "aws_to_gcp_is_one_source_fixture" {
     condition     = length(module.app) == 1
     error_message = "원본 고정물은 앱 층을 함께 만든다."
   }
+
+  assert {
+    condition     = var.app_health_path == "/readyz"
+    error_message = "상태 확인 기본값은 DB 를 읽는 /readyz 다."
+  }
 }
 
 run "gcp_to_aws_base_only_until_app_is_added" {

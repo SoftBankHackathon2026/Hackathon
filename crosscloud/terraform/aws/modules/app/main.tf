@@ -103,7 +103,11 @@ resource "aws_ecs_task_definition" "app" {
     essential    = true
     portMappings = [{ containerPort = var.port, protocol = "tcp" }]
     environment = [
-      for key, value in merge(var.env, { PORT = tostring(var.port) }) :
+      for key, value in merge(
+        var.env,
+        { PORT = tostring(var.port) },
+        var.db_ssl_ca == null ? {} : { DB_SSL_CA = var.db_ssl_ca },
+      ) :
       { name = key, value = value }
     ]
     secrets = [

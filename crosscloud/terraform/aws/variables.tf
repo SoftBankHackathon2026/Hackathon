@@ -89,9 +89,15 @@ variable "app_port" {
 }
 
 variable "app_health_path" {
-  description = "ALB 대상 그룹 상태 확인 경로."
+  description = "ALB 대상 그룹 상태 확인 경로. 기본은 DB 를 읽는 준비 확인이다."
   type        = string
-  default     = "/healthz"
+  default     = "/readyz"
+}
+
+variable "app_db_ssl_ca" {
+  description = "앱이 DB 인증서를 검증할 CA 번들 PEM(RDS 리전 번들). 비밀값이 아니라 평문 env DB_SSL_CA 로 넣는다. null 이면 넣지 않는다."
+  type        = string
+  default     = null
 }
 
 variable "app_env" {

@@ -99,3 +99,12 @@ run "iam_role_is_named_with_prefix_for_residue_scan" {
     error_message = "IAM 역할 이름이 접두사로 시작해야 잔여 검사가 찾는다."
   }
 }
+
+run "log_group_is_named_with_prefix_for_residue_scan" {
+  command = plan
+
+  assert {
+    condition     = aws_cloudwatch_log_group.this.name == "ccx-r1-ecs"
+    error_message = "로그 그룹 이름이 접두사로 시작해야 잔여 검사가 찾는다."
+  }
+}

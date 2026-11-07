@@ -49,6 +49,11 @@ variable "env" {
   type        = map(string)
 }
 
+variable "db_ssl_ca" {
+  description = "DB CA 번들 PEM. null 이면 DB_SSL_CA env 를 넣지 않는다."
+  type        = string
+}
+
 variable "secret_env" {
   description = "env 이름 → Secret ARN."
   type        = map(string)

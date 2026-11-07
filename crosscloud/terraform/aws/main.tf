@@ -36,6 +36,7 @@ module "app" {
   port                    = var.app_port
   health_path             = var.app_health_path
   env                     = var.app_env
+  db_ssl_ca               = var.app_db_ssl_ca
   secret_env              = { for env, name in var.app_secret_env : env => module.base.secret_arns[name] }
   desired_count           = var.app_desired_count
 }

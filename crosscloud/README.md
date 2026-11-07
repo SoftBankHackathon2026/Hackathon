@@ -57,8 +57,9 @@ done
 ```
 
 모든 자원 이름은 실행 접두사 `ccx-<run>` 이거나 `ccx-<run>-` 로 시작하고, 태그
-`crosscloud-run=ccx-<run>` 을 단다. 잔여 검사는 리전 자원을 태그로, 태그
-질의에 안 나오는 IAM 역할과 삭제 예약 Secret 을 이름 접두사로 찾는다.
+`crosscloud-run=ccx-<run>` 을 단다. 잔여 검사는 모듈이 만드는 자원 종류마다
+서비스 API 를 직접 조회한다(EC2 망 자원은 태그 필터, 나머지는 이름 접두사).
+색인(Resource Groups Tagging API)의 빈 결과는 잔여 0 근거로 쓰지 않는다.
 
 ## 스타일 적용 기준
 
