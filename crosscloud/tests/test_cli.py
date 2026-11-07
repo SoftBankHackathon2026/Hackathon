@@ -290,3 +290,28 @@ def test_output_write_failure_is_one_line_error(capsys, tmp_path):
     assert code == 1
     assert captured.err.count("\n") == 1
     assert captured.out == ""
+
+
+def test_skipped_large_source_files_need_decision(capsys, tmp_path):
+    (tmp_path / "index.js").write_text("console.log(1);\n", encoding="utf-8")
+    (tmp_path / "bundle.js").write_bytes(b"x" * (1024 * 1024 + 1))
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    decisions = json.loads(captured.out)["report"]["decisions"]
+    assert [(d["subject"], d["reason"]) for d in decisions] == [
+        ("source_skipped:request-api/bundle.js", "omission")
+    ]

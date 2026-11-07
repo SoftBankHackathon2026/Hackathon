@@ -162,16 +162,24 @@ def _with_couplings(
         raise ValueError(f"inventory 에 없는 워크로드: {', '.join(unknown)}")
     scanned: dict[str, pathlib.Path] = {}
     couplings: list[model.InfraCoupling] = []
+    omissions: list[model.Omission] = []
     for name, path in repos.items():
         try:
-            found = code_scan.scan_couplings(name, path)
+            scan = code_scan.scan_couplings(name, path)
         except code_scan.NoSourceFilesError as error:
             # 검사하지 못한 워크로드는 code_repo 를 비워 source_not_scanned 로
             # 판정되게 둔다.
             print(f"crosscloud: 경고 — {error}", file=sys.stderr)
             continue
         scanned[name] = path
-        couplings.extend(found)
+        couplings.extend(scan.couplings)
+        # 크기 제한으로 읽지 않은 파일은 사람이 확인한다.
+        omissions.extend(
+            model.Omission(
+                f"source_skipped:{name}/{relative}", "unsupported_type", None
+            )
+            for relative in scan.skipped_large_files
+        )
     workloads = tuple(
         dataclasses.replace(workload, code_repo=str(scanned[workload.name]))
         if workload.name in scanned
@@ -182,4 +190,5 @@ def _with_couplings(
         inventory,
         workloads=workloads,
         couplings=inventory.couplings + tuple(couplings),
+        omissions=inventory.omissions + tuple(omissions),
     )

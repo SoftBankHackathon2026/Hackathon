@@ -21,7 +21,7 @@ def test_rds_signer_is_mandatory_rds_iam_coupling(tmp_path):
         "return new Signer(config);\n",
     )
 
-    couplings = code_scan.scan_couplings("request-api", tmp_path)
+    couplings = code_scan.scan_couplings("request-api", tmp_path).couplings
 
     assert couplings == (
         model.InfraCoupling(
@@ -44,7 +44,7 @@ def test_rds_signer_is_mandatory_rds_iam_coupling(tmp_path):
 def test_auth_mode_switch_is_potential_coupling(tmp_path):
     _write(tmp_path, "config.js", "const mode = env.DB_AUTH_MODE;\n")
 
-    (coupling,) = code_scan.scan_couplings("app", tmp_path)
+    (coupling,) = code_scan.scan_couplings("app", tmp_path).couplings
 
     assert coupling.rule_id == "db-auth-mode-switch"
     assert coupling.certainty == "potential"
@@ -66,7 +66,7 @@ def test_auth_mode_switch_is_potential_coupling(tmp_path):
 def test_cloudsql_markers(tmp_path, text, rule_id, certainty):
     _write(tmp_path, "src/db.ts", text + "\n")
 
-    (coupling,) = code_scan.scan_couplings("app", tmp_path)
+    (coupling,) = code_scan.scan_couplings("app", tmp_path).couplings
 
     assert coupling.category == "db_auth_cloudsql_iam"
     assert coupling.rule_id == rule_id
@@ -81,7 +81,7 @@ def test_plain_env_reading_is_not_coupling(tmp_path):
         "const pool = new Pool({connectionString: url});\n",
     )
 
-    assert code_scan.scan_couplings("app", tmp_path) == ()
+    assert code_scan.scan_couplings("app", tmp_path).couplings == ()
 
 
 def test_skips_dependency_directories_and_non_source_files(tmp_path):
@@ -91,7 +91,7 @@ def test_skips_dependency_directories_and_non_source_files(tmp_path):
     _write(tmp_path, "README.md", marker)
     _write(tmp_path, "index.js", "console.log('ok');\n")
 
-    assert code_scan.scan_couplings("app", tmp_path) == ()
+    assert code_scan.scan_couplings("app", tmp_path).couplings == ()
 
 
 def test_repo_without_source_files_is_not_scanned(tmp_path):
@@ -102,13 +102,14 @@ def test_repo_without_source_files_is_not_scanned(tmp_path):
 
 
 def test_scans_dependency_manifest(tmp_path):
+    _write(tmp_path, "index.js", "console.log('ok');\n")
     _write(
         tmp_path,
         "package.json",
         '{"dependencies": {"@aws-sdk/rds-signer": "^3"}}\n',
     )
 
-    (coupling,) = code_scan.scan_couplings("app", tmp_path)
+    (coupling,) = code_scan.scan_couplings("app", tmp_path).couplings
 
     assert coupling.location == "package.json:1"
 
@@ -116,3 +117,42 @@ def test_scans_dependency_manifest(tmp_path):
 def test_missing_repo_dir_is_an_error(tmp_path):
     with pytest.raises(FileNotFoundError):
         code_scan.scan_couplings("app", tmp_path / "missing")
+
+
+def _big(root, relative):
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * (1024 * 1024 + 1))
+
+
+def test_manifest_only_repo_is_not_scanned(tmp_path):
+    _write(tmp_path, "pyproject.toml", "[project]\nname = 'app'\n")
+
+    with pytest.raises(code_scan.NoSourceFilesError):
+        code_scan.scan_couplings("app", tmp_path)
+
+
+def test_repo_without_main_language_files_is_not_scanned(tmp_path):
+    # package.json 이 있는 Node 앱인데 읽은 것은 Python 스크립트 하나뿐이다.
+    _write(tmp_path, "package.json", '{"name": "app"}\n')
+    _write(tmp_path, "scripts/seed.py", "print(1)\n")
+
+    with pytest.raises(code_scan.NoSourceFilesError, match="package.json"):
+        code_scan.scan_couplings("app", tmp_path)
+
+
+def test_repo_whose_sources_are_all_too_large_is_not_scanned(tmp_path):
+    _big(tmp_path, "bundle.js")
+
+    with pytest.raises(code_scan.NoSourceFilesError):
+        code_scan.scan_couplings("app", tmp_path)
+
+
+def test_large_files_are_reported_as_skipped(tmp_path):
+    _write(tmp_path, "index.js", "console.log('ok');\n")
+    _big(tmp_path, "dist2/bundle.js")
+
+    scan = code_scan.scan_couplings("app", tmp_path)
+
+    assert scan.couplings == ()
+    assert scan.skipped_large_files == ("dist2/bundle.js",)
