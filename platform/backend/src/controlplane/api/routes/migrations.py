@@ -18,6 +18,7 @@ from controlplane.api.deps import (
 from controlplane.core.errors import OperationNotFound
 from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
+    ClaimedCommand,
     CommandCreate,
     CommandResult,
     CutoverCommand,
@@ -145,6 +146,14 @@ def posture(service: SecurityDep, identity: ViewerIdentity) -> SecurityPosture:
 @router.post("/ingest/migrations/{job_id}", status_code=202)
 def ingest(job_id: str, body: MigrationIngest, service: IngestDep) -> None:
     service.ingest(job_id, body)
+
+
+@router.post("/ingest/commands/claim", response_model=ClaimedCommand | None)
+def claim_any_command(service: IngestCommandsDep):
+    claimed = service.claim_any()
+    if claimed is None:
+        return Response(status_code=204)
+    return claimed
 
 
 @router.post("/ingest/migrations/{job_id}/commands/claim", response_model=CutoverCommand | None)

@@ -157,3 +157,48 @@ def test_journal_claims_oldest_pending_once_and_blocks_second_active(store):
     )
     second = service.request("forward_001", CommandCreate(action="retry"), None)
     assert [c.id for c in journal.list("forward_001")] == [second.id, first.id]
+
+
+@pytest.mark.parametrize("make_store", ["memory", "journal"])
+def test_claim_any_takes_the_oldest_pending_command_of_any_task(make_store, request):
+    repository = (
+        MemoryCutoverCommands()
+        if make_store == "memory"
+        else CutoverCommandJournal(request.getfixturevalue("store"))
+    )
+    service = CutoverCommandService(DEFAULT_FLEET, repository, now=ticking_clock())
+    assert service.claim_any() is None
+    older = service.request("return_001", CommandCreate(action="run"), None)
+    newer = service.request("forward_001", CommandCreate(action="run"), None)
+    first = service.claim_any()
+    assert first.command.id == older.id and first.command.status == "running"
+    assert (first.job_id, first.data_source, first.data_target) == (
+        "return_001",
+        "aws",
+        "onprem_return",
+    )
+    assert (first.source_env, first.target_env) == ("aws", "onprem")
+    assert service.claim_any().command.id == newer.id
+    assert service.claim_any() is None
+
+
+def test_claim_any_ignores_commands_of_unregistered_tasks():
+    repository = MemoryCutoverCommands()
+    stale = CutoverCommandService(
+        DEFAULT_FLEET.model_copy(deep=True), repository, now=ticking_clock()
+    )
+    stale.request("forward_001", CommandCreate(action="run"), None)
+    narrowed = DEFAULT_FLEET.model_copy(
+        update={"migrations": [DEFAULT_FLEET.migration("return_001")]}
+    )
+    assert CutoverCommandService(narrowed, repository).claim_any() is None
+
+
+def test_claim_any_endpoint_needs_the_ingest_token(client):
+    path = "/api/v1/ingest/commands/claim"
+    assert client.post(path).status_code == 401
+    assert client.post(path, headers=BEARER).status_code == 204
+    client.post("/api/v1/migrations/return_001/commands", json={"action": "run"}, headers=ORIGIN)
+    claimed = client.post(path, headers=BEARER).json()
+    assert claimed["job_id"] == "return_001" and claimed["command"]["action"] == "run"
+    assert claimed["data_target"] == "onprem_return"

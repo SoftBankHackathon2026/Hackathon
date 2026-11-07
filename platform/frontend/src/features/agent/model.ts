@@ -96,21 +96,6 @@ export function changeRows(detail: Record<string, unknown>): ChangeRow[] {
   });
 }
 
-export type ProposalNotes = {
-  cause: string | null;
-  impact: string | null;
-  verification: string | null;
-};
-
-export function proposalNotes(detail: Record<string, unknown>): ProposalNotes {
-  const proposal = record(detail.proposal);
-  return {
-    cause: text(proposal.cause),
-    impact: text(proposal.impact),
-    verification: text(proposal.verification),
-  };
-}
-
 export type GateView = { outcome: string; reasonCodes: string[] };
 
 export function gateView(value: unknown): GateView | null {
@@ -121,16 +106,4 @@ export function gateView(value: unknown): GateView | null {
     ? decision.reason_codes.map(String)
     : [];
   return { outcome, reasonCodes: codes };
-}
-
-export function gateTone(gate: GateView | null): Tone {
-  if (gate === null) return "idle";
-  return gate.outcome === "allow" ? "ok" : "bad";
-}
-
-export function gateText(gate: GateView | null) {
-  if (gate === null) return "아직 없어요";
-  const codes =
-    gate.reasonCodes.length > 0 ? ` (${reasonText(gate.reasonCodes)})` : "";
-  return `${gate.outcome}${codes}`;
 }
