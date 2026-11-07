@@ -140,3 +140,71 @@ def test_embedded_credentials_drop_value(value):
 
     assert entry.classification == "suspected_secret"
     assert entry.value is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "db_password",
+        "client_secret",
+        "access_token",
+        "dbPassword",
+        "db_pass",
+        "accessKey",
+        "x-api-key",
+    ],
+)
+def test_prefixed_secret_key_names_drop_value(key):
+    entry = env.classify_env(key, "hunter2")
+
+    assert entry.classification == "suspected_secret"
+    assert entry.value is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '{"db_password":"x"}',
+        '{"client_secret": "x"}',
+        "-Dpassword=x",
+        "--db-password x",
+        "DB_PASSWORD=x",
+        "https://hooks.slack.com/services/T0000/B0000/"
+        + "a1B2c3D4e5F6g7H8i9J0k1L2",
+    ],
+)
+def test_secret_inside_structured_value_drops_value(value):
+    entry = env.classify_env("CONFIG", value)
+
+    assert entry.classification == "suspected_secret"
+    assert entry.value is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '{"a": 1}',
+        "[1, 2]",
+        "a=b",
+        "mode: fast",
+        "--verbose",
+        "-Xmx512m",
+        "https://api.example.com/v1?region=kr",
+        "Hello world",
+        "a;b",
+        "x" * 300,
+    ],
+)
+def test_structured_or_long_value_fails_closed_to_unknown(value):
+    entry = env.classify_env("CONFIG", value)
+
+    assert entry.classification == "unknown"
+    assert entry.value is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["true", "0", "3.14", "INFO", "api.internal", "10.0.0.5:5432", "v1.2.3"],
+)
+def test_simple_scalars_stay_plain(value):
+    assert env.classify_env("SETTING", value).value == value

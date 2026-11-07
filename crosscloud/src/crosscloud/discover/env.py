@@ -4,6 +4,11 @@
 여기서 한 번만 정한다. 비밀로 보이면 suspected_secret, 애매하면 unknown 이고
 둘 다 값을 버린다. 값을 남기는 것은 plain_nonsecret 뿐이다.
 
+판정은 닫힌 쪽(fail-closed)이다. 비밀 패턴을 다 알 수는 없으므로, 값을
+남기는 것은 짧은 단순 스칼라(숫자·불리언·식별자·호스트·포트·로그 수준·자격
+증명과 쿼리가 없는 URL)뿐이다. 구조가 있는 값(JSON·YAML·k=v·플래그·공백)은
+비밀 패턴이 안 보여도 unknown 으로 버린다.
+
   entry = env.classify_env("LOG_LEVEL", "info")
 """
 
@@ -44,9 +49,13 @@ _SECRET_VALUE_PATTERNS = tuple(
         # 자격 증명이 든 URL. 사용자 이름이 비거나(redis://:pw@) 비밀번호에
         # '/' 가 들어 있어도 잡는다.
         r"://[^/\s:@]*:[^\s@]+@",
-        # key=value DSN, JSON·YAML 안의 비밀 키("password": ..., token: ...).
-        r"(?i)\b(password|passwd|passphrase|pwd|secret|token|api_?key"
-        r"|private_?key|credentials?)[\"']?\s*[:=]",
+        # key=value DSN, JSON·YAML 안의 비밀 키("db_password": ..., token: ...,
+        # -Dpassword=). 앞에 '_' 같은 접두어가 붙어도 잡도록 \b 를 두지 않는다.
+        r"(?i)(password|passwd|passphrase|pwd|secret|token|api[_-]?key"
+        r"|private[_-]?key|access[_-]?key|credentials?)[\"']?\s*[:=]",
+        # 비밀을 받는 명령줄 플래그(--db-password x).
+        r"(?i)--?[\w.-]*(password|passwd|secret|token|api[_-]?key)\b",
+        r"(?i)hooks\.slack\.com/services/",  # Slack 웹훅
         r"(?i)^\s*(bearer|basic)\s+\S",  # HTTP Authorization 값
         r"\b(AKIA|ASIA)[0-9A-Z]{16}\b",  # AWS 액세스 키
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
@@ -62,6 +71,13 @@ _TOKEN_LIKE = re.compile(r"[A-Za-z0-9+/=_-]{20,}")
 # 토큰처럼 보이는 값의 문자당 엔트로피(비트)가 이 이상이면 무작위 비밀로 본다.
 # 무작위 base64 는 5 를 넘고, 반복이 많은 값은 2 아래다.
 _HIGH_ENTROPY_BITS = 3.5
+# 값을 남겨도 되는 단순 스칼라. 공백·따옴표·괄호·'='·','·';'·'?'·'&'·'@' 가
+# 없고, '-' 로 시작하지 않는(플래그가 아닌) 짧은 값이다.
+_SIMPLE_SCALAR = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}")
+# 값 안에서 토큰 후보를 가르는 구분 문자.
+_VALUE_SEPARATORS = re.compile(r"[/:.@=?&#,;\s\"'{}\[\]()]+")
+# camelCase 경계(accessKey → ACCESS_KEY).
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def classify_env(key: str, raw_value: str | model.SecretRef) -> model.EnvEntry:
@@ -83,6 +99,8 @@ def classify_env(key: str, raw_value: str | model.SecretRef) -> model.EnvEntry:
         return _entry(key, "suspected_secret")
     if _is_ambiguous(key, raw_value):
         return _entry(key, "unknown")
+    if not _SIMPLE_SCALAR.fullmatch(raw_value):
+        return _entry(key, "unknown")
     return model.EnvEntry(
         key=key,
         classification="plain_nonsecret",
@@ -103,7 +121,7 @@ def _entry(
 
 
 def _key_segments(key: str) -> tuple[str, frozenset[str]]:
-    normalized = key.upper().replace("-", "_")
+    normalized = _CAMEL_BOUNDARY.sub("_", key).upper().replace("-", "_")
     return normalized, frozenset(normalized.split("_"))
 
 
@@ -119,7 +137,11 @@ def _looks_secret(key: str, value: str) -> bool:
         return True
     if any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS):
         return True
-    return _is_token_like(value) and _entropy_bits(value) >= _HIGH_ENTROPY_BITS
+    # 값 전체가 아니라 조각(URL 경로 끝의 웹훅 토큰 등)도 본다.
+    return any(
+        _is_token_like(part) and _entropy_bits(part) >= _HIGH_ENTROPY_BITS
+        for part in [value, *_VALUE_SEPARATORS.split(value)]
+    )
 
 
 def _is_ambiguous(key: str, value: str) -> bool:
