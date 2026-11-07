@@ -104,10 +104,10 @@ def data_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
             origin="managed",
             detail=service.size
             or (f"{service.storage_gib:g} GiB" if service.storage_gib else None),
+            infrastructure=service.kind == "object_storage" and infra_bucket(service.name),
         )
         for service in inventory.managed
         if service.kind in DATA_KINDS
-        and not (service.kind == "object_storage" and infra_bucket(service.name))
     ]
     found += cluster_resources(env_id, inventory)
     return sorted(found, key=lambda r: (DATA_KINDS.index(r.kind), r.name))
@@ -132,27 +132,31 @@ def suggest(sources: list[DataResource], targets: list[DataResource]) -> list[Bi
     for kind in DATA_KINDS:
         same = [s for s in sources if s.kind == kind]
         options = [t for t in targets if t.kind == kind]
-        candidates = [t.id for t in options]
+        primary = [t for t in options if not t.infrastructure] or options
+        skipped = len(options) - len(primary)
+        note = f"인프라 버킷 {skipped}개 제외" if skipped else None
+        candidates = [t.id for t in primary] + [t.id for t in options if t not in primary]
         for source in same:
             if not options:
                 views.append(
                     BindingView(source=source.id, kind=kind, action="create", basis="no_target")
                 )
                 continue
-            if len(same) == 1 and len(options) == 1:
+            if len(same) == 1 and len(primary) == 1:
                 views.append(
                     BindingView(
                         source=source.id,
                         kind=kind,
                         action="map",
-                        target=options[0].id,
+                        target=primary[0].id,
                         basis="only_pair",
                         candidates=candidates,
+                        note=note,
                     )
                 )
                 continue
             scored = sorted(
-                ((similarity(source.name, t.name), t) for t in options),
+                ((similarity(source.name, t.name), t) for t in primary),
                 key=lambda pair: (-pair[0], pair[1].name),
             )
             best_score, best = scored[0]
@@ -166,6 +170,7 @@ def suggest(sources: list[DataResource], targets: list[DataResource]) -> list[Bi
                     target=best.id if confident else None,
                     basis="name" if confident else "none",
                     candidates=candidates,
+                    note=note if confident else None,
                 )
             )
     return views

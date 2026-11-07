@@ -17,6 +17,7 @@ class DataResource(BaseModel):
     name: str
     origin: Literal["managed", "cluster"]
     detail: str | None = None
+    infrastructure: bool = False
 
 
 class DataBinding(BaseModel):
@@ -32,6 +33,7 @@ class BindingView(DataBinding):
     kind: DataKind
     basis: BindingBasis
     candidates: list[str] = Field(default_factory=list)
+    note: str | None = None
 
 
 class DataMapping(BaseModel):

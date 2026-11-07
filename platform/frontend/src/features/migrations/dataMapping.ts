@@ -125,8 +125,14 @@ export function changed(mapping: DataMapping, draft: Draft) {
   });
 }
 
+export function basisText(basis: BindingBasis, note: string | null) {
+  return note ? `${BASIS_LABELS[basis]} (${note})` : BASIS_LABELS[basis];
+}
+
 export function resourceLabel(resource: DataResource) {
-  const where = resource.origin === "managed" ? "관리형" : "클러스터";
+  const where =
+    (resource.origin === "managed" ? "관리형" : "클러스터") +
+    (resource.infrastructure ? ", 인프라" : "");
   return resource.detail
     ? `${resource.name} (${where}, ${resource.detail})`
     : `${resource.name} (${where})`;
