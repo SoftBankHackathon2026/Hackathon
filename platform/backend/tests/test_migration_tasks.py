@@ -129,3 +129,16 @@ def test_creating_a_task_does_not_change_the_built_in_fleet(monkeypatch):
         json={"source_env": "aws", "target_env": "z", "target_provider": "onprem"},
     )
     assert [m.job_id for m in DEFAULT_FLEET.migrations] == before
+
+
+def test_data_names_can_follow_the_runner_targets():
+    config, tasks = service()
+    create(
+        tasks,
+        source_env="onprem",
+        target_env="aws",
+        data_source="onprem_return",
+        data_target="aws",
+    )
+    task = config.migration("onprem_to_aws_001")
+    assert (task.data_source, task.data_target) == ("onprem_return", "aws")

@@ -4,6 +4,9 @@
 `--execute-commands` 를 켜면 러너 Pod 안에서 이 보고기가 명령을 가져가(claim)
 `python -m migration.cutover ...` 서브프로세스를 실행하고 종료 코드와 로그 끝부분을 올린다.
 한 번에 한 명령만 실행하고, 비밀값(password/token)은 로그에서 가린다.
+`--all-jobs` 를 쓰면 작업 하나에 묶이지 않는다. 플랫폼에 등록된 모든 작업의 명령을 오래된 순서로 하나씩 받아,
+기본 설정(MIGRATION_CONFIG)의 targets 는 그대로 두고 job 절만 그 작업의 원본·대상으로 바꾼 설정을
+상태 디렉터리 jobs/<job_id>.yaml 에 만들어 실행한다. 상태 파일에 기록이 있는 작업은 모두 보고한다.
 """
 
 import argparse
@@ -100,16 +103,34 @@ def post(url: str, token: str, body: dict) -> int:
     return post_json(url, token, body)[0]
 
 
-def report_once(args: argparse.Namespace, token: str) -> None:
+def report_job(args: argparse.Namespace, token: str, job_id: str) -> None:
     state_dir = Path(args.state_dir)
-    url = f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{args.job_id}"
+    url = f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{job_id}"
     body = {
-        "cutover": read_cutover(state_dir, args.job_id),
-        "policy_decisions": read_decisions(state_dir, args.job_id),
+        "cutover": read_cutover(state_dir, job_id),
+        "policy_decisions": read_decisions(state_dir, job_id),
     }
     post(url, token, body)
-    for verify in read_verify(Path(args.report_dir or state_dir / "reports"), args.job_id):
+    for verify in read_verify(Path(args.report_dir or state_dir / "reports"), job_id):
         post(url, token, {"verify": verify})
+
+
+def report_once(args: argparse.Namespace, token: str) -> None:
+    report_job(args, token, args.job_id)
+
+
+def known_jobs(state_dir: Path) -> list[str]:
+    rows = read_rows(state_dir / CUTOVER_DB, "SELECT job_id FROM cutover_jobs ORDER BY job_id", ())
+    return [row["job_id"] for row in rows]
+
+
+def report_all(args: argparse.Namespace, token: str) -> None:
+    for job_id in known_jobs(Path(args.state_dir)):
+        try:
+            report_job(args, token, job_id)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
 
 
 # ── 전환 명령 실행 ───────────────────────────────────────────────
@@ -169,10 +190,9 @@ def run_command(
     return proc.returncode, redact("".join(chunks))[-LOG_TAIL_LIMIT:]
 
 
-def commands_url(args: argparse.Namespace, suffix: str) -> str:
-    return (
-        f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{args.job_id}/commands/{suffix}"
-    )
+def commands_url(args: argparse.Namespace, suffix: str, job_id: str | None = None) -> str:
+    job = job_id or args.job_id
+    return f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{job}/commands/{suffix}"
 
 
 def claim_command(args: argparse.Namespace, token: str) -> dict | None:
@@ -180,8 +200,14 @@ def claim_command(args: argparse.Namespace, token: str) -> dict | None:
     return body if status == 200 and body else None
 
 
-def post_result(args: argparse.Namespace, token: str, command_id: str, result: dict) -> None:
-    url = commands_url(args, f"{command_id}/result")
+def post_result(
+    args: argparse.Namespace,
+    token: str,
+    command_id: str,
+    result: dict,
+    job_id: str | None = None,
+) -> None:
+    url = commands_url(args, f"{command_id}/result", job_id)
     for attempt in range(1, RESULT_POST_ATTEMPTS + 1):
         try:
             post_json(url, token, result)
@@ -224,11 +250,85 @@ def execute_once(args: argparse.Namespace, token: str) -> bool:
     return True
 
 
+def claim_any_command(args: argparse.Namespace, token: str) -> dict | None:
+    url = f"{args.platform_url.rstrip('/')}/api/v1/ingest/commands/claim"
+    status, body = post_json(url, token, {})
+    return body if status == 200 and body else None
+
+
+def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
+    import yaml
+
+    base = yaml.safe_load(Path(base_path).read_text()) or {}
+    targets = base.get("targets") or {}
+    source, target = claimed["data_source"], claimed["data_target"]
+    missing = [name for name in (source, target) if name not in targets]
+    if missing:
+        raise ValueError(f"러너 설정 targets 에 없는 대상입니다: {', '.join(missing)}")
+    job_id = claimed["job_id"]
+    base["job"] = {
+        "job_id": job_id,
+        "source": source,
+        "target": target,
+        "table": (base.get("job") or {}).get("table", "public.migration_demo"),
+        "live_phase_before": f"{source}_live",
+        "live_phase_after": f"{target}_live",
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{job_id}.yaml"
+    path.write_text(yaml.safe_dump(base, allow_unicode=True, sort_keys=False))
+    path.chmod(0o600)
+    return path
+
+
+def execute_any(args: argparse.Namespace, token: str) -> bool:
+    claimed = claim_any_command(args, token)
+    if claimed is None:
+        return False
+    command, job_id = claimed["command"], claimed["job_id"]
+    command_id = command["id"]
+    log(f"command {command_id} claimed: {command.get('action')} job={job_id}")
+    state_dir = Path(args.state_dir)
+    try:
+        config = job_config(os.environ.get("MIGRATION_CONFIG", ""), claimed, state_dir / "jobs")
+        argv = command_argv(
+            command,
+            shlex.split(os.environ.get("ONEPORT_CUTOVER_ARGV") or DEFAULT_CUTOVER_ARGV),
+            str(config),
+            args.state_dir,
+        )
+        log(f"command {command_id} argv: {' '.join(argv)}")
+        exit_code, tail = run_command(
+            argv,
+            on_tick=lambda: report_job(args, token, job_id),
+            tick_seconds=float(getattr(args, "interval", 0) or 5),
+        )
+    except (ValueError, OSError) as exc:
+        exit_code, tail = EXIT_CONFIG, redact(str(exc))
+    cutover = read_cutover(state_dir, job_id)
+    stage = cutover["stage"] if cutover else None
+    post_result(
+        args, token, command_id, {"exit_code": exit_code, "stage": stage, "log_tail": tail}, job_id
+    )
+    log(f"command {command_id} finished exit={exit_code} stage={stage} job={job_id}")
+    try:
+        report_job(args, token, job_id)
+    except (urllib.error.URLError, OSError) as exc:
+        log(f"report after command failed: {exc}")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="cutover 상태·정책 판정·verify 보고서를 플랫폼으로 보낸다"
     )
-    parser.add_argument("--job-id", required=True)
+    jobs = parser.add_mutually_exclusive_group(required=True)
+    jobs.add_argument("--job-id")
+    jobs.add_argument(
+        "--all-jobs",
+        action="store_true",
+        help="플랫폼에 등록된 모든 작업의 명령을 순서대로 받아 실행하고, 작업마다 상태를 보고한다",
+    )
     parser.add_argument(
         "--state-dir", default=os.environ.get("WORKER_STATE_DIR", "/var/lib/worker")
     )
@@ -248,13 +348,15 @@ def main(argv: list[str] | None = None) -> int:
         # 플랫폼이 잠시 죽거나(502·연결 거부) 느려도 보고기는 내려가지 않는다. 다음 주기에 다시 보낸다.
         reported = True
         try:
-            report_once(args, token)
+            report_all(args, token) if args.all_jobs else report_once(args, token)
         except (urllib.error.URLError, OSError) as exc:
             reported = False
             log(f"report failed: {exc}")
         if args.execute_commands:
             try:
-                if execute_once(args, token):
+                if args.all_jobs:
+                    execute_any(args, token)
+                elif execute_once(args, token):
                     report_once(args, token)  # 실행 직후 바뀐 단계를 바로 올린다
             except (urllib.error.URLError, OSError) as exc:
                 log(f"command step failed: {exc}")

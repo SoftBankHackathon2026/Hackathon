@@ -346,6 +346,8 @@ class TaskPlan(BaseModel):
 class MigrationCreate(BaseModel):
     source_env: str = Field(min_length=1, max_length=64)
     target_env: str = Field(min_length=1, max_length=64)
+    data_source: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    data_target: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
     source_provider: Literal["onprem", "aws", "gcp"] | None = None
     target_provider: Literal["onprem", "aws", "gcp"] | None = None
     apps: list[str] = Field(default_factory=list, max_length=50)
@@ -354,3 +356,12 @@ class MigrationCreate(BaseModel):
 class MigrationCreated(BaseModel):
     job_id: str
     label: str
+
+
+class ClaimedCommand(BaseModel):
+    command: CutoverCommand
+    job_id: str
+    source_env: str
+    target_env: str
+    data_source: str
+    data_target: str
