@@ -131,7 +131,7 @@ EOF
 
 ```sh
 cd /opt/oneport && umask 077
-read -rs -p "PIN 4자리: " pin; echo
+printf 'PIN 4자리: '; stty -echo; read -r pin; stty echo; echo
 printf 'ONEPORT_ACCESS_PIN=%s\n' "$pin" > secrets/access.env; pin=
 chmod 0400 secrets/access.env
 docker compose up -d oneport-api
