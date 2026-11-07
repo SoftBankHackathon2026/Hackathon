@@ -10,6 +10,7 @@ import { controlHash, migrationHash, resourceHash } from "../../app/routes";
 import { StatusLabel } from "../../components/PageKit";
 import { ProviderLogo } from "../../components/ProviderLogo";
 import { PanelGroup, SidePanel } from "../../components/SidePanel";
+import { PodLogPanel } from "./PodLogPanel";
 import { StatusDot } from "../../components/StatusDot";
 import { costsQueryOptions } from "../costs/queries";
 import { usd } from "../costs/model";
@@ -193,9 +194,11 @@ function EndpointRow({ endpoint }: { endpoint: ComponentEndpoint }) {
 function PodsGroup({
   component,
   summary,
+  onLogs,
 }: {
   component: EnvComponent;
   summary: PodSummary;
+  onLogs?: (pod: string) => void;
 }) {
   const { cells, hidden } = podCells(component, 40);
   return (
@@ -240,6 +243,16 @@ function PodsGroup({
                   >
                     재시작 {pod.restarts}
                   </span>
+                  {onLogs && (
+                    <button
+                      type="button"
+                      className="cp-pod-logs"
+                      aria-label={`${pod.name} 로그 보기`}
+                      onClick={() => onLogs(pod.name)}
+                    >
+                      로그
+                    </button>
+                  )}
                 </div>
                 <p className="cp-pod-sub">
                   {[
@@ -290,6 +303,7 @@ export function ComponentPanel({
   onSelect?: (id: string) => void;
   showDiagramLink?: boolean;
 }) {
+  const [logPod, setLogPod] = useState<string | null>(null);
   const fleet = useQuery(fleetQueryOptions()).data;
   const posture = useQuery(postureQueryOptions()).data;
   const costs = useQuery(costsQueryOptions()).data;
@@ -315,6 +329,19 @@ export function ComponentPanel({
   const pods = podSummary(component);
   const endpoints = sortedEndpoints(component);
   const primary = primaryEndpoint(component);
+  const logTarget = logPod
+    ? component.pods?.find((pod) => pod.name === logPod)
+    : undefined;
+  if (logTarget)
+    return (
+      <PodLogPanel
+        env={env}
+        component={component}
+        pod={logTarget}
+        onBack={() => setLogPod(null)}
+        onClose={onClose}
+      />
+    );
   return (
     <SidePanel
       kind="구성 요소"
@@ -404,7 +431,13 @@ export function ComponentPanel({
           )}
         </PanelGroup>
       )}
-      {pods && <PodsGroup component={component} summary={pods} />}
+      {pods && (
+        <PodsGroup
+          component={component}
+          summary={pods}
+          onLogs={component.logs ? setLogPod : undefined}
+        />
+      )}
       <PanelGroup label="연결">
         <div className="cp-conn">
           <h4>

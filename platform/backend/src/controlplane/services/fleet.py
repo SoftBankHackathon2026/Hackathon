@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from controlplane.domain.cluster import cluster_view
-from controlplane.domain.fleet import EnvironmentSnapshot
+from controlplane.domain.fleet import EnvironmentConfig, EnvironmentSnapshot
 from controlplane.domain.topology import environment_components
 from controlplane.integrations.base import FleetSource
 from controlplane.schemas.migrations import (
@@ -98,6 +98,12 @@ class FleetService:
     def __init__(self, source: FleetSource, migrations: MigrationService) -> None:
         self._source = source
         self._migrations = migrations
+
+    def environment(self, env_id: str) -> tuple[EnvironmentConfig, EnvironmentView] | None:
+        for snapshot in self._source.list_environments():
+            if snapshot.config.id == env_id:
+                return snapshot.config, environment_view(snapshot)
+        return None
 
     def get_fleet(self) -> Fleet:
         return Fleet(

@@ -64,6 +64,7 @@ services:
       - ./secrets/ingest-token:/etc/oneport/secrets/ingest-token:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro
+      - ./kube:/etc/oneport/kube:ro
       - ./connection/server:/etc/oneport/connection:ro
       - ./routes:/etc/oneport/routes
     healthcheck:
