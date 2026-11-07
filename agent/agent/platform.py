@@ -54,12 +54,25 @@ class PlatformClient:
             return None
         return json.loads(raw) if raw else True
 
-    def heartbeat(self, *, version: str, auto_apply: bool, interval_seconds: int) -> None:
-        self._call("POST", "/api/v1/ingest/agent/heartbeat", {
+    def heartbeat(
+        self, *, version: str, auto_apply: bool, interval_seconds: int, config: Mapping[str, Any] | None = None,
+    ) -> None:
+        body: dict[str, Any] = {
             "agent_id": self.agent_id, "version": version, "auto_apply": auto_apply,
             "interval_seconds": interval_seconds,
             "observed_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        })
+        }
+        if config is not None:
+            body["config"] = dict(config)
+        self._call("POST", "/api/v1/ingest/agent/heartbeat", body)
+
+    def commands(self) -> list[dict[str, Any]]:
+        query = urllib.parse.urlencode({"agent_id": self.agent_id})
+        found = self._call("GET", f"/api/v1/ingest/agent/commands?{query}")
+        return [c for c in found if isinstance(c, dict)] if isinstance(found, list) else []
+
+    def ack_command(self, command_id: int, result: str) -> None:
+        self._call("POST", f"/api/v1/ingest/agent/commands/{int(command_id)}/ack", {"result": result[:200]})
 
     def push_run(self, run: Run, events: list[Mapping[str, str]]) -> bool:
         body = {**asdict(run), "agent_id": self.agent_id, "events": [dict(e) for e in events[-200:]]}
@@ -88,6 +101,26 @@ class PlatformClient:
 
 def _mark(run: Run, events: list[Mapping[str, str]]) -> str:
     return f"{run.updated_at}|{run.state}|{len(events)}"
+
+
+def handle_commands(client: PlatformClient, runtime: Any) -> bool:
+    rerun = False
+    for command in client.commands():
+        kind = command.get("kind")
+        by = str(command.get("requested_by") or "플랫폼")[:64]
+        if kind == "settings" and runtime is not None:
+            try:
+                result = runtime.apply(command.get("payload") or {})
+                log.info("플랫폼 설정 변경 (%s): %s", by, result)
+            except ValueError as exc:
+                result = f"거절함: {exc}"
+        elif kind == "rerun":
+            rerun = True
+            result = "바로 다시 판정함"
+        else:
+            result = "모르는 명령이라 무시함"
+        client.ack_command(int(command["id"]), result)
+    return rerun
 
 
 def handle_approvals(client: PlatformClient, remediator: Any, runs: RunStore) -> list[tuple[str, str]]:

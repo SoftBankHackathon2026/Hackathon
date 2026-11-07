@@ -2,12 +2,24 @@ import json
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 AGENT_ID_PATTERN = r"^[A-Za-z0-9_.-]{1,64}$"
 RUN_ID_PATTERN = r"^run-[0-9a-f]{6,32}$"
 DETAIL_LIMIT_BYTES = 64 * 1024
 SECRET_KEY_MARKERS = ("password", "secret", "token", "dsn")
+CONFIG_LIMIT_BYTES = 16 * 1024
+CONFIG_KEY_MARKERS = (*SECRET_KEY_MARKERS, "webhook")
+THREAD_TS_PATTERN = r"^(|\d{6,}\.\d{1,9})$"
 
 RunState = Literal[
     "NOTHING_TO_FIX",
@@ -25,6 +37,18 @@ RunState = Literal[
 ]
 Decision = Literal["approve", "reject"]
 WAITING_APPROVAL: RunState = "WAITING_APPROVAL"
+RERUN_STATES: frozenset[str] = frozenset(
+    {
+        "HANDED_OFF",
+        "PROBE_FAILED",
+        "REJECTED",
+        "UNRESOLVED",
+        "ERROR",
+        "CAS_CONFLICT",
+        "RESTART_FAILED",
+    }
+)
+CommandKind = Literal["settings", "rerun"]
 
 
 def _aware(value: datetime) -> datetime:
@@ -34,14 +58,12 @@ def _aware(value: datetime) -> datetime:
 ReportedTime = Annotated[datetime, AfterValidator(_aware)]
 
 
-def secret_keys(value: Any) -> list[str]:
+def secret_keys(value: Any, markers: tuple[str, ...] = SECRET_KEY_MARKERS) -> list[str]:
     if isinstance(value, dict):
-        found = [
-            key for key in value if any(marker in str(key).lower() for marker in SECRET_KEY_MARKERS)
-        ]
-        return found + [key for item in value.values() for key in secret_keys(item)]
+        found = [key for key in value if any(marker in str(key).lower() for marker in markers)]
+        return found + [key for item in value.values() for key in secret_keys(item, markers)]
     if isinstance(value, list):
-        return [key for item in value for key in secret_keys(item)]
+        return [key for item in value for key in secret_keys(item, markers)]
     return []
 
 
@@ -51,6 +73,26 @@ class AgentHeartbeat(BaseModel):
     auto_apply: bool
     interval_seconds: int = Field(ge=10, le=3600)
     observed_at: ReportedTime
+    config: dict[str, Any] | None = None
+
+    @field_validator("config")
+    @classmethod
+    def safe_config(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if len(json.dumps(value, ensure_ascii=False).encode()) > CONFIG_LIMIT_BYTES:
+            raise ValueError("config too large")
+        if secret_keys(value, CONFIG_KEY_MARKERS):
+            raise ValueError("config must not carry credentials")
+        return value
+
+
+class AgentCommand(BaseModel):
+    id: int
+    kind: CommandKind
+    payload: dict[str, Any]
+    requested_by: str
+    requested_at: datetime
 
 
 class AgentStatus(BaseModel):
@@ -61,10 +103,40 @@ class AgentStatus(BaseModel):
     observed_at: datetime
     received_at: datetime
     online: bool
+    config: dict[str, Any] | None
+    pending_commands: list[AgentCommand]
 
 
 class AgentStatusList(BaseModel):
     agents: list[AgentStatus]
+    can_command: bool
+
+
+class SettingsChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    auto_apply: StrictBool | None = None
+    interval_seconds: StrictInt | None = Field(default=None, ge=30, le=3600)
+    slack_enabled: StrictBool | None = None
+    slack_thread_ts: str | None = Field(default=None, pattern=THREAD_TS_PATTERN)
+
+    @model_validator(mode="before")
+    @classmethod
+    def present_values(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("settings change must not be empty")
+        if any(item is None for item in value.values()):
+            raise ValueError("settings values must not be null")
+        return value
+
+
+class CommandAccepted(BaseModel):
+    id: int
+    kind: CommandKind
+
+
+class CommandAck(BaseModel):
+    result: str = Field(max_length=200)
 
 
 class RunEvent(BaseModel):
@@ -140,6 +212,7 @@ class RunDetail(RunListItem):
     events: list[RunEvent]
     pending_approval: PendingApproval | None
     can_decide: bool
+    can_rerun: bool
 
 
 class ApprovalTicket(BaseModel):

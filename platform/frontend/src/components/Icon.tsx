@@ -10,6 +10,7 @@ export type IconName =
   | "users"
   | "shield"
   | "swap"
+  | "unlink"
   | "coin"
   | "bot";
 const paths: Record<IconName, string> = {
@@ -27,6 +28,8 @@ const paths: Record<IconName, string> = {
   shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M9 12l2 2 4-4",
   swap: "M4 8h13 M13 4l4 4-4 4 M20 16H7 M11 12l-4 4 4 4",
   bot: "M12 3v3 M7 6h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3z M9 11v2 M15 11v2 M9.5 16h5",
+  unlink:
+    "M10 13l-2 2a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0 M14 11l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0 M3 3l2 2 M10 3v2 M3 8h2 M21 21l-2-2 M14 21v-2 M21 16h-2",
   coin: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M15 9.5c0-1.4-1.3-2.5-3-2.5s-3 1-3 2.3c0 3 6 1.7 6 4.7 0 1.3-1.3 2.5-3 2.5s-3-1.1-3-2.5 M12 5.5V7 M12 17v1.5",
 };
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {

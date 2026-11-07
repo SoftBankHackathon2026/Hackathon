@@ -23,9 +23,10 @@ from .kv import OpenBaoKv
 from .notify import build_notifier
 from .probe import PostgresProber
 from .proposer import ProposerError, build_proposer
-from .platform import PlatformClient, handle_approvals
+from .platform import PlatformClient, handle_approvals, handle_commands
 from .remediation import Deps, Remediator
 from .restart import InClusterKubeApi, RolloutRestarter
+from .runtime import AgentRuntime
 from . import runs as R
 from .runs import OK_STATES, Run, RunStore
 
@@ -95,16 +96,51 @@ def build_platform(cfg: AgentConfig, env: Mapping[str, str] | None = None) -> Pl
         return None
 
 
+COMMAND_POLL_SECONDS = 10.0
+
+
+def _wait(
+    seconds: float, platform: PlatformClient | None, runtime: AgentRuntime | None, sleep: Callable[[float], None],
+    beat: Callable[[], None] | None = None,
+) -> None:
+    if platform is None:
+        sleep(seconds)
+        return
+    waited = 0.0
+    while True:
+        total = runtime.interval if runtime is not None else seconds
+        if waited >= total:
+            return
+        step = min(COMMAND_POLL_SECONDS, total - waited)
+        sleep(step)
+        waited += step
+        before = runtime.applied_at if runtime is not None else None
+        rerun = handle_commands(platform, runtime)
+        if beat is not None and runtime is not None and runtime.applied_at != before:
+            beat()
+        if rerun:
+            return
+
+
 def watch(
     remediator: Remediator, runs: RunStore, *, interval: float, iterations: int | None = None,
     sleep: Callable[[float], None] = time.sleep, now: Callable[[], datetime] = lambda: datetime.now(UTC),
-    platform: PlatformClient | None = None,
+    platform: PlatformClient | None = None, runtime: AgentRuntime | None = None,
 ) -> None:
     log = logging.getLogger("agent.watch")
+
+    def beat() -> None:
+        current = runtime.interval if runtime is not None else interval
+        platform.heartbeat(
+            version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(current),
+            config=runtime.snapshot() if runtime is not None else None,
+        )
+
     done = 0
     while iterations is None or done < iterations:
         if platform is not None:
-            platform.heartbeat(version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(interval))
+            beat()
+            handle_commands(platform, runtime)
             for run_id, state in handle_approvals(platform, remediator, runs):
                 log.info("플랫폼 결정 처리 %s: %s", run_id, state)
             platform.sync(runs)
@@ -118,7 +154,7 @@ def watch(
             platform.sync(runs)
         done += 1
         if iterations is None or done < iterations:
-            sleep(interval)
+            _wait(interval, platform, runtime, sleep, beat if platform is not None else None)
 
 
 def _print_run(run: Run, runs: RunStore) -> None:
@@ -176,7 +212,8 @@ def main(argv: list[str] | None = None) -> int:
             logging.getLogger("agent").error("초기화 실패: %s", type(exc).__name__)
             return EXIT_CONFIG
         if args.command == "watch":
-            watch(remediator, runs, interval=max(args.interval, 10.0), platform=build_platform(cfg))
+            runtime = AgentRuntime(cfg, remediator, cfg.state_dir, interval=max(args.interval, 10.0))
+            watch(remediator, runs, interval=runtime.interval, platform=build_platform(cfg), runtime=runtime)
             return EXIT_OK
         try:
             run = remediator.run() if args.command == "run" else remediator.approve(args.run_id)

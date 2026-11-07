@@ -4,11 +4,14 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  changeAgentSettings,
   decideAgentRun,
   getAgentRun,
   getAgentStatus,
   listAgentRuns,
+  rerunAgent,
   type AgentDecision,
+  type AgentSettingsChange,
 } from "../../api/agent";
 
 export const AGENT_POLL_MS = 5000;
@@ -42,6 +45,23 @@ export function useDecideAgentRun(runId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (decision: AgentDecision) => decideAgentRun(runId, decision),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["agent"] }),
+  });
+}
+
+export function useChangeAgentSettings(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (change: AgentSettingsChange) =>
+      changeAgentSettings(agentId, change),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["agent"] }),
+  });
+}
+
+export function useRerunAgent(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => rerunAgent(agentId),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["agent"] }),
   });
 }
