@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crosscloud"
+version = "0.1.0"
+description = "AWS↔GCP 클라우드 간 이전 도구 (파악·판정·적응·샌드박스 검증)"
+requires-python = ">=3.12"
+dependencies = [
+    "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5,<8",
+    "ruff==0.17.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["crosscloud", "crosscloud.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -ra"
+
+[tool.coverage.run]
+source = ["crosscloud"]
+branch = true
+
+# 린터는 ruff 다. 저장소의 다른 Python 코드(platform/backend, harbor_infra)가 이미
+# ruff 를 쓰므로 도구를 하나 더 들이지 않는다. 줄 길이·docstring 은 Google pyguide
+# (3.2 Line length 80자, 3.8 Docstrings google 형식)에 맞춘다.
+[tool.ruff]
+line-length = 80
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "D", "UP", "B"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# pyguide 3.8.2.1: 테스트 모듈·test_ 함수에는 docstring 이 필요 없다.
+"tests/**" = ["D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["crosscloud"]
