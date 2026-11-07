@@ -411,3 +411,55 @@ def test_crash_after_commit_record_before_meta_clear(state_dir, backends):
     assert restored.drain(0)["settled"]
     restored.switch_target("aws")
     store.close()
+
+
+def test_generation_switch_stops_new_requests_only_and_survives_restart(state_dir, backends):
+    store = RequestStore(state_dir)
+    worker = Worker(_settings(state_dir), store, lambda name: backends[name])
+    assert worker.status()["generation_enabled"] is True
+    queued = worker.generate_one()
+    assert queued is not None
+    worker.set_generation_enabled(False)
+    assert worker.generate_one() is None
+    assert worker.counters["queue_rejected"] == 0, "a stopped generator is not a rejection"
+    # Sending still settles what was already queued.
+    worker.start()
+    try:
+        assert _wait(lambda: worker.store.get(queued.request_id).status == COMMITTED)
+        assert queued.request_id in backends["onprem"].rows
+        assert worker.queue_length() == 0
+    finally:
+        worker.stop()
+    restarted = Worker(_settings(state_dir), store, lambda name: backends[name])
+    assert restarted.status()["generation_enabled"] is False
+    assert restarted.generate_one() is None
+    restarted.set_generation_enabled(True)
+    assert restarted.generate_one() is not None
+    for invalid in [None, 1, "true"]:
+        with pytest.raises(WorkerError):
+            restarted.set_generation_enabled(invalid)
+    store.close()
+
+
+def test_generation_switch_refused_with_demo_budget(state_dir):
+    store = RequestStore(state_dir)
+    worker = Worker(_settings(state_dir, max_generated=200), store, lambda _: MemoryBackend('onprem'))
+    assert worker.status()["generation_enabled"] is None
+    with pytest.raises(WorkerError, match="demo budget"):
+        worker.set_generation_enabled(False)
+    store.close()
+
+
+def test_generation_switch_http(state_dir, backends):
+    store = RequestStore(state_dir)
+    worker = Worker(_settings(state_dir), store, lambda name: backends[name])
+    server = serve(worker, "127.0.0.1", 0)
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        code, body = _http(base, "POST", "/generation", {"enabled": False})
+        assert code == 200 and json.loads(body)["generation_enabled"] is False
+        assert _http(base, "POST", "/generation", {"enabled": "no"})[0] == 409
+        code, body = _http(base, "GET", "/status")
+        assert json.loads(body)["generation_enabled"] is False
+    finally:
+        server.shutdown(); server.server_close(); store.close()

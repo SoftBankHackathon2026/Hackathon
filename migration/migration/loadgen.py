@@ -226,6 +226,10 @@ class Worker:
             type(self._generation_limit) is int and 0 <= self._generation_limit <= settings.max_generated
         ):
             raise WorkerError("invalid saved generation limit")
+        # Operator switch for the continuous mode only; the demo budget owns generation otherwise.
+        # Persisted so a liveness restart does not silently start generating again.
+        self._generation_enabled = (meta.get("generation_enabled") is not False
+                                    if settings.max_generated is None else None)
         self._state = WorkerState(meta.get("state", "PAUSED" if meta else "RUNNING"))
         if self._state == WorkerState.SWITCHING:
             self._state = WorkerState.PAUSED
@@ -321,6 +325,7 @@ class Worker:
                 "rate_per_second": self.settings.rate_per_second,
                 "generation_limit": self._generation_limit,
                 "max_generated": self.settings.max_generated,
+                "generation_enabled": self._generation_enabled,
                 "generated_total": self._next_no,
                 "queue_length": len(self._queue),
                 "queue_oldest_age_seconds": oldest_age,
@@ -461,6 +466,7 @@ class Worker:
             meta = {"target": self._target, "phase": self._phase, "run_id": self.settings.run_id,
                     "generation_limit": self._generation_limit,
                     "max_generated": self.settings.max_generated,
+                    "generation_enabled": self._generation_enabled,
                     "state": self._state.value, "unresolved": self._unresolved,
                     "updated_at": datetime.now(UTC).isoformat()}
             path = self.settings.state_dir / WORKER_META_FILE
@@ -504,6 +510,8 @@ class Worker:
     def generate_one(self) -> RequestRecord | None:
         """요청 하나를 만들어 영속 기록 후 대기열에 넣는다. 상한 초과면 거절 기록."""
         with self._lock:
+            if self._generation_enabled is False:
+                return None
             if self._generation_limit is not None:
                 if self._next_no >= self._generation_limit or self._state != WorkerState.RUNNING:
                     return None
@@ -536,6 +544,17 @@ class Worker:
             if limit < self._generation_limit:
                 raise WorkerError("generation limit cannot decrease")
             self._generation_limit = limit
+            self._persist_meta()
+            return self.status()
+
+    def set_generation_enabled(self, enabled: bool) -> dict[str, Any]:
+        """Operator on/off for new requests in the continuous mode. Sending is not affected."""
+        with self._lock:
+            if self.settings.max_generated is not None:
+                raise WorkerError("generation switch is not available with a demo budget")
+            if type(enabled) is not bool:
+                raise WorkerError("enabled must be a boolean")
+            self._generation_enabled = enabled
             self._persist_meta()
             return self.status()
 
@@ -744,6 +763,8 @@ def make_handler(worker: Worker) -> type[BaseHTTPRequestHandler]:
                     self._send_json(200, worker.resume())
                 elif self.path == "/generation-limit":
                     self._send_json(200, worker.set_generation_limit(self._read_json().get("limit")))
+                elif self.path == "/generation":
+                    self._send_json(200, worker.set_generation_enabled(self._read_json().get("enabled")))
                 elif self.path == "/drain":
                     body = self._read_json()
                     timeout = float(body.get("timeout", 60))
@@ -792,6 +813,8 @@ def _load_meta(state_dir: Path) -> dict[str, Any] | None:
         WorkerState(meta.get("state", "PAUSED"))
         if meta.get("unresolved") is not None and not isinstance(meta["unresolved"], str):
             raise ValueError("invalid unresolved request")
+        if meta.get("generation_enabled") is not None and not isinstance(meta["generation_enabled"], bool):
+            raise ValueError("invalid generation switch")
         return meta
     except (OSError, ValueError, TypeError):
         raise WorkerError("worker.json invalid; refusing to resume automatically") from None
