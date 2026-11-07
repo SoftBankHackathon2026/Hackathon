@@ -12,6 +12,9 @@ dependencies = [
     "PyYAML>=6.0,<7",
 ]
 
+[project.scripts]
+crosscloud = "crosscloud.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
