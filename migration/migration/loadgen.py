@@ -215,9 +215,13 @@ class Worker:
         self._clock = time_source
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
-        self._state = WorkerState.RUNNING
-        self._target = settings.target
-        self._phase = settings.phase
+        meta = _load_meta(settings.state_dir) or {}
+        self._state = WorkerState(meta.get("state", "PAUSED" if meta else "RUNNING"))
+        if self._state == WorkerState.SWITCHING:
+            self._state = WorkerState.PAUSED
+        self._target = meta.get("target", settings.target)
+        self._phase = meta.get("phase", settings.phase)
+        self._unresolved = meta.get("unresolved")
         self._backend: Backend | None = None
         self._queue: deque[RequestRecord] = deque()
         self._in_flight: RequestRecord | None = None
@@ -239,6 +243,15 @@ class Worker:
 
     def _restore_pending(self) -> None:
         pending = self.store.pending()
+        if self._unresolved:
+            record = self.store.get(self._unresolved)
+            if record is None or record.status not in ("pending", "committed"):
+                raise WorkerError("unresolved request missing or mismatched; manual reconciliation required")
+            if record.status == "committed":
+                self._unresolved = None
+                self._persist_meta()
+        if self._unresolved:
+            pending.sort(key=lambda rec: rec.request_id != self._unresolved)
         self._queue.extend(pending)
         if pending:
             log.info("재시작: pending 요청 %d건을 같은 ID 로 이어서 처리", len(pending))
@@ -350,6 +363,7 @@ class Worker:
         with self._cond:
             if self._state in (WorkerState.RUNNING, WorkerState.ERROR):
                 self._state = WorkerState.PAUSED
+                self._persist_meta()
                 log.info("상태 → PAUSED")
             self._cond.notify_all()
         return self.status()
@@ -360,6 +374,7 @@ class Worker:
                 raise WorkerError("전환 중에는 재개할 수 없다")
             self._state = WorkerState.RUNNING
             self._consecutive_failures = 0
+            self._persist_meta()
             log.info("상태 → RUNNING (target=%s)", self._target)
             self._cond.notify_all()
         return self.status()
@@ -373,7 +388,7 @@ class Worker:
                 if remaining <= 0:
                     break
                 self._cond.wait(min(remaining, 0.5))
-            settled = self._in_flight is None
+            settled = self._in_flight is None and self._unresolved is None
             result = {
                 "settled": settled,
                 "in_flight": self._in_flight.request_id if self._in_flight else None,
@@ -392,9 +407,10 @@ class Worker:
         with self._cond:
             if self._state != WorkerState.PAUSED:
                 raise WorkerError(f"target 변경은 PAUSED 상태에서만 가능 (현재 {self._state.value})")
-            if self._in_flight is not None:
+            if self._in_flight is not None or self._unresolved is not None:
                 raise WorkerError("진행 중 요청이 있다. 먼저 /drain 을 호출한다")
             self._state = WorkerState.SWITCHING
+            self._persist_meta()
             old_backend, old_target = self._backend, self._target
             self._backend = None
         try:
@@ -407,6 +423,7 @@ class Worker:
                 # 실패하면 target 을 바꾸지 않는다. 임의로 반대 DB 에 쓰지 않는다.
                 self._backend = None
                 self._state = WorkerState.PAUSED
+                self._persist_meta()
                 self._last_error = redact(f"target 전환 실패 ({new_target}): {exc}")
                 self._cond.notify_all()
             raise WorkerError(self._last_error) from None
@@ -420,19 +437,33 @@ class Worker:
                 "from": old_target, "to": new_target, "phase": self._phase,
                 "at": datetime.now(UTC).isoformat(), "identity": identity,
             }
+            self._persist_meta()
             self._cond.notify_all()
-        self._persist_meta()
         log.info("target 전환 %s → %s (db=%s addr=%s)", old_target, new_target,
                  identity.get("database"), identity.get("server_addr"))
         return self.status()
 
     def _persist_meta(self) -> None:
-        meta = {"target": self.target, "phase": self.phase, "run_id": self.settings.run_id,
-                "updated_at": datetime.now(UTC).isoformat()}
-        path = self.settings.state_dir / WORKER_META_FILE
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, path)
+        with self._lock:
+            meta = {"target": self._target, "phase": self._phase, "run_id": self.settings.run_id,
+                    "state": self._state.value, "unresolved": self._unresolved,
+                    "updated_at": datetime.now(UTC).isoformat()}
+            path = self.settings.state_dir / WORKER_META_FILE
+            tmp = path.with_suffix(".tmp")
+            try:
+                with tmp.open("w", encoding="utf-8") as stream:
+                    json.dump(meta, stream, ensure_ascii=False)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(tmp, path)
+                fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except OSError:
+                self._state = WorkerState.ERROR
+                raise WorkerError("worker state persistence failed; sending stopped") from None
 
     # ---- 요청 생성 -------------------------------------------------------
 
@@ -512,8 +543,20 @@ class Worker:
                     return
                 rec = self._queue.popleft()
                 self._in_flight = rec
+                self._unresolved = rec.request_id
+                try:
+                    self._persist_meta()
+                except WorkerError:
+                    self._queue.appendleft(rec)
+                    self._in_flight = None
+                    self._cond.notify_all()
+                    continue
             try:
                 self._send_until_settled(rec)
+            except WorkerError:
+                with self._cond:
+                    self._state = WorkerState.ERROR
+                    self._queue.appendleft(self.store.get(rec.request_id) or rec)
             finally:
                 with self._cond:
                     self._in_flight = None
@@ -528,7 +571,7 @@ class Worker:
             attempts += 1
             try:
                 backend = self._current_backend()
-                if attempts > rec.attempts + 1:
+                if attempts > 1:
                     # 응답 유실 가능성: 먼저 같은 ID 로 조회해 커밋 여부를 확정한다.
                     row = backend.lookup(rec.request_id)
                     if row is not None:
@@ -539,6 +582,23 @@ class Worker:
                     result = backend.insert(rec)
             except Exception as exc:  # noqa: BLE001 - 연결 오류·응답 유실
                 self._on_send_error(rec, target, attempts, exc)
+                if getattr(exc, "sqlstate", None) == "42501":
+                    # Server rejected this write. Reconcile any earlier lost response
+                    # before declaring the request safe to carry to another target.
+                    try:
+                        row = self._current_backend().lookup(rec.request_id)
+                    except Exception:
+                        row = False  # unknown: keep the unresolved fence
+                    if row is not False:
+                        if row is not None:
+                            self._on_send_result(rec, target, attempts, _compare_existing(rec, row))
+                            return
+                        with self._cond:
+                            self._unresolved = None
+                            self._state = WorkerState.PAUSED
+                            self._persist_meta()
+                            self._queue.appendleft(RequestRecord(**{**rec.__dict__, "attempts": attempts}))
+                        return
                 if self._state == WorkerState.ERROR:
                     with self._cond:
                         self._queue.appendleft(RequestRecord(**{**rec.__dict__, "attempts": attempts}))
@@ -560,6 +620,7 @@ class Worker:
                     and self._consecutive_failures >= self.settings.max_consecutive_failures
                     and self._state == WorkerState.RUNNING):
                 self._state = WorkerState.ERROR
+                self._persist_meta()
                 log.error("연속 실패 %d회 → ERROR. 반대 DB 에 쓰지 않고 중단한다. /resume 으로 재개",
                           self._consecutive_failures)
         self.store.record_attempt(rec.request_id, target, attempts, msg)
@@ -580,11 +641,14 @@ class Worker:
         self.store.mark_committed(rec.request_id, target, attempts, committed_at)
         latency = (now - _parse_ts(rec.created_at)).total_seconds()
         with self._lock:
+            self._unresolved = None
+            self._last_error = None
             self._latencies.append(latency)
             if result.outcome == Outcome.INSERTED:
                 self.counters["committed_new"] += 1
             else:
                 self.counters["committed_existing"] += 1
+            self._persist_meta()
 
 
 class WorkerError(RuntimeError):
@@ -687,10 +751,16 @@ def _load_meta(state_dir: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        log.warning("worker.json 읽기 실패, 무시: %s", exc)
-        return None
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict) or not all(isinstance(meta.get(k), str) and meta[k]
+                                               for k in ("target", "phase", "run_id")):
+            raise ValueError("invalid metadata")
+        WorkerState(meta.get("state", "PAUSED"))
+        if meta.get("unresolved") is not None and not isinstance(meta["unresolved"], str):
+            raise ValueError("invalid unresolved request")
+        return meta
+    except (OSError, ValueError, TypeError):
+        raise WorkerError("worker.json invalid; refusing to resume automatically") from None
 
 
 def build_settings(args: argparse.Namespace, config: Config) -> WorkerSettings:
