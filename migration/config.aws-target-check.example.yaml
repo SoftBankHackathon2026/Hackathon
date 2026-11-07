@@ -1,0 +1,32 @@
+schema_version: 1
+account_id: "<계정 ID>"
+region: <리전>
+profile: <프로필 이름>
+
+registry:
+  required: true
+  repositories:
+    - <저장소 이름>
+  scan_on_push: true
+  encryption: KMS
+
+secret_store:
+  required: true
+  kms_key: alias/<KMS 키 별칭>
+
+identity:
+  required: true
+  region: <Identity Center 리전>
+  permission_sets:
+    - <권한 세트 이름>
+
+audit_log:
+  required: true
+  multi_region: true
+
+data_target:
+  required: false
+  rds_instance: <RDS 이름>
+  approved_regions:
+    - <리전>
+  eks_cluster: <EKS 클러스터 이름>
