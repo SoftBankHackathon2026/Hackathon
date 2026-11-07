@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "kind": "identity_inventory",
+  "collected_at": "2026-11-07T00:00:00+00:00",
+  "source": {
+    "provider": "aws-identity-center",
+    "region": "ap-northeast-2",
+    "instance_arn": "arn:aws:sso:::instance/ssoins-1234567890123456",
+    "identity_store_id": "d-1234567890",
+    "account_ids": [
+      "111122223333"
+    ]
+  },
+  "status": "complete",
+  "users": [
+    {
+      "id": "u-1",
+      "username": "alice",
+      "display_name": "Alice",
+      "emails": []
+    }
+  ],
+  "groups": [
+    {
+      "id": "g-1",
+      "name": "Developers"
+    }
+  ],
+  "memberships": [
+    {
+      "group_id": "g-1",
+      "user_id": "u-1"
+    }
+  ],
+  "permission_sets": [
+    {
+      "arn": "arn:aws:sso:::permissionSet/ssoins-1234567890123456/ps-1234567890123456",
+      "name": "OrdersReader"
+    }
+  ],
+  "assignments": [
+    {
+      "account_id": "111122223333",
+      "permission_set_arn": "arn:aws:sso:::permissionSet/ssoins-1234567890123456/ps-1234567890123456",
+      "principal_type": "GROUP",
+      "principal_id": "g-1"
+    }
+  ],
+  "policies": [
+    {
+      "account_id": "111122223333",
+      "permission_set_arn": "arn:aws:sso:::permissionSet/ssoins-1234567890123456/ps-1234567890123456",
+      "boundary": null,
+      "documents": [
+        {
+          "arn": "inline:arn:aws:sso:::permissionSet/ssoins-1234567890123456/ps-1234567890123456",
+          "document": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:orders-dev"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "scope": "users",
+      "status": "complete"
+    }
+  ],
+  "limitations": [
+    "AWS_EFFECTIVE_PERMISSIONS_NOT_EVALUATED",
+    "WORKLOAD_IDENTITIES_REQUIRE_SEPARATE_ADAPTER"
+  ],
+  "inventory_hash": "ec74761588385c4a68e61a26ef1852665ea6dbf7b83ccc4f4ec1ff21436541eb"
+}

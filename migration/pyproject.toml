@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+identity = [
+    "boto3>=1.35,<1.36",
+    "requests>=2.32,<3",
+]
 image-migration = ["boto3>=1.43,<2"]
 policy-runtime = ["boto3>=1.35,<2"]
 security-logs = ["boto3>=1.36,<2"]
