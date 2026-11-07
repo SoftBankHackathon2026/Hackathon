@@ -165,7 +165,7 @@ def test_run_id_must_match_pattern(client):
 
 
 def test_heartbeat_upserts_and_status_reports_online(client):
-    assert client.get("/api/v1/agent/status").json() == {"agents": []}
+    assert client.get("/api/v1/agent/status").json() == {"agents": [], "can_command": True}
     assert (
         client.post("/api/v1/ingest/agent/heartbeat", json=beat(), headers=BEARER).status_code
         == 204
@@ -188,9 +188,9 @@ def test_status_marks_stale_agents_offline(store):
     service = AgentService(AgentJournal(store), now=lambda: clock[0])
     service.heartbeat(AgentHeartbeat.model_validate(beat()))
     clock[0] = BASE + timedelta(seconds=90)
-    assert service.status().agents[0].online is True
+    assert service.status(True).agents[0].online is True
     clock[0] = BASE + timedelta(seconds=91)
-    assert service.status().agents[0].online is False
+    assert service.status(True).agents[0].online is False
 
 
 def test_run_upsert_keeps_the_latest_update(client):
