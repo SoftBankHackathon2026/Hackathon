@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from agent.config import CodexSettings
-from agent.codex_runner import process_pending
+from agent.codex_runner import EXIT_INTERNAL, RunnerStatus, process_pending
 from agent.proposer import (
     OUTPUT_SCHEMA,
     CodexProposer,
@@ -21,6 +21,7 @@ from agent.proposer import (
     SidecarCodexRunner,
     build_proposer,
     parse_output,
+    scrub,
 )
 
 CURRENT = {"DB_HOST": "wrong.svc", "DB_PORT": "5432", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": "must-not-leak"}
@@ -244,7 +245,155 @@ def test_runner_ignores_arguments_in_request(tmp_path: Path, shared: Path) -> No
 
 
 def test_build_proposer_requires_shared_dir() -> None:
-    with pytest.raises(ProposerError):
-        build_proposer(CodexSettings(runner="sidecar"))
+    with pytest.raises(ProposerError, match="shared_dir"):
+        build_proposer(CodexSettings(runner="sidecar", model="m"))
     with pytest.raises(ProposerError):
         build_proposer(CodexSettings(runner="nope"))
+
+
+def test_sidecar_requires_explicit_model(shared: Path) -> None:
+    with pytest.raises(ProposerError, match="codex.model"):
+        build_proposer(CodexSettings(runner="sidecar", shared_dir=str(shared)))
+
+
+def test_sidecar_passes_model_to_codex(tmp_path: Path, shared: Path) -> None:
+    stop = threading.Event()
+    thread = run_sidecar_once(shared, fake_codex(tmp_path), {"PATH": os.environ["PATH"]}, stop)
+    settings = CodexSettings(runner="sidecar", shared_dir=str(shared), model="some-model", timeout=20)
+    try:
+        build_proposer(settings).propose(current=CURRENT, reasons=REASONS, target_db=TARGET_DB)
+    finally:
+        stop.set()
+        thread.join()
+    args = record(tmp_path)["args"]
+    assert args[args.index("--model") + 1] == "some-model"
+
+
+def test_scrub_removes_full_and_masked_key() -> None:
+    env = {"CODEX_API_KEY": "sk-proj-abcdefgh12345678"}
+    text = "bad sk-proj-abcdefgh12345678 / Incorrect API key provided: sk-proj-***********5678. You can find"
+    cleaned = scrub(text, env)
+    assert "abcdefgh" not in cleaned and "5678" not in cleaned and "sk-proj" not in cleaned
+    assert "You can find" in cleaned
+    assert "Incorrect API key provided: ***" in scrub("Incorrect API key provided: abc***def", {})
+
+
+def test_scrub_removes_short_key_mask_and_provided_value() -> None:
+    assert "dummy-di" not in scrub("provided: dummy-di**-key. You can", {})
+    assert scrub("Incorrect API key provided: plainvalue. You", {}) == "Incorrect API key provided: ***. You"
+
+
+# ---------------------------------------------------------------------------
+# runner 실패 감지: 에이전트가 시간 초과까지 기다리지 않는다
+# ---------------------------------------------------------------------------
+
+
+def write_status(shared: Path, **doc) -> None:
+    (shared / ".runner-status.json").write_text(json.dumps(doc))
+
+
+def job_name(shared: Path) -> str:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        jobs = [p.name for p in shared.glob("job-*") if (p / "request.json").exists()]
+        if jobs:
+            return jobs[0]
+        time.sleep(0.01)
+    raise AssertionError("작업이 생기지 않았다")
+
+
+def propose_elapsed(proposer: CodexProposer) -> float:
+    started = time.monotonic()
+    with pytest.raises(ProposerError) as err:
+        proposer.propose(current=CURRENT, reasons=REASONS, target_db=TARGET_DB)
+    propose_elapsed.message = str(err.value)  # type: ignore[attr-defined]
+    return time.monotonic() - started
+
+
+def test_status_file_ends_wait_when_done_file_is_missing(shared: Path) -> None:
+    """runner 는 code=1 로 끝났는데 done.json 이 보이지 않는 경우. 긴 timeout 을 기다리지 않는다."""
+    thread = threading.Thread(target=lambda: write_status(shared, beat=1, finished={job_name(shared): 1}), daemon=True)
+    thread.start()
+    elapsed = propose_elapsed(sidecar_proposer(shared, timeout=30))
+    thread.join()
+    assert elapsed < 5 and "종료 코드 1" in propose_elapsed.message  # type: ignore[attr-defined]
+
+
+def test_stopped_heartbeat_fails_fast(shared: Path) -> None:
+    write_status(shared, beat=7, finished={})
+    settings = CodexSettings(runner="sidecar", shared_dir=str(shared), timeout=30)
+    proposer = CodexProposer(settings, runner=SidecarCodexRunner(settings, poll_interval=0.02, stale_after=0.2))
+    elapsed = propose_elapsed(proposer)
+    assert elapsed < 5 and "응답 없음" in propose_elapsed.message  # type: ignore[attr-defined]
+
+
+def test_moving_heartbeat_keeps_waiting_while_codex_runs(shared: Path) -> None:
+    """Codex 가 오래 걸려도 runner 가 살아 있으면 실패시키지 않는다."""
+    stop = threading.Event()
+
+    def beat() -> None:
+        name, n = job_name(shared), 0
+        while not stop.is_set() and n < 25:
+            n += 1
+            write_status(shared, beat=n, finished={})
+            time.sleep(0.02)
+        write_status(shared, beat=n + 1, finished={name: 9})
+
+    thread = threading.Thread(target=beat, daemon=True)
+    thread.start()
+    settings = CodexSettings(runner="sidecar", shared_dir=str(shared), timeout=30)
+    proposer = CodexProposer(settings, runner=SidecarCodexRunner(settings, poll_interval=0.01, stale_after=0.2))
+    propose_elapsed(proposer)
+    stop.set()
+    thread.join()
+    assert "종료 코드 9" in propose_elapsed.message  # type: ignore[attr-defined]
+
+
+def test_status_symlink_is_ignored(tmp_path: Path, shared: Path) -> None:
+    secret = tmp_path / "token"
+    secret.write_text('{"beat": 1, "finished": {}}')
+    (shared / ".runner-status.json").symlink_to(secret)
+    settings = CodexSettings(runner="sidecar", shared_dir=str(shared), timeout=30)
+    assert SidecarCodexRunner(settings)._read_status() == {}
+
+
+def test_runner_exception_still_reports_failure(shared: Path, monkeypatch) -> None:
+    job = shared / "job-x"
+    job.mkdir()
+    (job / "request.json").write_text("{}")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("예상 못 한 오류")
+
+    monkeypatch.setattr("agent.codex_runner._execute", boom)
+    status = RunnerStatus(shared)
+    process_pending(shared, bin_path="codex", timeout=1, env={}, status=status)
+    assert json.loads((job / "done.json").read_text())["exit_code"] == EXIT_INTERNAL
+    assert json.loads((shared / ".runner-status.json").read_text())["finished"] == {"job-x": EXIT_INTERNAL}
+
+
+def test_done_write_failure_does_not_kill_runner_and_status_has_code(shared: Path, monkeypatch) -> None:
+    job = shared / "job-x"
+    job.mkdir()
+    (job / "request.json").write_text("{}")
+    monkeypatch.setattr("agent.codex_runner._execute", lambda *a, **k: 1)
+    real_write = Path.write_text
+
+    def fail_done(self, *args, **kwargs):
+        if self.name.startswith("done.json"):
+            raise PermissionError("쓰기 거절")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_done)
+    status = RunnerStatus(shared)
+    process_pending(shared, bin_path="codex", timeout=1, env={}, status=status)
+    assert not (job / "done.json").exists()
+    assert json.loads((shared / ".runner-status.json").read_text())["finished"] == {"job-x": 1}
+
+
+def test_status_keeps_recent_jobs_only(shared: Path) -> None:
+    status = RunnerStatus(shared)
+    for i in range(RunnerStatus.KEEP_FINISHED + 5):
+        status.record(f"job-{i}", 0)
+    finished = json.loads((shared / ".runner-status.json").read_text())["finished"]
+    assert len(finished) == RunnerStatus.KEEP_FINISHED and "job-0" not in finished

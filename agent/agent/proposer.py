@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,8 @@ log = logging.getLogger("agent.proposer")
 REQUEST_FILE, DONE_FILE, SCHEMA_FILE, OUTPUT_FILE, WORKSPACE_DIR = (
     "request.json", "done.json", "schema.json", "last-message.json", "workspace",
 )
+# 사이드카가 1초마다 고쳐 쓰는 상태 파일. job-* 와 겹치지 않는 이름이다.
+STATUS_FILE = ".runner-status.json"
 MAX_RESULT_BYTES = 256 * 1024
 
 OUTPUT_SCHEMA: dict[str, Any] = {
@@ -158,9 +161,17 @@ def child_env(source: Mapping[str, str], home: Path, codex_home: str | None = No
     return child
 
 
+# OpenAI 401 메시지는 키 앞뒤를 남겨 "sk-abc***...1234" 처럼 돌려준다. 전체 키 치환으로는 잡히지 않는다.
+# 짧은 키는 별표가 2개뿐이고 ("abcd**-key"), 메시지 형식이 바뀌어도 "provided:" 뒤는 지운다.
+_MASKED_KEY_RE = re.compile(r"[^\s:,;'\"]*\*{2,}[^\s:,;.'\"]*")
+_PROVIDED_KEY_RE = re.compile(r"(API key provided:\s*)[^\s.,;]+", re.IGNORECASE)
+
+
 def scrub(text: str, source: Mapping[str, str]) -> str:
     key = source.get("CODEX_API_KEY")
-    return text.replace(key, "***") if key else text
+    if key:
+        text = text.replace(key, "***")
+    return _PROVIDED_KEY_RE.sub(r"\1***", _MASKED_KEY_RE.sub("***", text))
 
 
 @dataclass(frozen=True)
@@ -196,10 +207,10 @@ class LocalCodexRunner:
 class SidecarCodexRunner:
     """공유 폴더에 작업을 놓고 agent.codex_runner 가 끝내기를 기다린다."""
 
-    def __init__(self, settings: CodexSettings, *, poll_interval: float = 0.5) -> None:
+    def __init__(self, settings: CodexSettings, *, poll_interval: float = 0.5, stale_after: float = 30.0) -> None:
         if not settings.shared_dir:
             raise ProposerError("codex.runner=sidecar 에는 codex.shared_dir 가 필요하다")
-        self.settings, self.poll_interval = settings, poll_interval
+        self.settings, self.poll_interval, self.stale_after = settings, poll_interval, stale_after
         self.shared_dir = Path(settings.shared_dir)
 
     def new_job_dir(self) -> Path:
@@ -211,19 +222,41 @@ class SidecarCodexRunner:
         pending.write_text(json.dumps({"prompt": job.prompt, "model": self.settings.model}), encoding="utf-8")
         pending.rename(job.job_dir / REQUEST_FILE)
 
-        deadline = time.monotonic() + self.settings.timeout
-        done = job.job_dir / DONE_FILE
-        while not done.exists():
-            if time.monotonic() >= deadline:
-                raise ProposerError(f"codex 사이드카 시간 초과 ({self.settings.timeout:.0f}초)")
-            time.sleep(self.poll_interval)
-        try:
-            result = json.loads(read_untrusted(done, job.job_dir))
-            code = result["exit_code"]
-        except (ProposalInvalid, ValueError, KeyError, TypeError):
-            raise ProposerError("codex 사이드카 결과 형식이 틀렸다") from None
+        code = self._wait(job.job_dir)
         if code != 0:
             raise ProposerError(f"codex 종료 코드 {code}")
+
+    def _wait(self, job_dir: Path) -> Any:
+        """종료 코드를 돌려준다. 결과 파일이 없어도 상태 파일의 기록이나 heartbeat 정지로 바로 끝낸다."""
+        deadline = time.monotonic() + self.settings.timeout
+        done = job_dir / DONE_FILE
+        last_beat, last_change = None, time.monotonic()
+        while True:
+            if done.exists():
+                try:
+                    return json.loads(read_untrusted(done, job_dir))["exit_code"]
+                except (ProposalInvalid, ValueError, KeyError, TypeError):
+                    raise ProposerError("codex 사이드카 결과 형식이 틀렸다") from None
+            status = self._read_status()
+            finished = status.get("finished")
+            if isinstance(finished, dict) and job_dir.name in finished:
+                log.warning("%s 가 없지만 사이드카가 종료를 기록했다: %s", DONE_FILE, job_dir.name)
+                return finished[job_dir.name]
+            if status.get("beat") != last_beat:
+                last_beat, last_change = status.get("beat"), time.monotonic()
+            now = time.monotonic()
+            if now - last_change >= self.stale_after:
+                raise ProposerError(f"codex 사이드카 응답 없음 ({self.stale_after:.0f}초)")
+            if now >= deadline:
+                raise ProposerError(f"codex 사이드카 시간 초과 ({self.settings.timeout:.0f}초)")
+            time.sleep(self.poll_interval)
+
+    def _read_status(self) -> dict[str, Any]:
+        try:
+            status = json.loads(read_untrusted(self.shared_dir / STATUS_FILE, self.shared_dir))
+        except (ProposalInvalid, ValueError):  # 아직 없거나 깨졌다. heartbeat 정지로 판단한다
+            return {}
+        return status if isinstance(status, dict) else {}
 
 
 class CodexProposer:
@@ -253,6 +286,10 @@ class CodexProposer:
 
 def build_proposer(settings: CodexSettings) -> CodexProposer:
     if settings.runner == "sidecar":
+        # 로그인 정보가 없는 컨테이너에서 모델을 안 주면 Codex 내장 기본 모델로 가는데, 그때 도구 목록이 비어
+        # 파일을 읽지 못하고 빈 제안만 낸다 (codex-cli 0.154 에서 확인). 조용히 실패하지 않게 시작에서 막는다.
+        if not settings.model:
+            raise ProposerError("codex.runner=sidecar 에는 codex.model 이 필요하다")
         return CodexProposer(settings, runner=SidecarCodexRunner(settings))
     if settings.runner != "local":
         raise ProposerError(f"알 수 없는 codex.runner: {settings.runner}")

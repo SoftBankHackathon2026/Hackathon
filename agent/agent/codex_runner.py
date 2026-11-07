@@ -17,14 +17,15 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Mapping
 
-from .proposer import DONE_FILE, REQUEST_FILE, WORKSPACE_DIR, child_env, codex_command, run_codex, scrub
+from .proposer import DONE_FILE, REQUEST_FILE, STATUS_FILE, WORKSPACE_DIR, child_env, codex_command, run_codex, scrub
 
 log = logging.getLogger("agent.codex_runner")
-EXIT_TIMEOUT, EXIT_START_FAILED, EXIT_BAD_REQUEST = 124, 127, 2
+EXIT_TIMEOUT, EXIT_START_FAILED, EXIT_BAD_REQUEST, EXIT_INTERNAL = 124, 127, 2, 70
 
 
 def _execute(job_dir: Path, *, bin_path: str, timeout: float, env: Mapping[str, str]) -> int:
@@ -50,18 +51,73 @@ def _execute(job_dir: Path, *, bin_path: str, timeout: float, env: Mapping[str, 
     return proc.returncode
 
 
-def process_pending(root: Path, *, bin_path: str, timeout: float, env: Mapping[str, str]) -> None:
+class RunnerStatus:
+    """heartbeat 와 끝난 작업의 종료 코드를 상태 파일에 쓴다. 작업이 도는 동안에도 멈추지 않게 스레드로 돈다.
+
+    done.json 과 별개의 경로다. 에이전트는 둘 중 하나만 보여도 끝나고, heartbeat 가 멈추면 runner 가 죽은 것으로 본다.
+    """
+
+    KEEP_FINISHED = 20
+
+    def __init__(self, root: Path) -> None:
+        self.path = root / STATUS_FILE
+        self._lock = threading.Lock()
+        self._beat = 0
+        self._finished: dict[str, int] = {}
+
+    def record(self, job: str, code: int) -> None:
+        with self._lock:
+            self._finished[job] = code
+            for old in list(self._finished)[: -self.KEEP_FINISHED]:
+                del self._finished[old]
+        self.write()
+
+    def write(self) -> None:
+        with self._lock:
+            self._beat += 1
+            body = json.dumps({"beat": self._beat, "finished": self._finished})
+            pending = self.path.with_name(self.path.name + ".tmp")
+            try:
+                pending.write_text(body, encoding="utf-8")
+                pending.rename(self.path)
+            except OSError as exc:
+                log.error("상태 파일 쓰기 실패: %s", type(exc).__name__)
+
+    def start(self, interval: float = 1.0) -> None:
+        def loop() -> None:
+            while True:
+                self.write()
+                time.sleep(interval)
+
+        threading.Thread(target=loop, daemon=True, name="runner-status").start()
+
+
+def _write_done(job_dir: Path, code: int) -> None:
+    try:
+        pending = job_dir / (DONE_FILE + ".tmp")
+        pending.write_text(json.dumps({"exit_code": code}), encoding="utf-8")
+        pending.rename(job_dir / DONE_FILE)
+    except FileNotFoundError:  # 에이전트가 시간 초과로 폴더를 지웠다
+        log.warning("작업 %s 폴더가 이미 없다", job_dir.name)
+    except OSError as exc:  # 상태 파일에 종료 코드가 남아 있어 에이전트는 끝난다
+        log.error("작업 %s 결과 쓰기 실패: %s", job_dir.name, type(exc).__name__)
+
+
+def process_pending(
+    root: Path, *, bin_path: str, timeout: float, env: Mapping[str, str], status: RunnerStatus | None = None
+) -> None:
     for job_dir in sorted(root.glob("job-*")):
         if not (job_dir / REQUEST_FILE).is_file() or (job_dir / DONE_FILE).exists():
             continue
-        code = _execute(job_dir, bin_path=bin_path, timeout=timeout, env=env)
-        log.info("작업 %s 종료 code=%d", job_dir.name, code)
         try:
-            pending = job_dir / (DONE_FILE + ".tmp")
-            pending.write_text(json.dumps({"exit_code": code}), encoding="utf-8")
-            pending.rename(job_dir / DONE_FILE)
-        except FileNotFoundError:  # 에이전트가 시간 초과로 폴더를 지웠다
-            log.warning("작업 %s 폴더가 이미 없다", job_dir.name)
+            code = _execute(job_dir, bin_path=bin_path, timeout=timeout, env=env)
+        except Exception as exc:  # noqa: BLE001 - 어떤 실패든 에이전트가 기다리지 않게 실패로 알린다
+            log.error("작업 %s 처리 중 오류: %s", job_dir.name, type(exc).__name__)
+            code = EXIT_INTERNAL
+        log.info("작업 %s 종료 code=%d", job_dir.name, code)
+        if status is not None:
+            status.record(job_dir.name, code)
+        _write_done(job_dir, code)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,9 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper(), stream=sys.stderr,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     root = Path(args.dir)
+    status = RunnerStatus(root)
+    status.start()
     log.info("대기 시작: %s", root)
     while True:
-        process_pending(root, bin_path=args.bin, timeout=args.timeout, env=os.environ)
+        try:
+            process_pending(root, bin_path=args.bin, timeout=args.timeout, env=os.environ, status=status)
+        except OSError as exc:  # 폴더 목록을 못 읽어도 runner 는 죽지 않는다
+            log.error("작업 폴더 처리 실패: %s", type(exc).__name__)
         time.sleep(args.poll_interval)
 
 
