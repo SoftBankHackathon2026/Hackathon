@@ -381,3 +381,85 @@ def test_name_only_suggestions_still_need_confirmation():
     view = service(envs).get("forward_001")
     assert {b.basis for b in view.bindings} == {"name"}
     assert (view.status, view.required) == ("needs_review", True)
+
+
+def test_kafka_members_in_one_namespace_are_one_cluster():
+    inv = inventory(
+        "onprem",
+        workloads=[
+            WorkloadDemand(namespace="hackathon", name="kafka-broker", role="kafka", replicas=2),
+            WorkloadDemand(
+                namespace="hackathon", name="kafka-controller", role="kafka", replicas=3
+            ),
+            WorkloadDemand(namespace="hackathon", name="kafka-zookeeper", role="kafka"),
+            WorkloadDemand(namespace="hackathon", name="kafka-broker-ui", role="kafka"),
+            WorkloadDemand(namespace="other", name="kafka-broker", role="kafka"),
+            WorkloadDemand(namespace="hackathon", name="pg-controller", role="postgres"),
+        ],
+    )
+    found = [(r.id, r.kind, r.detail) for r in data_resources("onprem", inv)]
+    assert found == [
+        ("cluster:hackathon/pg-controller", "postgres", "파드 1개"),
+        (
+            "cluster:hackathon/kafka",
+            "kafka",
+            "파드 6개 (kafka-broker, kafka-controller, kafka-zookeeper)",
+        ),
+        ("cluster:hackathon/kafka-broker-ui", "kafka", "파드 1개"),
+        ("cluster:other/kafka", "kafka", "파드 1개"),
+    ]
+
+
+def test_infrastructure_buckets_are_not_migration_targets():
+    inv = inventory(
+        "aws",
+        managed=[
+            ManagedService(kind="object_storage", name="oneaction-logs-1"),
+            ManagedService(kind="object_storage", name="oneaction-tfstate-1"),
+            ManagedService(kind="object_storage", name="team-cloudtrail"),
+            ManagedService(kind="object_storage", name="oneaction-review-docs-1"),
+            ManagedService(kind="object_storage", name="catalog"),
+            ManagedService(kind="postgres", name="audit-logs-db"),
+        ],
+    )
+    assert [r.name for r in data_resources("aws", inv)] == [
+        "audit-logs-db",
+        "catalog",
+        "oneaction-review-docs-1",
+    ]
+
+
+def test_live_shaped_inventory_pairs_without_review():
+    envs = {
+        "onprem": inventory(
+            "onprem",
+            workloads=[
+                WorkloadDemand(namespace="hackathon", name="postgres", role="postgres"),
+                WorkloadDemand(
+                    namespace="hackathon", name="kafka-broker", role="kafka", replicas=2
+                ),
+                WorkloadDemand(
+                    namespace="hackathon", name="kafka-controller", role="kafka", replicas=3
+                ),
+                WorkloadDemand(namespace="hackathon", name="object-storage", role="object_storage"),
+            ],
+        ),
+        "aws": inventory(
+            "aws",
+            managed=[
+                ManagedService(kind="postgres", name="oneaction-review-db"),
+                ManagedService(kind="kafka", name="oneaction-review"),
+                ManagedService(kind="object_storage", name="oneaction-logs-1"),
+                ManagedService(kind="object_storage", name="oneaction-review-docs-1"),
+                ManagedService(kind="object_storage", name="oneaction-tfstate-1"),
+            ],
+        ),
+    }
+    view = service(envs).get("forward_001")
+    assert (view.status, view.required) == ("ready", False)
+    assert {b.basis for b in view.bindings} == {"only_pair"}
+    assert {b.target for b in view.bindings} == {
+        "managed:postgres:oneaction-review-db",
+        "managed:kafka:oneaction-review",
+        "managed:object_storage:oneaction-review-docs-1",
+    }

@@ -59,6 +59,41 @@ STOP_TOKENS = frozenset(
 )
 
 
+KAFKA_MEMBER = re.compile(r"-(broker|controller|zookeeper)$")
+INFRA_BUCKET_TOKENS = frozenset({"tfstate", "terraform", "log", "logs", "cloudtrail", "flowlogs"})
+
+
+def infra_bucket(name: str) -> bool:
+    return bool(set(re.split(r"[^a-z0-9]+", name.lower())) & INFRA_BUCKET_TOKENS)
+
+
+def cluster_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
+    groups: dict[tuple[str, str, str], list] = {}
+    for workload in inventory.workloads:
+        if workload.role not in DATA_KINDS:
+            continue
+        base = KAFKA_MEMBER.sub("", workload.name) if workload.role == "kafka" else workload.name
+        groups.setdefault((workload.role, workload.namespace, base), []).append(workload)
+    found = []
+    for (kind, namespace, base), members in groups.items():
+        pods = sum(m.replicas for m in members)
+        parts = sorted(m.name for m in members)
+        detail = f"파드 {pods}개"
+        if len(members) > 1:
+            detail += " (" + ", ".join(parts) + ")"
+        found.append(
+            DataResource(
+                id=f"cluster:{namespace}/{base}",
+                env_id=env_id,
+                kind=kind,
+                name=f"{namespace}/{base}",
+                origin="cluster",
+                detail=detail,
+            )
+        )
+    return found
+
+
 def data_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
     found = [
         DataResource(
@@ -72,19 +107,9 @@ def data_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
         )
         for service in inventory.managed
         if service.kind in DATA_KINDS
+        and not (service.kind == "object_storage" and infra_bucket(service.name))
     ]
-    found += [
-        DataResource(
-            id=f"cluster:{workload.namespace}/{workload.name}",
-            env_id=env_id,
-            kind=workload.role,
-            name=f"{workload.namespace}/{workload.name}",
-            origin="cluster",
-            detail=f"파드 {workload.replicas}개",
-        )
-        for workload in inventory.workloads
-        if workload.role in DATA_KINDS
-    ]
+    found += cluster_resources(env_id, inventory)
     return sorted(found, key=lambda r: (DATA_KINDS.index(r.kind), r.name))
 
 
