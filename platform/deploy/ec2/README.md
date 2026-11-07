@@ -18,7 +18,7 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 |---|---|---|
 | 인스턴스 | 태그 `Name=oneport-platform`, `project=oneport` | 도쿄 기본 VPC, t3.small 온디맨드, Amazon Linux 2023, gp3 20GiB 암호화, IMDSv2 필수. user-data 는 [`user-data.sh`](user-data.sh) |
 | 고정 IP | 태그 `Name=oneport-platform` | 도메인 A 레코드가 가리키는 주소예요. 인스턴스를 멈췄다 켜도 바뀌지 않아요 |
-| 보안그룹 | `oneport-platform-sg` | 443은 전체에 열어요. 누구나 화면에 들어올 수 있고, 들어오면 [접속 PIN](#접속-pin-임시) 화면부터 보여요. 80도 전체에 열지만 Caddy가 Let's Encrypt 인증(HTTP-01) 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
+| 보안그룹 | `oneport-platform-sg` | 443은 전체에 열어요. 누구나 화면에 들어올 수 있어요. 80도 전체에 열지만 Caddy가 Let's Encrypt 인증(HTTP-01) 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
 | EKS 공개 엔드포인트 | 허용 IP(`publicAccessCidrs`) | 이 인스턴스 고정 IP를 더해요. 리전이 달라 VPC 비공개 엔드포인트는 쓰지 않아요 |
 | EC2 역할 | `ghost-oneport-platform-ec2` | `AmazonSSMManagedInstanceCore` + 서울 `ghost/oneport-platform-*` ECR 읽기 |
 | 배포 역할 | `ghost-oneport-platform-deploy` | 아래 정책. GitHub OIDC 공급자가 있어야 만들 수 있어요 |
@@ -118,26 +118,6 @@ EOF
 | `gcp.kubeconfig` | GKE에 `deploy/reader/reader.yaml`을 적용하고 `deploy/reader/make-kubeconfig.sh oneaction-gke gcp.kubeconfig`. GKE 승인 네트워크를 좁혀 두었다면 고정 IP를 더해요 |
 
 워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요. 비용 설정 `deploy/aws/cost.json`은 그대로 보내요.
-
-## 접속 PIN (임시)
-
-화면 맨 앞에 숫자 4자리 비밀번호 화면을 둬요. PIN 을 맞히기 전에는 API(`/api/*`)가 모두 401 을 돌려줘서, 개발자 도구로 화면만 바꿔서는 데이터를 볼 수 없어요.
-
-- 맞히면 서명한 쿠키(HttpOnly·Secure·SameSite=Strict, 12시간)를 줘요. 서명 키는 API 프로세스가 뜰 때마다 새로 만들어서, 다시 배포하면 PIN 을 다시 입력해요.
-- 10분 안에 10번 틀리면 10분 동안 맞는 PIN 도 받지 않아요(전체 기준).
-- 보고기 ingest 와 클러스터 등록 스크립트 경로(`/api/v1/ingest/…`, `/api/v1/enrollments/scripts/…`, `/api/v1/enrollments/<id>/complete`)는 자기 토큰으로 인증해서 PIN 을 묻지 않아요.
-
-켜기·바꾸기 (인스턴스에서 root)
-
-```sh
-cd /opt/oneport && umask 077
-printf 'PIN 4자리: '; stty -echo; read -r pin; stty echo; echo
-printf 'ONEPORT_ACCESS_PIN=%s\n' "$pin" > secrets/access.env; pin=
-chmod 0400 secrets/access.env
-docker compose up -d oneport-api
-```
-
-끄기는 `secrets/access.env` 를 지우고 `docker compose up -d oneport-api` 해요. 코드를 걷어낼 때는 `controlplane/api/access_pin.py`, `main.py` 의 `access_pin.install` 한 줄, 프론트 `features/access-pin/`, `App.tsx` 의 `PinGate` 감싸기를 지우면 돼요.
 
 ## 배포
 
