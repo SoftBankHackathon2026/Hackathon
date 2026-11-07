@@ -326,7 +326,7 @@ class Cutover:
         self.cc = config.cutover
         self.job = store.load(self.job_id) or CutoverJob(
             job_id=self.job_id, direction=f"{self.source}->{self.target}", source=self.source,
-            target=self.target, stage=PRECHECK, checkpoint={}, updated_at="")
+            target=self.target, stage=PRECHECK, checkpoint={"grant_tracking_version": 1}, updated_at="")
         if (self.job.source, self.job.target) != (self.source, self.target):
             raise ConfigError(f"저장된 작업 {self.job_id} 의 방향({self.job.direction})이 설정과 다르다")
 
@@ -587,6 +587,7 @@ class Cutover:
                 }, source="migration.cutover"),
             }
             self._policy_guard("final_verify", checks)
+        self._save(target_grant_attempted=True)
         self._step("grant_target_app_insert", lambda: (self.p.db.grant_app_insert(self.target), {"granted": True})[1])
         phase_after = self.config.job.live_phase_after
 
@@ -734,30 +735,56 @@ class Cutover:
             except ApprovalRequired:
                 raise
             except Exception as exc:  # noqa: BLE001 - 어떤 실패든 상태를 남긴다
-                failure = NEEDS_RECOVERY if STAGES.index(current) >= STAGES.index(POINT_OF_NO_RETURN) else ABORTED
+                failure = NEEDS_RECOVERY if self._target_writes_possible(current) else ABORTED
                 self._save(failure, failed_stage=current, error=str(exc)[:1000])
+                if current == SWITCHING and failure == ABORTED:
+                    try:
+                        self.abort_rollback()
+                        failure = ROLLED_BACK
+                    except Exception as recovery_error:
+                        self._save(NEEDS_RECOVERY, recovery_error=str(recovery_error)[:1000])
+                        failure = NEEDS_RECOVERY
                 log.error("단계 %s 실패 → %s: %s", current, failure, exc)
                 raise CutoverError(f"{current} 실패 → {failure}: {exc}") from exc
             log.info("=== 단계 %s 완료 → %s ===", current, self.job.stage)
         return self.job.stage
+
+    def _target_writes_possible(self, stage: str) -> bool:
+        # Persisted intent precedes GRANT. A missing response is not proof that
+        # the grant failed; never reopen the source in that case.
+        if self.job.checkpoint.get("target_grant_attempted"):
+            return True
+        if self.store.step_done(self.job_id, "grant_target_app_insert") is not None:
+            return True
+        if STAGES.index(stage) >= STAGES.index(VERIFYING):
+            return True
+        if stage == SWITCHING and self.job.checkpoint.get("grant_tracking_version") != 1:
+            return True  # legacy jobs have no durable grant intent
+        return False
 
     def abort_rollback(self) -> dict[str, Any]:
         """ABORTED 이고 대상 쓰기 전이면: 커넥터 삭제, 원본 앱 INSERT 복구, 워커(원본) 재개."""
         if self.job.stage != ABORTED:
             raise CutoverError(f"abort 는 ABORTED 상태에서만 가능 (현재 {self.job.stage})")
         failed = str(self.job.checkpoint.get("failed_stage") or PRECHECK)
-        if STAGES.index(failed) >= STAGES.index(POINT_OF_NO_RETURN):
+        if self._target_writes_possible(failed):
             raise CutoverError("대상 쓰기 이후 실패는 자동 원복하지 않는다")
         if self.p.db.app_can_insert(self.target):
             raise CutoverError("대상 앱 쓰기가 열려 있다. 자동 원복 불가")
+        ws = self.p.worker.status()
+        if ws.get("target") != self.source:
+            raise CutoverError("워커 target 이 원본이 아니다. 수동 확인 필요")
+        if self.ingress is not None:
+            snap = self._ingress_snapshot()
+            if snap.get("target") != self._ingress_name(self.source):
+                raise CutoverError("접수 서비스 target 이 원본이 아니다. 수동 확인 필요")
         out: dict[str, Any] = {}
         for name in (self.config.job.source_connector, self.config.job.sink_connector):
             out[name] = {"deleted": self.p.connect.delete(name)}
         self.p.db.grant_app_insert(self.source)
         out["source_app_insert"] = self.p.db.app_can_insert(self.source)
-        ws = self.p.worker.status()
-        if ws.get("target") != self.source:
-            raise CutoverError(f"워커 target 이 원본이 아니다: {ws.get('target')}. 수동 확인 필요")
+        if not out["source_app_insert"]:
+            raise CutoverError("원본 쓰기 복구 확인 실패")
         out["worker"] = self.p.worker.resume().get("state")
         if self.ingress is not None:
             snap = self._ingress_snapshot()
