@@ -9,6 +9,7 @@ import {
   logText,
   logTime,
   matches,
+  canScroll,
   newLineCount,
 } from "../src/features/environments/podLogs.ts";
 
@@ -127,4 +128,25 @@ test("newLineCount counts lines after the last one already shown", () => {
   assert.equal(newLineCount([a, b], [a, b]), 0);
   assert.equal(newLineCount([a], [c, d]), 2);
   assert.equal(newLineCount([b], [b, line("b", "t2"), c]), 1);
+});
+
+test("canScroll knows when an element can still move in the wheel direction", () => {
+  const box = (scrollTop: number) => ({
+    scrollTop,
+    scrollHeight: 1000,
+    clientHeight: 400,
+  });
+  assert.equal(canScroll(box(0), 10), true);
+  assert.equal(canScroll(box(0), -10), false);
+  assert.equal(canScroll(box(600), 10), false);
+  assert.equal(canScroll(box(599), 10), true);
+  assert.equal(canScroll(box(600), -10), true);
+  assert.equal(
+    canScroll({ scrollTop: 0, scrollHeight: 400, clientHeight: 400 }, 10),
+    false,
+  );
+  assert.equal(
+    canScroll({ scrollTop: 0, scrollHeight: 400, clientHeight: 400 }, -10),
+    false,
+  );
 });
