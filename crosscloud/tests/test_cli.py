@@ -1,84 +1,317 @@
+import dataclasses
+import datetime
 import json
-import socket
 
-import fake_ingress
 import pytest
 
-from crosscloud import cli
+from crosscloud import cli, model
+from crosscloud.discover import env
+
+_CANARY = "canary-cli-pw-4e1d"
 
 
-def _free_port():
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-def _write_handoff(tmp_path, port):
-    cloud = tmp_path / "config.cloud.yaml"
-    cloud.write_text(
-        "targets: {gcp: {dbname: shop_b}}\n"
-        "job: {job_id: j, source: aws, target: gcp}\n"
-        f"application: {{control_url: 'http://127.0.0.1:{port}'}}\n"
+def _inventory(cloud="aws", env_entries=None):
+    return model.Inventory(
+        cloud=cloud,
+        collected_at=datetime.datetime(2026, 11, 7, tzinfo=datetime.UTC),
+        resources=(),
+        workloads=(
+            model.Workload(
+                name="request-api",
+                cloud=cloud,
+                platform="ecs" if cloud == "aws" else "cloud_run",
+                native_id="svc",
+                identity_id="role",
+                image=None,
+                code_repo=None,
+                entries=(
+                    model.Entry(kind="http", source_id="tg", attributes=()),
+                ),
+                env=(
+                    (env.classify_env("DB_PASSWORD", _CANARY),)
+                    if env_entries is None
+                    else env_entries
+                ),
+                secret_refs=(),
+                db_user=None,
+                depends_on=(),
+            ),
+        ),
+        grants=(),
+        restrictions=(),
+        restriction_scans=(),
+        couplings=(),
+        omissions=(),
+        attestation=model.CollectionAttestation(
+            secret_value_calls=None,
+            collector_can_read_secret_values=True,
+            cai_viewer_bound=False,
+            suspected_values_retained=0,
+            evidence_ref="not_collected",
+        ),
     )
-    env = tmp_path / "ingress.env"
-    env.write_text(
-        'INGRESS_TARGETS={"aws":{"url":"http://a"},"gcp":{"url":"http://g"},'
-        '"onprem":{"url":"http://a"}}\n'
+
+
+class _Reader:
+    def __init__(self, inventory):
+        self.inventory = inventory
+
+    def read(self):
+        return self.inventory
+
+
+def _run(argv, capsys, inventory=None):
+    made = []
+
+    def make_reader(args):
+        made.append(args)
+        return _Reader(inventory or _inventory())
+
+    code = cli.main(argv, make_reader=make_reader)
+    captured = capsys.readouterr()
+    return code, captured, made
+
+
+def test_discover_prints_inventory_and_report(capsys):
+    code, captured, made = _run(
+        ["discover", "--direction", "aws_to_gcp", "--region", "r"], capsys
     )
-    return cloud, env
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    document = json.loads(captured.out)
+    assert document["inventory"]["cloud"] == "aws"
+    assert document["report"]["direction"] == "aws_to_gcp"
+    assert [d["reason"] for d in document["report"]["decisions"]] == [
+        "plaintext_secret_in_env",
+        "source_not_scanned",
+    ]
+    assert made[0].region == "r"
 
 
-def _args(command, cloud, env, url):
-    return [
-        command,
-        "--cloud-config",
-        str(cloud),
-        "--ingress-env",
-        str(env),
-        "--ingress-control-url",
-        url,
+def test_discover_output_never_contains_env_secret(capsys, tmp_path):
+    output = tmp_path / "discover.json"
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--output",
+            str(output),
+        ],
+        capsys,
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    assert _CANARY not in captured.out + captured.err
+    assert _CANARY not in output.read_text(encoding="utf-8")
+
+
+def test_repo_scan_adds_couplings(capsys, tmp_path):
+    (tmp_path / "config.js").write_text(
+        "require('@aws-sdk/rds-signer');\n", encoding="utf-8"
+    )
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    inventory = json.loads(captured.out)["inventory"]
+    assert [c["rule_id"] for c in inventory["couplings"]] == [
+        "aws-rds-signer-import"
+    ]
+    assert inventory["workloads"][0]["code_repo"] == str(tmp_path)
+
+
+def test_repo_for_unknown_workload_fails(capsys, tmp_path):
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"nope={tmp_path}",
+        ],
+        capsys,
+    )
+
+    assert code == 1
+    assert "nope" in captured.err
+    assert captured.out == ""
+
+
+def test_schema_sql_feeds_support_limits(capsys, tmp_path):
+    schema = tmp_path / "schema.sql"
+    schema.write_text("CREATE TABLE t (id int);", encoding="utf-8")
+    database = model.Resource(
+        kind="postgres_instance",
+        cloud="aws",
+        native_id="db-1",
+        region="r",
+        attributes=(model.KeyValue("engine", "postgres"),),
+        source_of_truth="api",
+    )
+    inventory = dataclasses.replace(_inventory(), resources=(database,))
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--schema-sql",
+            str(schema),
+        ],
+        capsys,
+        inventory=inventory,
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    decisions = json.loads(captured.out)["report"]["decisions"]
+    assert {"subject": "db-1", "signal": "missing_primary_key: public.t"} in [
+        {"subject": d["subject"], "signal": d["signal"]} for d in decisions
     ]
 
 
-def test_ingress_start_points_queue_at_source(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("INGRESS_CONTROL_TOKEN", "t" * 40)
-    fake = fake_ingress.FakeIngress(token="t" * 40)
-    cloud, env = _write_handoff(tmp_path, _free_port())
-    with fake.serve() as url:
-        code = cli.main(_args("ingress-start", cloud, env, url))
+def test_gcp_direction_requires_project(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(
+            ["discover", "--direction", "gcp_to_aws", "--region", "r"],
+            make_reader=lambda args: _Reader(_inventory("gcp")),
+        )
 
-    assert code == 0
-    assert json.loads(capsys.readouterr().out)["target"] == "aws"
-    assert fake.state["mode"] == "running"
-
-
-def test_ingress_start_failure_exits_nonzero(tmp_path, capsys, monkeypatch):
-    monkeypatch.delenv("INGRESS_CONTROL_TOKEN", raising=False)
-    fake = fake_ingress.FakeIngress()
-    fake.state.update(target="gcp", epoch="2")
-    cloud, env = _write_handoff(tmp_path, _free_port())
-    with fake.serve() as url:
-        code = cli.main(_args("ingress-start", cloud, env, url))
-
-    assert code == 1
-    assert "error" in json.loads(capsys.readouterr().out)
+    assert excinfo.value.code == 2
+    assert "--project" in capsys.readouterr().err
 
 
-def test_build_adapter_server_listens_on_control_url_port(tmp_path):
-    port = _free_port()
-    cloud, env = _write_handoff(tmp_path, port)
-    parser = cli.build_parser()
-    args = parser.parse_args(
-        _args("serve-adapter", cloud, env, "http://127.0.0.1:9")
+def test_rejects_unknown_direction(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["discover", "--direction", "aws_to_azure", "--region", "r"])
+
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("direction", "project", "reader_type"),
+    [
+        ("aws_to_gcp", None, "AwsInventoryReader"),
+        ("gcp_to_aws", "p", "GcpInventoryReader"),
+    ],
+)
+def test_default_reader_follows_direction(
+    monkeypatch, direction, project, reader_type
+):
+    monkeypatch.setattr(
+        cli.gcp, "authorized_get_json", lambda: lambda url, params: {}
+    )
+    args = cli.build_parser().parse_args(
+        ["discover", "--direction", direction, "--region", "r"]
+        + (["--project", project] if project else [])
     )
 
-    server = cli.build_server(args)
-    try:
-        assert server.server_address == ("127.0.0.1", port)
-    finally:
-        server.server_close()
+    assert type(cli.make_default_reader(args)).__name__ == reader_type
 
 
-def test_unknown_command_is_usage_error():
-    with pytest.raises(SystemExit):
-        cli.main(["shift-traffic"])
+def test_exit_zero_when_no_human_decision_remains(capsys, tmp_path):
+    (tmp_path / "index.js").write_text("console.log(1);\n", encoding="utf-8")
+
+    code, _, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == 0
+
+
+def test_repo_without_source_files_stays_unscanned(capsys, tmp_path):
+    (tmp_path / "README.md").write_text("docs\n", encoding="utf-8")
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    document = json.loads(captured.out)
+    assert document["inventory"]["workloads"][0]["code_repo"] is None
+    assert [d["reason"] for d in document["report"]["decisions"]] == [
+        "source_not_scanned"
+    ]
+    assert "request-api" in captured.err
+
+
+def test_output_write_failure_is_one_line_error(capsys, tmp_path):
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--output",
+            str(tmp_path / "missing-dir" / "out.json"),
+        ],
+        capsys,
+    )
+
+    assert code == 1
+    assert captured.err.count("\n") == 1
+    assert captured.out == ""
+
+
+def test_skipped_large_source_files_need_decision(capsys, tmp_path):
+    (tmp_path / "index.js").write_text("console.log(1);\n", encoding="utf-8")
+    (tmp_path / "bundle.js").write_bytes(b"x" * (1024 * 1024 + 1))
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    decisions = json.loads(captured.out)["report"]["decisions"]
+    assert [(d["subject"], d["reason"]) for d in decisions] == [
+        ("source_skipped:request-api/bundle.js", "omission")
+    ]
