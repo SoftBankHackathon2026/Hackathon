@@ -7,6 +7,10 @@ discover 는 원본 클라우드를 읽고(파악) 서비스 대응표로 판정
 하나({"inventory": ..., "report": ...})로 낸다. 사람 결정(report.decisions)이
 남아 있으면 결과를 다 낸 뒤 종료 코드 3 으로 멈춘다 — 원가연 전환 도구가
 승인을 기다릴 때 쓰는 코드와 같다.
+
+전환 연결 명령(render-handoff · ingress-start · serve-adapter ·
+prepare-target · ingress-status · ingress-drain-check)은 cutover_cli 가
+맡는다. 결과는 JSON 한 줄이고 종료 코드는 0 성공 · 1 실패·거부다.
 """
 
 import argparse
@@ -21,7 +25,7 @@ import botocore.exceptions
 import google.auth.exceptions
 import requests
 
-from crosscloud import inventory_json, model
+from crosscloud import cutover_cli, inventory_json, model
 from crosscloud.discover import InventoryReader, aws, code_scan, gcp
 from crosscloud.mapping import classify
 
@@ -44,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     """명령줄 해석기를 만든다.
 
     Returns:
-        discover 하위 명령을 가진 해석기.
+        discover 와 전환 연결 하위 명령을 가진 해석기.
     """
     parser = argparse.ArgumentParser(prog="crosscloud")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -69,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument(
         "--output", type=pathlib.Path, help="결과 JSON 파일. 없으면 표준 출력"
     )
+    cutover_cli.add_commands(commands)
     return parser
 
 
@@ -99,11 +104,14 @@ def main(
         make_reader: 인자로 읽기 객체를 만든다. 시험이 가짜로 바꾼다.
 
     Returns:
-        종료 코드. 0 사람 결정 없음, 1 실행 실패, 3 사람 결정 남음.
+        종료 코드. discover: 0 사람 결정 없음, 1 실행 실패, 3 사람 결정
+        남음. 전환 연결 명령: 0 성공, 1 실패·거부(serve-adapter 는 멈추면 0).
         인자 오류는 argparse 가 2 로 끝낸다.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command in cutover_cli.COMMANDS:
+        return cutover_cli.run(args)
     if args.direction == "gcp_to_aws" and not args.project:
         parser.error("gcp_to_aws 에는 --project 가 필요하다")
     try:

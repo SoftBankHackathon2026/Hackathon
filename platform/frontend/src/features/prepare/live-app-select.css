@@ -1,0 +1,157 @@
+.live-apps {
+  min-width: 0;
+  overflow: hidden;
+}
+.live-apps-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px 32px;
+  border-bottom: 1px solid var(--border);
+}
+.live-apps-heading {
+  min-width: 0;
+}
+.live-apps-heading h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-xl);
+}
+.live-apps-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.connection-page .live-apps-head button {
+  flex-shrink: 0;
+  margin: 0;
+  width: auto;
+}
+.live-apps-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 32px;
+  min-height: 280px;
+  box-sizing: border-box;
+}
+.live-apps-symbol {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 20px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 28px;
+}
+.connection-page .live-apps-empty h3 {
+  margin: 0 0 12px;
+  font-size: var(--fs-lg);
+}
+.live-apps-empty p {
+  max-width: 480px;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.live-apps-help {
+  padding: 20px 32px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+}
+.live-apps-help summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.live-apps-help p {
+  margin: 12px 0 0;
+}
+.live-apps-table-wrap {
+  overflow-x: auto;
+  padding: 8px 24px;
+}
+.live-apps .pk-table {
+  min-width: 760px;
+  table-layout: fixed;
+  width: 100%;
+}
+.live-apps .pk-table th:first-child {
+  width: 52px;
+}
+.live-apps .pk-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+.live-apps-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 20px 32px;
+  border-top: 1px solid var(--border);
+}
+.live-apps-footer span {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.connection-page.is-live-apps .appsel-bar {
+  position: static;
+  margin: 0;
+  border-radius: var(--radius-panel);
+  flex-wrap: wrap;
+  padding: 16px 24px;
+}
+.connection-page.is-live-apps .appsel-bar-status {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .live-apps-head {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 24px 20px;
+    gap: 16px;
+  }
+  .connection-page .live-apps-head button {
+    align-self: flex-start;
+  }
+  .live-apps-empty {
+    padding: 36px 20px;
+    min-height: 260px;
+  }
+  .live-apps-help,
+  .live-apps-footer {
+    padding: 20px;
+  }
+  .live-apps-table-wrap {
+    padding: 0 12px;
+  }
+  .connection-page.is-live-apps .appsel-bar-status {
+    flex-basis: 100%;
+  }
+  .connection-page.is-live-apps .appsel-bar {
+    padding: 16px;
+  }
+}
+.connection-page.is-live-apps {
+  align-content: start;
+}
+.connection-page.is-live-apps {
+  grid-auto-rows: max-content;
+  align-items: start;
+}
+.connection-page.is-live-apps .appsel-bar {
+  height: fit-content;
+  min-height: 0;
+  align-self: start;
+}

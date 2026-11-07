@@ -5,7 +5,8 @@ aws-cli `validate-logs`(awscli/customizations/cloudtrail/validation.py)를
 
 *   서명은 S3 메타데이터에서 읽지 않고, 이관 전에 받아 둔 값(bundle)을 쓴다.
 *   공개키는 운영자가 보관한 ListPublicKeys 결과를 입력으로 받는다(지문 →
-    PKCS#1 DER). 검증 대상과 같은 곳에서 온 키는 신뢰 기준이 아니다.
+    DER — PKCS#1 과 SPKI 둘 다 읽는다). 검증 대상과 같은 곳에서 온 키는
+    신뢰 기준이 아니다.
 *   "원래 위치에 있는가" 검사는 경로 대응표 검사로 바꾼다. 객체는 원래
     S3 경로(s3://버킷/키)로 부르고, 새 위치에서 읽는 일은 호출자의 read
     함수가 맡는다. 다이제스트 본문의 경로가 그 원래 경로와 같아야 한다.
@@ -54,6 +55,11 @@ _REQUIRED_DIGEST_FIELDS = (
     "digestEndTime",
     "digestStartTime",
 )
+# aws-cli 는 .get 으로 읽지만 체인 순회가 기대므로 필수로 본다. AWS 가 서명한
+# 다이제스트에는 언제나 있다(첫 다이제스트면 null).
+_REQUIRED_LINK_FIELDS = ("previousDigestS3Bucket", "previousDigestS3Object")
+# 공식 절차는 logFiles.hashAlgorithm 에 적힌 알고리즘으로 해시하라고 한다.
+_LOG_HASH_ALGORITHM = "SHA-256"
 # AWSLogs/<계정>/CloudTrail-Digest/<리전>/YYYY/MM/DD/<이름>_<끝 시각>.json.gz
 # (backfill 은 끝 시각 뒤에 _backfill). 체인은 날짜 디렉토리와 끝 시각을 뺀
 # 나머지가 같은 다이제스트들이다.
@@ -168,7 +174,8 @@ def verify_cloudtrail(
     Args:
         object_uris: 옮긴 모든 객체의 원래 경로(s3://버킷/키). 로그·다이제스트.
         signatures: 다이제스트 원래 경로 → 이관 전에 받아 둔 서명.
-        public_keys: 공개키 지문 → PKCS#1 DER 바이트(ListPublicKeys Value).
+        public_keys: 공개키 지문 → DER 바이트(ListPublicKeys Value, PKCS#1
+            또는 SPKI).
         read: 원래 경로 → 새 위치의 원본 바이트. 없으면 None.
         chain_bounds: 체인 이름 → 이관 시점에 기록한 양 끝(chain_bounds()
             결과). 검증 대상 목록과 따로 보관한 기록이어야 경계 삭제를
@@ -361,7 +368,8 @@ class _ChainVerifier:
         except (OSError, EOFError, zlib.error, ValueError) as e:
             raise _DigestError("gzip JSON 이 아님") from e
         if not isinstance(document, dict) or any(
-            field not in document for field in _REQUIRED_DIGEST_FIELDS
+            field not in document
+            for field in (*_REQUIRED_DIGEST_FIELDS, *_REQUIRED_LINK_FIELDS)
         ):
             raise _DigestError("필수 필드 없음")
         recorded = (
@@ -403,12 +411,21 @@ class _ChainVerifier:
 
     def _verify_logs(self, document: dict[str, Any]) -> list[Finding]:
         findings = []
-        for uri, expected_hash in _log_entries(document):
+        for uri, expected_hash, algorithm in _log_entries(document):
             raw = self._read(uri)
             if raw is None:
                 findings.append(Finding(uri, "log", "missing", "없음"))
-                continue
-            findings.append(_verify_log(uri, raw, expected_hash))
+            elif algorithm != _LOG_HASH_ALGORITHM:
+                findings.append(
+                    Finding(
+                        uri,
+                        "log",
+                        "invalid",
+                        f"지원하지 않는 hashAlgorithm: {algorithm}",
+                    )
+                )
+            else:
+                findings.append(_verify_log(uri, raw, expected_hash))
         return findings
 
 
@@ -456,8 +473,12 @@ def _unique(findings: list[Finding]) -> tuple[Finding, ...]:
     return tuple(unique)
 
 
-def _log_entries(document: dict[str, Any]) -> list[tuple[str, str]]:
-    """다이제스트의 logFiles 를 (원래 경로, 기대 해시) 목록으로 읽는다.
+def _log_entries(
+    document: dict[str, Any],
+) -> list[tuple[str, str, object]]:
+    """다이제스트 logFiles 를 (원래 경로, 기대 해시, hashAlgorithm) 로 읽는다.
+
+    hashAlgorithm 은 값 그대로(없으면 None) 돌려주고, 판정은 로그별로 한다.
 
     Raises:
         _DigestError: logFiles 형식이 틀렸을 때. 없거나 null 이면 빈 목록.
@@ -471,7 +492,11 @@ def _log_entries(document: dict[str, Any]) -> list[tuple[str, str]]:
     ):
         raise _DigestError("logFiles 형식 오류")
     return [
-        (f"s3://{log['s3Bucket']}/{log['s3Object']}", log["hashValue"])
+        (
+            f"s3://{log['s3Bucket']}/{log['s3Object']}",
+            log["hashValue"],
+            log.get("hashAlgorithm"),
+        )
         for log in log_files
     ]
 

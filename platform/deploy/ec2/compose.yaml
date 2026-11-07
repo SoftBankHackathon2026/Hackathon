@@ -58,12 +58,14 @@ services:
       ONEPORT_INGEST_TOKEN_FILE: /etc/oneport/secrets/ingest-token
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
       ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
+      ONEPORT_TRAFFIC_DIR: /etc/oneport/routes
     volumes:
       - ./secrets/database-url:/etc/oneport/secrets/database-url:ro
       - ./secrets/ingest-token:/etc/oneport/secrets/ingest-token:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro
       - ./connection/server:/etc/oneport/connection:ro
+      - ./routes:/etc/oneport/routes
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8320/healthz', headers={'Host': 'localhost'}))"]
       interval: 10s
@@ -122,6 +124,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./sites:/etc/caddy/sites:ro
+      - ./routes:/srv/routes:ro
       - ./connection/public:/srv/releases:ro
       - caddy-data:/data
       - caddy-config:/config

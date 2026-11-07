@@ -6,8 +6,12 @@ import json
 import os
 import subprocess
 import tempfile
+import socket
+import ssl
+import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -19,7 +23,44 @@ MAX_BYTES = 1024 * 1024
 
 
 class EvidenceError(ValueError):
-    pass
+    def __init__(self, code: str, *, http_status: int | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.http_status = http_status
+
+
+APP_ERROR_CODES = frozenset({
+    'APP_URL_INVALID', 'APP_REDIRECT_REFUSED', 'APP_RESPONSE_TOO_LARGE',
+    'APP_RESPONSE_INVALID', 'APP_HTTP_ERROR', 'APP_DB_UNAVAILABLE',
+    'APP_DNS_FAILED', 'APP_TLS_FAILED', 'APP_TIMEOUT', 'APP_CONNECTION_FAILED',
+    'APP_EXECUTION_FAILED', 'APP_OBSERVATION_FAILED',
+})
+
+
+def app_error_detail(error: Exception) -> dict[str, Any]:
+    """Only bounded codes and status numbers cross the evidence boundary."""
+    if isinstance(error, EvidenceError) and error.code in APP_ERROR_CODES:
+        detail: dict[str, Any] = {'code': error.code}
+        if type(error.http_status) is int and 100 <= error.http_status <= 599:
+            detail['http_status'] = error.http_status
+        return detail
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        code = 'APP_TIMEOUT'
+    elif isinstance(reason, socket.gaierror):
+        code = 'APP_DNS_FAILED'
+    elif isinstance(reason, ssl.SSLError):
+        code = 'APP_TLS_FAILED'
+    elif isinstance(reason, (ConnectionError, OSError)):
+        code = 'APP_CONNECTION_FAILED'
+    elif isinstance(reason, subprocess.TimeoutExpired):
+        code = 'APP_TIMEOUT'
+    elif isinstance(reason, subprocess.SubprocessError):
+        code = 'APP_EXECUTION_FAILED'
+    else:
+        code = 'APP_OBSERVATION_FAILED'
+    return {'code': code}
+
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -33,11 +74,31 @@ def app_info(url: str) -> dict[str, Any]:
             parsed.username or parsed.password or parsed.query or parsed.fragment):
         raise EvidenceError("APP_URL_INVALID")
     request = Request(url.rstrip('/') + '/api/info', headers={'Accept': 'application/json'})
-    with build_opener(NoRedirect()).open(request, timeout=10) as response:
-        raw = response.read(MAX_BYTES + 1)
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=10) as response:
+            raw = response.read(MAX_BYTES + 1)
+    except HTTPError as error:
+        # Never persist an arbitrary response body, endpoint or exception message.
+        code = 'APP_HTTP_ERROR'
+        try:
+            body = json.loads(error.read(4097))
+            if (error.code == 503 and isinstance(body, dict)
+                    and isinstance(body.get('error'), dict)
+                    and body['error'].get('code') == 'DB_UNAVAILABLE'):
+                code = 'APP_DB_UNAVAILABLE'
+        except (ValueError, OSError):
+            pass
+        finally:
+            error.close()
+        raise EvidenceError(code, http_status=error.code) from None
+    except (URLError, OSError) as error:
+        raise EvidenceError(app_error_detail(error)['code']) from None
     if len(raw) > MAX_BYTES:
         raise EvidenceError("APP_RESPONSE_TOO_LARGE")
-    result = json.loads(raw)
+    try:
+        result = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise EvidenceError('APP_RESPONSE_INVALID') from None
     if not isinstance(result, dict):
         raise EvidenceError("APP_RESPONSE_INVALID")
     return result
@@ -100,6 +161,7 @@ def collect(config: Config, *, identifier: str, region: str, approved_locations:
         # Never persist raw SDK/HTTP/CLI errors, endpoints or credentials.
         for name in ('target_db_exposure', 'target_location'):
             checks[name] = pc.build_check('error', {'code': 'RDS_EVIDENCE_UNAVAILABLE'}, source='aws-rds')
+    app_started = time.monotonic()
     try:
         info = app_reader()
         db = info['database']
@@ -109,9 +171,10 @@ def collect(config: Config, *, identifier: str, region: str, approved_locations:
         valid = (db['name'] == target.dbname and info['environment'] == app_environment and valid_count)
         checks['target_app_db'] = pc.build_check('pass' if valid else 'fail',
             {'db_connected': valid, 'order_query_ok': valid}, source='target-app.api-info')
-    except Exception:
-        checks['target_app_db'] = pc.build_check('error', {'code': 'APP_EVIDENCE_UNAVAILABLE'},
-                                               source='target-app.api-info')
+    except Exception as error:
+        detail = app_error_detail(error)
+        detail['duration_ms'] = max(0, round((time.monotonic() - app_started) * 1000))
+        checks['target_app_db'] = pc.build_check('error', detail, source='target-app.api-info')
     doc = {'job_id': config.job.job_id, 'plan': plan, 'checks': checks}
     if pc.validate_input(pc.build_input(job_id=config.job.job_id, stage='pre_cutover',
                                        plan=plan, checks=checks)):

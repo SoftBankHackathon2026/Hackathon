@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::{
     fs::{self, OpenOptions},
     io::{Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpStream, ToSocketAddrs},
     os::unix::{
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
         io::AsRawFd,
@@ -21,6 +21,9 @@ use std::{
     time::Duration,
 };
 use zeroize::Zeroizing;
+
+const RECOVERY_DELAY: Duration = Duration::from_secs(5);
+const BROKER_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -167,7 +170,7 @@ fn collect(
     target: Option<&str>,
     key: &PKey<Private>,
     api_base: &str,
-) -> Result<Value> {
+) -> Result<Option<Value>> {
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Condvar, Mutex,
@@ -175,7 +178,7 @@ fn collect(
     let valid = AtomicBool::new(true);
     let stop = Mutex::new(false);
     let wake = Condvar::new();
-    std::thread::scope(|scope| {
+    let result = std::thread::scope(|scope| {
         scope.spawn(|| loop {
             let done = stop.lock().unwrap();
             let (done, _) = wake
@@ -211,11 +214,12 @@ fn collect(
         let result = collect_raw(c, base, s, op, target, &valid);
         *stop.lock().unwrap() = true;
         wake.notify_all();
-        if !valid.load(Ordering::Acquire) {
-            return Err("collection authorization lost".into());
-        }
         result
-    })
+    });
+    if !valid.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    result.map(Some)
 }
 fn establish(
     c: &Config,
@@ -224,58 +228,74 @@ fn establish(
     s: &mut Local,
     key: &PKey<Private>,
     policy: &Policy,
-) -> Result<Binding> {
-    let cert = crypto::certificate(key)?;
-    let client = transport::client(&asset(base, &c.root_ca)?, key, &cert)?;
-    let stream = TcpStream::connect((c.broker_host.as_str(), c.broker_port))?;
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
-    let mut tls = client.connect(&c.broker_host, stream)?;
-    transport::enforce(tls.ssl())?;
-    transport::peer_public(&tls)?;
+) -> std::result::Result<Binding, &'static str> {
+    let stream = (c.broker_host.as_str(), c.broker_port)
+        .to_socket_addrs()
+        .map_err(|_| "broker-dns")?
+        .find_map(|addr| TcpStream::connect_timeout(&addr, BROKER_TIMEOUT).ok())
+        .ok_or("broker-connect")?;
+    let mut tls = (|| -> Result<_> {
+        let cert = crypto::certificate(key)?;
+        let client = transport::client(&asset(base, &c.root_ca)?, key, &cert)?;
+        stream.set_read_timeout(Some(BROKER_TIMEOUT))?;
+        stream.set_write_timeout(Some(BROKER_TIMEOUT))?;
+        let tls = client.connect(&c.broker_host, stream)?;
+        transport::enforce(tls.ssl())?;
+        transport::peer_public(&tls)?;
+        Ok(tls)
+    })()
+    .map_err(|_| "broker-tls")?;
     eprintln!("TUNNEL_TLS_VERIFIED protocol=TLSv1.3 group=X25519MLKEM768 peer_auth=MLDSA65");
     if s.epoch > 0 {
-        let (private, public) = crypto::wg_key()?;
+        let (private, public) = crypto::wg_key().map_err(|_| "local-key")?;
         s.wireguard_private = private.to_string();
         s.wireguard_public = public;
-        save(dir, s)?;
+        save(dir, s).map_err(|_| "local-state")?;
     }
     protocol::send(
         &mut tls,
         &json!({"type":"BIND","request_id":s.request_id,"client_wireguard_public_key":s.wireguard_public}),
-    )?;
-    let prepared: Value = protocol::recv(&mut tls)?;
+    )
+    .map_err(|_| "broker-prepare")?;
+    let prepared: Value = protocol::recv(&mut tls).map_err(|_| "broker-prepare")?;
     if prepared["type"] != "PREPARE" {
-        return Err("broker prepare missing".into());
+        return Err("broker-prepare");
     }
-    let binding: Binding = serde_json::from_value(prepared["binding"].clone())?;
-    binding.validate(
-        s.device_id.as_deref().ok_or("device missing")?,
-        &s.wireguard_public,
-        s.epoch,
-    )?;
+    let binding: Binding =
+        serde_json::from_value(prepared["binding"].clone()).map_err(|_| "broker-binding")?;
+    binding
+        .validate(
+            s.device_id.as_deref().ok_or("local-state")?,
+            &s.wireguard_public,
+            s.epoch,
+        )
+        .map_err(|_| "broker-binding")?;
     if binding.client_tunnel_address != policy.local_address.to_string()
         || binding.gateway_tunnel_address != policy.peer_address.to_string()
         || binding.allowed_services_digest
             != format!(
                 "sha384:{}",
-                crypto::digest(&protocol::canonical(
-                    &json!({"job_port":policy.job_port,"probe_port":policy.probe_port})
-                )?)
+                crypto::digest(
+                    &protocol::canonical(
+                        &json!({"job_port":policy.job_port,"probe_port":policy.probe_port})
+                    )
+                    .map_err(|_| "network-policy")?
+                )
             )
     {
-        return Err("network policy mismatch".into());
+        return Err("network-policy");
     }
-    let psk = transport::exporter(&tls, &binding)?;
+    let psk = transport::exporter(&tls, &binding).map_err(|_| "tls-key-derivation")?;
     eprintln!("TUNNEL_PSK_DERIVED source=TLS-exporter context=SHA384 bytes=32");
-    protocol::send(&mut tls, &json!({"type":"PREPARE","epoch":binding.epoch}))?;
-    let commit: Value = protocol::recv(&mut tls)?;
+    protocol::send(&mut tls, &json!({"type":"PREPARE","epoch":binding.epoch}))
+        .map_err(|_| "broker-commit")?;
+    let commit: Value = protocol::recv(&mut tls).map_err(|_| "broker-commit")?;
     if commit["type"] != "COMMIT" || commit["epoch"] != binding.epoch {
-        return Err("commit mismatch".into());
+        return Err("broker-commit");
     }
     s.epoch = binding.epoch;
     s.connection_id = Some(binding.connection_id.clone());
-    save(dir, s)?;
+    save(dir, s).map_err(|_| "local-state")?;
     let started = migration_connector::now_ms() / 1000;
     let req = Request {
         operation: "configure".into(),
@@ -283,27 +303,34 @@ fn establish(
         epoch: binding.epoch,
         private_key: Some(s.wireguard_private.clone()),
         public_key: Some(
-            STANDARD.encode(crypto::decode(&binding.gateway_wireguard_public_key, 32)?),
+            STANDARD.encode(
+                crypto::decode(&binding.gateway_wireguard_public_key, 32)
+                    .map_err(|_| "broker-binding")?,
+            ),
         ),
         psk: Some(STANDARD.encode(&psk[..])),
         key_expires_at_ms: binding.expires_at_ms,
     };
-    network::helper(Path::new(&c.helper_path), &req)?;
+    network::helper(Path::new(&c.helper_path), &req).map_err(|_| "wireguard-configure")?;
     drop(req);
     drop(psk);
-    protocol::send(&mut tls, &json!({"type":"COMMIT","epoch":binding.epoch}))?;
-    network::probe(policy, prepared["nonce"].as_str().ok_or("probe nonce")?)?;
-    let status = network::helper(Path::new(&c.helper_path), &net_req("status", s))?;
+    protocol::send(&mut tls, &json!({"type":"COMMIT","epoch":binding.epoch}))
+        .map_err(|_| "broker-commit")?;
+    network::probe(policy, prepared["nonce"].as_str().ok_or("wireguard-probe")?)
+        .map_err(|_| "wireguard-probe")?;
+    let status = network::helper(Path::new(&c.helper_path), &net_req("status", s))
+        .map_err(|_| "wireguard-handshake")?;
     if status["handshake_at"].as_u64().unwrap_or(0) < started {
-        return Err("new WireGuard handshake missing".into());
+        return Err("wireguard-handshake");
     }
     protocol::send(
         &mut tls,
         &json!({"type":"STATUS","epoch":binding.epoch,"checks":2}),
-    )?;
-    let ready: Value = protocol::recv(&mut tls)?;
+    )
+    .map_err(|_| "broker-ready")?;
+    let ready: Value = protocol::recv(&mut tls).map_err(|_| "broker-ready")?;
     if ready["type"] != "STATUS" || ready["ready"] != true {
-        return Err("broker not ready".into());
+        return Err("broker-ready");
     }
     eprintln!(
         "TUNNEL_READY epoch={} bidirectional_checks=2 wireguard_handshake=fresh",
@@ -331,6 +358,157 @@ fn cleanup(c: &Config, dir: &Path, s: &Local, key: &PKey<Private>) -> Result<()>
     )?;
     Ok(())
 }
+fn retryable_control_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    match error.downcast_ref::<ureq::Error>() {
+        Some(ureq::Error::Status(408 | 429 | 500..=599, _)) => true,
+        Some(ureq::Error::Transport(error)) => matches!(
+            error.kind(),
+            ureq::ErrorKind::Dns
+                | ureq::ErrorKind::ConnectionFailed
+                | ureq::ErrorKind::Io
+                | ureq::ErrorKind::BadStatus
+                | ureq::ErrorKind::ProxyConnect
+        ),
+        _ => error.is::<std::io::Error>(),
+    }
+}
+
+fn control_status(c: &Config, s: &Local, key: &PKey<Private>) -> Result<Option<Value>> {
+    match api::device(
+        &c.public_api_url,
+        &s.request_id,
+        &s.candidate_id,
+        key,
+        "status",
+        json!({}),
+    ) {
+        Ok(status) => Ok(Some(status)),
+        Err(error) if retryable_control_error(error.as_ref()) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn retry_tunnel(stage: &str) {
+    eprintln!("TUNNEL_RECOVERY_REQUIRED stage={stage}");
+    std::thread::sleep(RECOVERY_DELAY);
+}
+
+fn remove_tunnel(c: &Config, state: &Local) -> Result<()> {
+    if state.connection_id.is_some() {
+        network::helper(Path::new(&c.helper_path), &net_req("remove", state)).map_err(|error| {
+            eprintln!("TUNNEL_CLEANUP_FAILED stage=wireguard-remove");
+            error
+        })?;
+    }
+    Ok(())
+}
+
+enum SessionExit {
+    Rotate,
+    Revoked,
+    Recover(&'static str),
+}
+
+fn serve_tunnel(
+    c: &Config,
+    base: &Path,
+    state: &Local,
+    key: &PKey<Private>,
+    policy: &Policy,
+    binding: &Binding,
+) -> Result<SessionExit> {
+    let tunnel = SocketAddr::new(policy.peer_address, policy.job_port);
+    let api_base = format!("http://{tunnel}/api/v1/connections");
+    let request = &state.request_id;
+    let Some(found) = collect(c, base, state, "discover", None, key, &api_base)? else {
+        return Ok(SessionExit::Recover("discovery-lease"));
+    };
+    if api::device(
+        &api_base,
+        request,
+        &state.candidate_id,
+        key,
+        "discovered",
+        json!({"environments":found["discovered"]}),
+    )
+    .is_err()
+    {
+        return Ok(SessionExit::Recover("discovery-relay"));
+    }
+    let mut last_lease = None::<std::time::Instant>;
+    let mut completed = std::collections::HashSet::new();
+    loop {
+        if migration_connector::now_ms() >= binding.expires_at_ms.saturating_sub(300000) {
+            return Ok(SessionExit::Rotate);
+        }
+        if last_lease.is_none_or(|last| last.elapsed() >= Duration::from_secs(20)) {
+            let Some(status) = control_status(c, state, key)? else {
+                return Ok(SessionExit::Recover("control-status"));
+            };
+            match status["snapshot"]["device"].as_str() {
+                Some("REVOKED" | "REJECTED") => return Ok(SessionExit::Revoked),
+                Some("APPROVED") => {}
+                _ => return Err("unexpected device status".into()),
+            }
+            if status["snapshot"]["tunnel"] != "READY"
+                || status["snapshot"]["epoch"].as_u64() != Some(state.epoch)
+            {
+                return Ok(SessionExit::Recover("tunnel-status"));
+            }
+            if network::helper(Path::new(&c.helper_path), &net_req("refresh", state)).is_err() {
+                return Ok(SessionExit::Recover("wireguard-lease"));
+            }
+            last_lease = Some(std::time::Instant::now());
+        }
+        let response = match api::device(
+            &api_base,
+            request,
+            &state.candidate_id,
+            key,
+            "poll",
+            json!({}),
+        ) {
+            Ok(value) => value,
+            Err(_) => return Ok(SessionExit::Recover("job-poll")),
+        };
+        if !response["task"].is_null() {
+            let task = &response["task"];
+            let device = state.device_id.as_deref().ok_or("device missing")?;
+            let op = protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
+            let job = task["payload"]["job_id"].as_str().ok_or("job id")?;
+            if !completed.contains(job) {
+                let Some(result) = collect(
+                    c,
+                    base,
+                    state,
+                    op,
+                    task["payload"]["target_id"].as_str(),
+                    key,
+                    &api_base,
+                )?
+                else {
+                    return Ok(SessionExit::Recover("inventory-lease"));
+                };
+                protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
+                if api::device(
+                    &api_base,
+                    request,
+                    &state.candidate_id,
+                    key,
+                    "inventory",
+                    json!({"job_id":job,"report":result["report"]}),
+                )
+                .is_err()
+                {
+                    return Ok(SessionExit::Recover("inventory-relay"));
+                }
+                completed.insert(job.to_string());
+            }
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
 fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
     if config_path.file_name().and_then(|n| n.to_str()) != Some("connector.json") {
         return Err("signed connector.json required".into());
@@ -509,140 +687,45 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
         network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
     )?;
     policy.validate()?;
-    // A web revocation during administrator approval/package installation must
-    // stop the flow before any tunnel is configured.
-    let status = api::device(
-        &c.public_api_url,
-        &request,
-        &state.candidate_id,
-        &key,
-        "status",
-        json!({}),
-    )?;
-    if status["snapshot"]["device"] != "APPROVED" {
-        cleanup(&c, &dir, &state, &key)?;
-        return Err("device approval revoked during host preparation".into());
-    }
-    if state.connection_id.is_some() {
-        network::helper(Path::new(&c.helper_path), &net_req("remove", &state))?;
-    }
+    remove_tunnel(&c, &state)?;
     loop {
-        let binding = match establish(&c, base, &dir, &mut state, &key, &policy) {
-            Ok(b) => b,
-            Err(_) => {
-                let _ = network::helper(Path::new(&c.helper_path), &net_req("remove", &state));
-                eprintln!("TUNNEL_RECOVERY_REQUIRED");
-                std::thread::sleep(Duration::from_secs(5));
-                let st = api::device(
-                    &c.public_api_url,
-                    &request,
-                    &state.candidate_id,
-                    &key,
-                    "status",
-                    json!({}),
-                )?;
-                if st["snapshot"]["device"] != "APPROVED" {
-                    cleanup(&c, &dir, &state, &key)?;
-                    return Ok(());
-                }
-                continue;
-            }
+        // Require fresh approval before opening a new tunnel, including after
+        // administrator installation, key rotation, and interrupted recovery.
+        let Some(status) = control_status(&c, &state, &key).map_err(|error| {
+            eprintln!("TUNNEL_CONTROL_REJECTED stage=control-status");
+            error
+        })?
+        else {
+            retry_tunnel("control-status");
+            continue;
         };
-        println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
-        let tunnel = format!(
-            "http://{}",
-            SocketAddr::new(policy.peer_address, policy.job_port)
-        );
-        let api_base = format!("{tunnel}/api/v1/connections");
-        let found = collect(&c, base, &state, "discover", None, &key, &api_base)?;
-        api::device(
-            &api_base,
-            &request,
-            &state.candidate_id,
-            &key,
-            "discovered",
-            json!({"environments":found["discovered"]}),
-        )?;
-        let mut last_lease = 0;
-        let mut completed = std::collections::HashSet::new();
-        loop {
-            let now = migration_connector::now_ms();
-            if now >= binding.expires_at_ms.saturating_sub(300000) {
-                break;
-            }
-            if now - last_lease >= 20000 {
-                let status = api::device(
-                    &c.public_api_url,
-                    &request,
-                    &state.candidate_id,
-                    &key,
-                    "status",
-                    json!({}),
-                )?;
-                if status["snapshot"]["device"] != "APPROVED" {
-                    cleanup(&c, &dir, &state, &key)?;
-                    return Ok(());
-                }
-                if status["snapshot"]["tunnel"] != "READY"
-                    || status["snapshot"]["epoch"].as_u64() != Some(state.epoch)
-                {
-                    break;
-                }
-                network::helper(Path::new(&c.helper_path), &net_req("refresh", &state))?;
-                last_lease = now;
-            }
-            let response = match api::device(
-                &api_base,
-                &request,
-                &state.candidate_id,
-                &key,
-                "poll",
-                json!({}),
-            ) {
-                Ok(v) => v,
-                Err(_) => break,
-            };
-            if !response["task"].is_null() {
-                let task = &response["task"];
-                let op = protocol::verify_job(
-                    task,
-                    &c.job_public_key,
-                    state.device_id.as_deref().ok_or("device missing")?,
-                    state.epoch,
-                )?;
-                let job = task["payload"]["job_id"].as_str().ok_or("job id")?;
-                if !completed.contains(job) {
-                    let result = collect(
-                        &c,
-                        base,
-                        &state,
-                        op,
-                        task["payload"]["target_id"].as_str(),
-                        &key,
-                        &api_base,
-                    )?;
-                    protocol::verify_job(
-                        task,
-                        &c.job_public_key,
-                        state.device_id.as_deref().ok_or("device missing")?,
-                        state.epoch,
-                    )?;
-                    api::device(
-                        &api_base,
-                        &request,
-                        &state.candidate_id,
-                        &key,
-                        "inventory",
-                        json!({"job_id":job,"report":result["report"]}),
-                    )?;
-                    completed.insert(job.to_string());
-                }
-            }
-            std::thread::sleep(Duration::from_secs(2));
+        match status["snapshot"]["device"].as_str() {
+            Some("APPROVED") => {}
+            Some("REVOKED" | "REJECTED") => return cleanup(&c, &dir, &state, &key),
+            _ => return Err("unexpected device status".into()),
         }
-        let _ = network::helper(Path::new(&c.helper_path), &net_req("remove", &state));
+        let outcome = match establish(&c, base, &dir, &mut state, &key, &policy) {
+            Ok(binding) => {
+                println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
+                serve_tunnel(&c, base, &state, &key, &policy, &binding)
+            }
+            Err(stage) => Ok(SessionExit::Recover(stage)),
+        };
+        match outcome {
+            Ok(SessionExit::Revoked) => return cleanup(&c, &dir, &state, &key),
+            Ok(SessionExit::Rotate) => remove_tunnel(&c, &state)?,
+            Ok(SessionExit::Recover(stage)) => {
+                remove_tunnel(&c, &state)?;
+                retry_tunnel(stage);
+            }
+            Err(error) => {
+                remove_tunnel(&c, &state)?;
+                return Err(error);
+            }
+        }
     }
 }
+
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
@@ -690,4 +773,31 @@ fn vector() -> Result<()> {
         json!({"seed":crypto::b64(&[7u8;32]),"public_key":crypto::b64(&key.raw_public_key()?),"message":String::from_utf8_lossy(data),"signature":crypto::sign(&key,data)?})
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_control_failures_retry_but_rejections_do_not() {
+        for (status, retry) in [
+            (408, true),
+            (429, true),
+            (503, true),
+            (401, false),
+            (403, false),
+            (404, false),
+        ] {
+            let response = ureq::Response::new(status, "", "{}").unwrap();
+            assert_eq!(
+                retryable_control_error(&ureq::Error::Status(status, response)),
+                retry
+            );
+        }
+        let timeout = std::io::Error::from(std::io::ErrorKind::TimedOut);
+        assert!(retryable_control_error(&ureq::Error::from(timeout)));
+        let malformed = serde_json::from_str::<Value>("malformed").unwrap_err();
+        assert!(!retryable_control_error(&malformed));
+    }
 }

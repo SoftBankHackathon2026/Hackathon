@@ -1,0 +1,467 @@
+"""원가연 앱 제어 API 6개를 durable-ingress 제어 API 로 옮기는 어댑터.
+
+migration.cloud 는 config.cloud.yaml 의 application.control_url 로 이 어댑터를
+부른다(계약: migration/CLOUD_MIGRATION.md「앱 제어 API 계약」, 클라이언트:
+migration/worker_client.py). 어댑터는 플랫폼을 바꾸지 않는다. 쓰기는 접수
+큐(durable-ingress)가 앱으로 전달하는 것을 멈추고 다시 여는 것으로 다룬다
+(설계 0.1 S15).
+
+| 앱 제어 API        | 접수 큐 제어 API                                       |
+|--------------------|--------------------------------------------------------|
+| GET /status        | GET /status → state·target·known_targets·in_flight     |
+| POST /pause        | POST /pause (settled:true 확인)                        |
+| POST /drain        | GET /status 를 paused·in_flight 0 이 될 때까지 되풀이  |
+| POST /target       | 대상 앱 DB 신원 확인 → POST /target (expected_epoch)   |
+| POST /resume       | POST /resume (expected_epoch). 대상 라벨일 때만        |
+| GET /healthz       | 큐 running·오류 없음 + 대상 앱 DB 신원, 연속 N 회      |
+
+대상 앱 DB 신원은 /readyz 와 /api/info 의 database.name(·environment)으로
+본다(원가연 check_app_ready). 접수 큐의 대상 이름은 기본으로 클라우드
+라벨(aws·gcp)과 같고, 다르면 설정으로 대응한다. 응답이 모호하거나 접수
+큐 호출이 실패하면 성공으로 답하지 않는다(502·409·503). 127.0.0.1 에서만
+듣는다.
+
+  config = control_adapter.load_adapter_config(cloud_yaml, ingress_env)
+  adapter = control_adapter.ControlAdapter(config, ingress)
+  control_adapter.make_server(adapter, config.port).serve_forever()
+"""
+
+import collections.abc
+import dataclasses
+import http.server
+import json
+import pathlib
+import threading
+import time
+import urllib.parse
+from typing import Any
+
+import yaml
+
+from crosscloud import health_probe, ingress_control, model
+
+Reply = tuple[int, dict[str, Any]]
+
+_LISTEN_HOST = "127.0.0.1"
+_APP_TIMEOUT_SECONDS = 3.0
+# /healthz 표본 하나의 최악 시간(큐 상태 + 앱 /readyz·/api/info)과 응답 직전
+# 재확인 시간.
+_SAMPLE_WORST_SECONDS = (
+    ingress_control.CALL_TIMEOUT_SECONDS + 2 * _APP_TIMEOUT_SECONDS
+)
+_RECHECK_WORST_SECONDS = ingress_control.CALL_TIMEOUT_SECONDS
+_SAMPLE_INTERVAL_SECONDS = 1.0
+_DRAIN_POLL_SECONDS = 0.5
+_MAX_BODY_BYTES = 65536
+
+
+@dataclasses.dataclass(frozen=True)
+class AdapterConfig:
+    """어댑터 설정. 값은 config.cloud.yaml·ingress.env 에서 읽는다.
+
+    Attributes:
+        source: 원본 라벨(job.source).
+        target: 대상 라벨(job.target).
+        port: 들을 포트(application.control_url 의 포트).
+        source_app_url: 원본 앱 주소(INGRESS_TARGETS[source].url).
+        target_app_url: 대상 앱 주소(INGRESS_TARGETS[target].url). 대상
+            DB(B) 프로필로 미리 띄운 배포다.
+        target_database: 대상 앱이 붙어야 할 DB 이름(targets.<대상>.dbname).
+        target_environment: 대상 앱 DEPLOY_ENV. None 이면 보지 않는다.
+        source_ingress_name: 원본 라벨의 접수 큐 대상 이름. None 이면 라벨.
+        target_ingress_name: 대상 라벨의 접수 큐 대상 이름. None 이면 라벨.
+        readiness_successes: /healthz 가 요구하는 연속 성공 수.
+        readiness_deadline_seconds: 연속 성공을 기다리는 상한. 원가연 HTTP
+            한도(30초)보다 짧아야 한다.
+    """
+
+    source: model.Cloud
+    target: model.Cloud
+    port: int
+    source_app_url: str
+    target_app_url: str
+    target_database: str
+    target_environment: str | None = None
+    source_ingress_name: str | None = None
+    target_ingress_name: str | None = None
+    readiness_successes: int = 3
+    readiness_deadline_seconds: float = 25.0
+
+    def app_url(self, label: str) -> str | None:
+        """라벨의 앱 주소. 이 job 의 라벨이 아니면 None."""
+        return {
+            self.source: self.source_app_url,
+            self.target: self.target_app_url,
+        }.get(label)
+
+    def ingress_name(self, label: str) -> str:
+        """라벨에 대응하는 접수 큐 대상 이름."""
+        names = {
+            self.source: self.source_ingress_name or self.source,
+            self.target: self.target_ingress_name or self.target,
+        }
+        return names[label]
+
+    def label_of(self, ingress_name: str) -> str | None:
+        """접수 큐 대상 이름의 라벨. 이 job 의 것이 아니면 None."""
+        for label in (self.source, self.target):
+            if self.ingress_name(label) == ingress_name:
+                return label
+        return None
+
+
+class ControlAdapter:
+    """앱 제어 API 한 벌. 메서드는 (HTTP 코드, JSON 본문)을 돌려준다."""
+
+    def __init__(
+        self,
+        config: AdapterConfig,
+        ingress: ingress_control.IngressControl,
+        *,
+        inspect_app: collections.abc.Callable[
+            ..., tuple[str, ...]
+        ] = health_probe.app_identity_problems,
+        clock: collections.abc.Callable[[], float] = time.monotonic,
+        sleep: collections.abc.Callable[[float], None] = time.sleep,
+    ) -> None:
+        """설정과 접수 큐 클라이언트를 받는다."""
+        self._config = config
+        self._ingress = ingress
+        self._inspect_app = inspect_app
+        self._clock = clock
+        self._sleep = sleep
+        # 바꾸는 호출(pause·target·resume)은 한 번에 하나만.
+        self._changing = threading.Lock()
+
+    def status(self) -> Reply:
+        """GET /status."""
+        return self._guard(lambda: (200, self._app_status(self._read())))
+
+    def pause(self) -> Reply:
+        """POST /pause — 새 전달을 멈춘다. 접수(202)는 계속된다."""
+        return self._changed(lambda: (200, self._app_status(self._pause())))
+
+    def drain(self, payload: dict[str, Any]) -> Reply:
+        """POST /drain {"timeout": 초} — paused·in_flight 0 을 기다린다."""
+        timeout = payload.get("timeout")
+        if type(timeout) not in (int, float) or not 0 < timeout <= 600:
+            return 400, {"error": "timeout 은 0 초과 600 이하 숫자"}
+        return self._guard(lambda: self._drain(float(timeout)))
+
+    def target(self, payload: dict[str, Any]) -> Reply:
+        """POST /target {"target": 라벨} — 대상 앱이 준비됐으면 큐를 돌린다."""
+        label = payload.get("target")
+        if label != self._config.target:
+            return 409, {"error": f"대상 라벨({self._config.target})만 허용"}
+        return self._changed(lambda: self._switch(label))
+
+    def resume(self) -> Reply:
+        """POST /resume — 큐가 대상 라벨을 가리킬 때만 전달을 재개한다."""
+        return self._changed(self._resume)
+
+    def healthz(self) -> Reply:
+        """GET /healthz — 큐가 전달 중이고 그 대상 앱이 준비됐는지 연속 N 회."""
+        return self._guard(self._healthz)
+
+    def start_on_source(self) -> Reply:
+        """전환 전 준비: 새로 뜬 큐를 원본 라벨로 돌리고 전달을 연다.
+
+        durable-ingress 는 처음에 'onprem' 대상·paused 로 뜬다. 대상 라벨로
+        이미 돌았으면(전환 뒤) 원본으로 되돌리지 않고 409 를 낸다.
+        """
+        return self._changed(self._start_on_source)
+
+    def _read(self) -> ingress_control.IngressState:
+        return self._ingress.status()
+
+    def _pause(self) -> ingress_control.IngressState:
+        self._ingress.pause()
+        state = self._read()
+        if state.mode != "paused":
+            raise ingress_control.IngressError("pause 뒤에도 paused 가 아니다")
+        return state
+
+    def _drain(self, timeout: float) -> Reply:
+        deadline = self._clock() + timeout
+        while True:
+            state = self._read()
+            settled = state.mode == "paused" and state.in_flight == 0
+            if settled or self._clock() >= deadline:
+                body = {"settled": settled, **self._app_status(state)}
+                return (200 if settled else 409), body
+            self._sleep(_DRAIN_POLL_SECONDS)
+
+    def _switch(self, label: str) -> Reply:
+        state = self._read()
+        if state.mode != "paused" or state.in_flight:
+            return 409, {"error": "큐가 paused·in_flight 0 이 아니다"}
+        if self._label(state) == label:
+            return 200, self._app_status(state)
+        problems = self._inspect_app(
+            self._config.target_app_url,
+            database=self._config.target_database,
+            environment=self._config.target_environment,
+            timeout=_APP_TIMEOUT_SECONDS,
+        )
+        if problems:
+            return 503, {"error": "대상 앱 확인 실패: " + "; ".join(problems)}
+        self._ingress.set_target(self._config.ingress_name(label), state.epoch)
+        switched = self._read()
+        if self._label(switched) != label or switched.mode != "paused":
+            raise ingress_control.IngressError("target 변경이 반영되지 않았다")
+        return 200, self._app_status(switched)
+
+    def _resume(self) -> Reply:
+        # 변경 뒤 epoch 를 다시 읽어 보낸다(어긋나면 EPOCH_CONFLICT → 실패).
+        state = self._read()
+        if self._label(state) != self._config.target:
+            return 409, {
+                "error": f"큐가 {state.target} 을 가리킨다 — 대상"
+                f" {self._config.target} 에서만 재개한다"
+            }
+        if state.mode == "paused":
+            self._ingress.resume(state.epoch)
+            state = self._read()
+        if state.mode != "running":
+            raise ingress_control.IngressError(
+                "resume 뒤에도 running 이 아니다"
+            )
+        return 200, self._app_status(state)
+
+    def _healthz(self) -> Reply:
+        # 표본마다 ① 큐가 대상 라벨로 전달 중이고 오류가 없는지 ② 대상 앱이
+        # 준비됐고 대상 DB(이름)에 붙었는지 본다. resume 직후 첫 전달 실패로
+        # 큐가 스스로 멈춘 경우를 넘기지 않게, 연속 N 회 뒤 응답 직전에 ① 을
+        # 한 번 더 본다. 전체는 readiness_deadline_seconds 안에 끝난다(원가연
+        # HTTP 한도 30초). 큐가 원본을 가리키면 바로 unhealthy 다.
+        started = self._clock()
+        label = self._label(self._read())
+        if label != self._config.target:
+            return 503, {"healthy": False, "target": label}
+
+        def sample() -> bool:
+            return self._delivering(label) and not self._inspect_app(
+                self._config.target_app_url,
+                database=self._config.target_database,
+                environment=self._config.target_environment,
+                timeout=_APP_TIMEOUT_SECONDS,
+            )
+
+        sampling_budget = (
+            self._config.readiness_deadline_seconds
+            - (self._clock() - started)
+            - _SAMPLE_WORST_SECONDS
+            - _RECHECK_WORST_SECONDS
+        )
+        streak = health_probe.consecutive_successes(
+            sample,
+            needed=self._config.readiness_successes,
+            deadline_seconds=sampling_budget,
+            interval=_SAMPLE_INTERVAL_SECONDS,
+            clock=self._clock,
+            sleep=self._sleep,
+        )
+        healthy = (
+            streak >= self._config.readiness_successes
+            and self._delivering(label)
+        )
+        return (200 if healthy else 503), {"healthy": healthy, "target": label}
+
+    def _delivering(self, label: str) -> bool:
+        # last_error 는 오류가 없을 때만 None 이다(멈춤 사유·DELIVERY_RETRY).
+        try:
+            state = self._read()
+        except ingress_control.IngressError:
+            return False
+        return (
+            state.mode == "running"
+            and self._config.label_of(state.target) == label
+            and state.last_error is None
+        )
+
+    def _start_on_source(self) -> Reply:
+        state = self._read()
+        label = self._config.label_of(state.target)
+        if label == self._config.target:
+            return 409, {
+                "error": "이미 대상으로 전환됐다 — 원본으로 돌리지 않는다"
+            }
+        if label != self._config.source:
+            if state.mode != "paused":
+                state = self._pause()
+            source_name = self._config.ingress_name(self._config.source)
+            self._ingress.set_target(source_name, state.epoch)
+            state = self._read()
+        if state.mode == "paused":
+            self._ingress.resume(state.epoch)
+            state = self._read()
+        return 200, self._app_status(state)
+
+    def _app_status(
+        self, state: ingress_control.IngressState
+    ) -> dict[str, Any]:
+        return {
+            "state": "RUNNING" if state.mode == "running" else "PAUSED",
+            "target": self._label(state),
+            "known_targets": [self._config.source, self._config.target],
+            "in_flight": state.in_flight,
+        }
+
+    def _label(self, state: ingress_control.IngressState) -> str:
+        label = self._config.label_of(state.target)
+        if label is None:
+            raise ingress_control.IngressError(
+                f"큐 대상 {state.target} 은 이 job 의 라벨이 아니다"
+            )
+        return label
+
+    def _changed(self, action: collections.abc.Callable[[], Reply]) -> Reply:
+        if not self._changing.acquire(blocking=False):
+            return 409, {"error": "다른 제어 호출이 진행 중이다"}
+        try:
+            return self._guard(action)
+        finally:
+            self._changing.release()
+
+    @staticmethod
+    def _guard(action: collections.abc.Callable[[], Reply]) -> Reply:
+        try:
+            return action()
+        except ingress_control.IngressError as error:
+            return 502, {"error": str(error)}
+
+
+def load_adapter_config(
+    cloud_config: pathlib.Path,
+    ingress_env: pathlib.Path,
+    *,
+    target_environment: str | None = None,
+) -> AdapterConfig:
+    """인계 파일 둘(config.cloud.yaml·ingress.env)에서 어댑터 설정을 읽는다.
+
+    접수 큐 대상 이름은 라벨과 같다고 본다(handoff.render_ingress_env 형식).
+
+    Raises:
+        ValueError: 라벨·주소·포트가 없거나 형식이 틀릴 때.
+    """
+    document = yaml.safe_load(cloud_config.read_text())
+    try:
+        job = document["job"]
+        control_url = document["application"]["control_url"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"config.cloud.yaml 에 {error} 가 없다") from None
+    if {job.get("source"), job.get("target")} != {"aws", "gcp"}:
+        raise ValueError("job.source·target 은 aws·gcp 여야 한다")
+    target_db = ((document.get("targets") or {}).get(job["target"]) or {}).get(
+        "dbname"
+    )
+    if not target_db:
+        raise ValueError(f"targets.{job['target']}.dbname 이 없다")
+    source_db = ((document.get("targets") or {}).get(job["source"]) or {}).get(
+        "dbname"
+    )
+    if source_db == target_db:
+        # 같은 이름이면 /api/info 로 대상 앱이 A·B 중 어디 붙었는지 못 가른다.
+        raise ValueError("원본과 대상 dbname 이 같다")
+    port = urllib.parse.urlsplit(control_url).port
+    if port is None:
+        raise ValueError("application.control_url 에 포트가 없다")
+    targets = json.loads(_env_file(ingress_env).get("INGRESS_TARGETS", "{}"))
+    urls = {}
+    for label in (job["source"], job["target"]):
+        entry = targets.get(label)
+        if not isinstance(entry, dict) or not entry.get("url"):
+            raise ValueError(f"INGRESS_TARGETS 에 {label} 주소가 없다")
+        urls[label] = entry["url"].rstrip("/")
+    return AdapterConfig(
+        source=job["source"],
+        target=job["target"],
+        port=port,
+        source_app_url=urls[job["source"]],
+        target_app_url=urls[job["target"]],
+        target_database=target_db,
+        target_environment=target_environment,
+    )
+
+
+def read_job_id(cloud_config: pathlib.Path) -> str:
+    """config.cloud.yaml 의 job.job_id.
+
+    Raises:
+        ValueError: 없거나 문자열이 아닐 때.
+    """
+    document = yaml.safe_load(cloud_config.read_text())
+    job_id = ((document or {}).get("job") or {}).get("job_id")
+    if not isinstance(job_id, str) or not job_id:
+        raise ValueError("config.cloud.yaml 에 job.job_id 가 없다")
+    return job_id
+
+
+def make_server(
+    adapter: ControlAdapter, port: int
+) -> http.server.ThreadingHTTPServer:
+    """127.0.0.1:port 에 앱 제어 API 서버를 만든다. 실행은 부르는 쪽이 한다."""
+    routes = {
+        ("GET", "/status"): lambda body: adapter.status(),
+        ("GET", "/healthz"): lambda body: adapter.healthz(),
+        ("POST", "/pause"): lambda body: adapter.pause(),
+        ("POST", "/drain"): adapter.drain,
+        ("POST", "/target"): adapter.target,
+        ("POST", "/resume"): lambda body: adapter.resume(),
+    }
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - 표준 핸들러 이름
+            self._dispatch("GET")
+
+        def do_POST(self) -> None:  # noqa: N802 - 표준 핸들러 이름
+            self._dispatch("POST")
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            pass
+
+        def _dispatch(self, method: str) -> None:
+            route = routes.get((method, self.path))
+            if route is None:
+                self._send(404, {"error": "not found"})
+                return
+            body = self._body() if method == "POST" else {}
+            if body is None:
+                self._send(400, {"error": "본문은 JSON 객체여야 한다"})
+                return
+            self._send(*route(body))
+
+        def _body(self) -> dict[str, Any] | None:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None
+            if length <= 0:
+                return {}
+            if length > _MAX_BODY_BYTES:
+                return None
+            try:
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+            except ValueError:
+                return None
+            return body if isinstance(body, dict) else None
+
+        def _send(self, code: int, body: dict[str, Any]) -> None:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    return http.server.ThreadingHTTPServer((_LISTEN_HOST, port), Handler)
+
+
+def _env_file(path: pathlib.Path) -> dict[str, str]:
+    values = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value
+    return values

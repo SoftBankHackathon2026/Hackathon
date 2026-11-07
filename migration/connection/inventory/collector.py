@@ -309,6 +309,92 @@ def collect(
         coverage["storage_classes"] = "complete"
     except (InventoryError, KeyError, TypeError, ReportError):
         pass
+    workloads = {"coverage": "unavailable", "items": []}
+    try:
+        raw = _items(
+            kubectl.json(
+                [
+                    "get",
+                    "deployments.apps,statefulsets.apps,daemonsets.apps",
+                    "--all-namespaces",
+                    "--output=json",
+                ],
+                context=context,
+            )
+        )
+        # Argo Rollouts is optional; absence/denial must not hide standard apps.
+        rollouts_available = False
+        try:
+            raw += _items(
+                kubectl.json(
+                    [
+                        "get",
+                        "rollouts.argoproj.io",
+                        "--all-namespaces",
+                        "--output=json",
+                    ],
+                    context=context,
+                )
+            )
+            rollouts_available = True
+        except InventoryError:
+            pass
+        summaries = []
+        for item in raw:
+            spec = item.get("spec", {})
+            pod = spec.get("template", {}).get("spec", {})
+            containers = pod.get("containers", []) + pod.get("initContainers", [])
+            secrets, configs, pvcs = set(), set(), set()
+            for c in containers:
+                for env in c.get("env", []):
+                    ref = env.get("valueFrom", {})
+                    for key, dest in (
+                        ("secretKeyRef", secrets),
+                        ("configMapKeyRef", configs),
+                    ):
+                        if ref.get(key, {}).get("name"):
+                            dest.add(ref[key]["name"])
+                for env in c.get("envFrom", []):
+                    for key, dest in (
+                        ("secretRef", secrets),
+                        ("configMapRef", configs),
+                    ):
+                        if env.get(key, {}).get("name"):
+                            dest.add(env[key]["name"])
+            for volume in pod.get("volumes", []):
+                for key, field, dest in (
+                    ("secret", "secretName", secrets),
+                    ("configMap", "name", configs),
+                    ("persistentVolumeClaim", "claimName", pvcs),
+                ):
+                    if volume.get(key, {}).get(field):
+                        dest.add(volume[key][field])
+            summaries.append(
+                {
+                    "namespace": item["metadata"]["namespace"],
+                    "name": item["metadata"]["name"],
+                    "kind": item["kind"],
+                    "replicas": spec.get(
+                        "replicas",
+                        item.get("status", {}).get("desiredNumberScheduled", 0),
+                    ),
+                    "images": sorted({c["image"] for c in containers}),
+                    "secrets": sorted(secrets),
+                    "configMaps": sorted(configs),
+                    "pvcs": sorted(pvcs),
+                }
+            )
+        from .schema import validate_workloads
+
+        workloads = validate_workloads(
+            {
+                "coverage": "complete",
+                "items": summaries,
+                "rolloutsAvailable": rollouts_available,
+            }
+        )
+    except (InventoryError, ReportError, KeyError, TypeError):
+        workloads = {"coverage": "unavailable", "items": []}
     # Recheck local context/trust binding after calls. A kubeconfig edit during
     # collection invalidates all results rather than assigning them to old UI.
     if selected not in kubectl.descriptors():
@@ -333,6 +419,7 @@ def collect(
         "cluster": cluster,
         "resources": resources,
         "coverage": coverage,
+        "workloads": workloads,
     }
     try:
         return validate_report(report)

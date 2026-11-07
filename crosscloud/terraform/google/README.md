@@ -32,9 +32,9 @@ AWS↔GCP 이전에서 GCP 쪽 자원을 만드는 Terraform 루트 모듈 셋�
 자원을 찾는다. Secret Manager 목록은 최종 일관성이라 막 만든 비밀이 잠시 빠질
 수 있다. 모듈에 새 자원 종류를 더하면 `residue_gcp._LISTINGS` 에도 더한다.
 
-방향이 동작을 바꾸는 곳은 `target_app` 의 Cloud Run 진입(ingress) 하나다.
-대상(`aws_to_gcp`)은 전환 전까지 진입을 닫아 두고, 원본 고정물(`gcp_to_aws`)은
-처음부터 LB 로 받는다.
+Cloud Run 진입(ingress)은 방향과 관계없이 `all` 이다. 운영자 PC 의
+durable-ingress 가 서비스 URL(`run.app`)로 직접 보내기 때문이다. 대상 앱이
+언제 요청을 받는지는 ingress 대상 전환(`/target`)이 정한다.
 
 ## 시험 환경 결정
 

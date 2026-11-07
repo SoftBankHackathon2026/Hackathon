@@ -14,13 +14,18 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 ALLOWED_KEYS: frozenset[str] = frozenset({"DB_HOST", "DB_PORT"})
+PLAN_FIELDS: dict[str, str] = {
+    "DB_HOST": "host", "DB_PORT": "port", "DB_NAME": "name", "DB_USER": "user", "DB_SSLMODE": "sslmode",
+}
+SSLMODES: frozenset[str] = frozenset({"disable", "allow", "prefer", "require", "verify-ca", "verify-full"})
 # AI 에게 보여 주는 키. 이 밖의 키(비밀번호 등)는 파일에 쓰지 않는다.
-VISIBLE_KEYS: tuple[str, ...] = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER")
+VISIBLE_KEYS: tuple[str, ...] = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_SSLMODE")
 SECRET_KEY_PARTS: tuple[str, ...] = ("password", "passwd", "pwd", "secret", "token", "dsn", "conninfo", "credential", "private")
 
 _HOST_RE = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
 _PORT_RE = re.compile(r"[1-9][0-9]{0,4}")
 _KEY_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$-]{0,62}")
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,27 @@ def _valid_port(value: str) -> bool:
     return _PORT_RE.fullmatch(value) is not None and 1 <= int(value) <= 65535
 
 
+def planned_values(target_db: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        key: str(target_db[field]) for key, field in PLAN_FIELDS.items()
+        if target_db.get(field) not in (None, "")
+    }
+
+
+def allowed_keys(target_db: Mapping[str, Any]) -> list[str]:
+    return sorted(planned_values(target_db))
+
+
+def _valid(key: str, value: str) -> bool:
+    if key == "DB_HOST":
+        return _valid_host(value)
+    if key == "DB_PORT":
+        return _valid_port(value)
+    if key == "DB_SSLMODE":
+        return value in SSLMODES
+    return _IDENT_RE.fullmatch(value) is not None
+
+
 def check_proposal(
     proposal: Proposal,
     *,
@@ -84,7 +110,7 @@ def check_proposal(
     if not proposal.changes:
         return [Rejection("S0-EMPTY", "제안이 비어 있다")]
 
-    planned = {"DB_HOST": str(target_db["host"]), "DB_PORT": str(target_db["port"])}
+    planned = planned_values(target_db)
     problems: list[Rejection] = []
     seen: set[str] = set()
     effective = False
@@ -97,11 +123,10 @@ def check_proposal(
         if _is_secret_key(key):
             problems.append(Rejection("S3-SECRET-KEY", f"비밀값 키 {name} 는 건드릴 수 없다"))
             continue
-        if key not in ALLOWED_KEYS:
+        if key not in planned:
             problems.append(Rejection("S1-KEY-NOT-ALLOWED", f"키 {name} 는 허용 목록 밖이다"))
             continue
-        valid = _valid_host(value) if key == "DB_HOST" else _valid_port(value)
-        if not valid:
+        if not _valid(key, value):
             problems.append(Rejection("S4-FORMAT", f"{key} 값의 형식이 틀렸다"))
             continue
         if value != planned[key]:

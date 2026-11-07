@@ -9,10 +9,6 @@
 # 만들면 개인 키가 state 에 남는다.
 
 locals {
-  is_target = var.direction == "aws_to_gcp"
-  # 대상은 전환 전까지 진입을 닫아 둔다 — 제어 어댑터가 LB 진입을 연다.
-  # 원본 고정물은 처음부터 LB 로만 받는다.
-  ingress    = local.is_target ? "INGRESS_TRAFFIC_INTERNAL_ONLY" : "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   secret_ids = toset([for ref in values(var.secret_env) : ref.secret])
 }
 
@@ -29,11 +25,14 @@ resource "google_secret_manager_secret_iam_member" "run" {
 }
 
 resource "google_cloud_run_v2_service" "app" {
-  name                = "${var.name_prefix}-app"
-  location            = var.region
-  ingress             = local.ingress
+  name     = "${var.name_prefix}-app"
+  location = var.region
+  # 운영자 PC 의 durable-ingress 가 서비스 URL(run.app)로 직접 보낸다(설계
+  # 4.18). 그래서 방향과 관계없이 밖에서 닿게 연다. 대상 앱이 전환 전에 받는
+  # 요청은 ingress 대상 전환(/target)만이 정한다.
+  ingress             = "INGRESS_TRAFFIC_ALL"
   deletion_protection = false
-  # LB 를 거친 요청을 IAM 인증 없이 받는다. 진입은 ingress 가 막는다.
+  # 요청을 IAM 인증 없이 받는다. 시험 환경이라 앱 앞에 인증을 두지 않는다.
   invoker_iam_disabled = true
 
   template {
@@ -71,12 +70,6 @@ resource "google_cloud_run_v2_service" "app" {
 
   # 비밀 읽기 권한이 먼저 있어야 첫 리비전이 뜬다.
   depends_on = [google_secret_manager_secret_iam_member.run]
-
-  lifecycle {
-    # 전환 중 제어 어댑터가 진입을 여닫는다. 재 apply 가 그것을 되돌리지 않게
-    # 한다.
-    ignore_changes = [ingress]
-  }
 }
 
 resource "google_compute_region_network_endpoint_group" "app" {

@@ -300,3 +300,9 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 # AWS 보안로그 원본 이관
 
 `python -m migration.security_logs`는 Wazuh 준비 도구가 제공한 보관공간에 S3 원본 파일과 CloudWatch Logs 조회 결과를 저장합니다. 기존 Wazuh 검색 저장소를 읽어 보관한 이벤트와 대조합니다. [실행 및 검증 안내](docs/wazuh-infra/security-logs.md)와 [설정 예시](config.security-logs.example.yaml)를 참고하십시오.
+
+### 워커 재시작과 미확정 요청 보호
+
+`worker.json`에 대상·단계·실행 상태·미확정 요청 ID를 함께 fsync하여 저장한다. PAUSED/ERROR는 재시작 후 유지하고, 중단된 SWITCHING 및 상태 필드가 없는 과거 메타데이터는 PAUSED로 복원한다. 손상된 메타데이터는 자동 실행하지 않는다. 최초 설치는 기존대로 RUNNING이다.
+
+권한 거절(SQLSTATE 42501)은 같은 요청 ID를 조회하여 기존 커밋 또는 미저장을 확인한 뒤 정지한다. 조회도 실패하거나 커밋 여부가 불명확하면 `/drain`은 settled=false이고 대상 변경을 거부한다. 원본 연결을 복구하고 `/resume`으로 같은 ID를 판정한 뒤 전환한다. 저장 실패 시 ERROR로 멈춘다. 이 보호는 DB 간 임의 재전송을 허용하지 않는다.

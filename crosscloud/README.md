@@ -19,7 +19,16 @@
 | `src/crosscloud/inventory_json.py` | `Inventory` ↔ JSON 변환. 두 방향 모두 스키마로 검사 |
 | `src/crosscloud/discover/` | 원본 구성 읽기(AWS·GCP), env 분류, 결합 탐지 |
 | `src/crosscloud/mapping/` | 서비스 대응표, 판정, 원가연 지원 제한 검사 |
-| `src/crosscloud/cli.py` | `crosscloud` 명령 |
+| `src/crosscloud/handoff.py` | 원가연 `config.cloud.yaml`·접수 큐 `ingress.env`·대상 앱 DB TLS env 렌더링 |
+| `src/crosscloud/control_adapter.py` | 원가연 앱 제어 API 6개 → 접수 큐(durable-ingress) 제어 |
+| `src/crosscloud/ingress_control.py` | 접수 큐 제어 API 클라이언트 |
+| `src/crosscloud/health_probe.py` | 앱 `/readyz`·`/api/info` 점검 |
+| `src/crosscloud/cli.py` | `crosscloud` 명령 진입점(`discover` 와 전환 연결 명령 등록) |
+| `src/crosscloud/cutover_cli.py` | 전환 연결 명령 `render-handoff` · `ingress-start` · `serve-adapter` · `prepare-target` · `ingress-status` · `ingress-drain-check` |
+| `src/crosscloud/cutover_stage.py` | 원가연 job 단계 읽기(읽기 전용)와 `cloud.lock` |
+| `src/crosscloud/target_deploy.py` | 대상 앱을 대상 DB 프로필로 재배포(Cloud Run·ECS) |
+| `src/crosscloud/ingress_drain.py` | 접수 큐 정리 전 미처리 0 확인 |
+| `deploy/operator-pc/` | 운영자 PC compose 예시(접수 큐·Redis·Connect)와 순서 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/secret_transfer/` | Secret 값 이관(AWS↔GCP). 값은 메모리 bytes 로만 다루고 SHA-256 으로 대조 |
 | `src/crosscloud/datapath.py` | 원가연 전환 도구용 DB 로그인(admin·app·cdc·sink·verify)과 대상 스키마 준비 |
@@ -52,6 +61,9 @@
 bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 운영자 PC 에
 쓴다. 검증은 이 기록과 맞는 bundle·manifest 만 믿고, 공개키는 운영자가
 보관한 `aws cloudtrail list-public-keys` 출력 파일(리전마다 하나)만 쓴다.
+공개키를 받을 때 구간 끝은 로그 기간 끝이 아니라 이관 시점까지 잡는다 —
+backfill 다이제스트는 로그 기간보다 늦게 서명될 수 있다(bundle 에는 그 생성
+시각을 남긴다).
 
 결과는 넷 중 하나다. 종료 코드를 괄호에 적는다.
 
@@ -79,6 +91,17 @@ bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 
     거부한다.
 *   **GCP 권한:** 현재 값을 버전 목록에서 고르므로, crosscloud 를 실행하는 GCP
     신원에 `secretmanager.versions.list` 가 필요하다(secretAccessor 에는 없다).
+*   **대상 소유권:** 대상은 이 실행의 짧은 그릇 이름(`ccx-<run>-<키>`)만
+    받는다. 그 밖의 이름과 전체 이름(GCP `projects/…`, AWS ARN)은 값을 읽기
+    전에 거부한다. 남의 Secret 에 버전을 더하지 않는다.
+*   **버전 고정:** 소비자(Cloud Run `secret_env`)는 버전 번호로 참조한다.
+    GCP 에서 되돌리기(파기) 뒤 `latest` 는 파기된 버전을 가리켜 읽기가
+    실패한다. `target_app` 은 `latest` 를 받지 않는다.
+
+## DB 로그인 준비
+
+`datapath` 는 대상 app 에 원본 app 의 표·시퀀스·스키마 단위 실효 권한(그룹
+역할·PUBLIC 상속 포함)을 직접 GRANT 한다. 컬럼 단위 GRANT 는 미러하지 않는다.
 
 ## 사용법
 

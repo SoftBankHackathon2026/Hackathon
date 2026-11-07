@@ -98,7 +98,7 @@ class RunStore:
             )
             self._event(run.run_id, state, message, at)
 
-    def claim_approval(self, run_id: str) -> bool:
+    def claim_approval(self, run_id: str, by: str | None = None) -> bool:
         """WAITING_APPROVAL → APPLYING 원자 전이. 승인 명령을 두 번 실행해도 한 번만 적용한다."""
         at = _now()
         with self._conn:
@@ -108,7 +108,19 @@ class RunStore:
             )
             if cur.rowcount != 1:
                 return False
-            self._event(run_id, APPLYING, "승인됨", at)
+            self._event(run_id, APPLYING, f"승인됨 ({by})" if by else "승인됨", at)
+        return True
+
+    def claim_rejection(self, run_id: str, by: str | None = None) -> bool:
+        at = _now()
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE runs SET state = ?, updated_at = ? WHERE run_id = ? AND state = ?",
+                (REJECTED, at, run_id, WAITING_APPROVAL),
+            )
+            if cur.rowcount != 1:
+                return False
+            self._event(run_id, REJECTED, f"사람이 거절함 ({by})" if by else "사람이 거절함", at)
         return True
 
     def get(self, run_id: str) -> Run | None:
@@ -117,9 +129,12 @@ class RunStore:
         ).fetchone()
         return self._to_run(row) if row else None
 
-    def recent(self, limit: int = 20) -> list[Run]:
+    def recent(self, limit: int = 20, exclude: frozenset[str] = frozenset()) -> list[Run]:
+        skip = sorted(exclude)
+        where = f"WHERE state NOT IN ({', '.join('?' for _ in skip)}) " if skip else ""
         rows = self._conn.execute(
-            "SELECT run_id, job_id, state, detail, created_at, updated_at FROM runs ORDER BY rowid DESC LIMIT ?", (limit,)
+            f"SELECT run_id, job_id, state, detail, created_at, updated_at FROM runs {where}ORDER BY rowid DESC LIMIT ?",
+            (*skip, limit),
         ).fetchall()
         return [self._to_run(row) for row in rows]
 

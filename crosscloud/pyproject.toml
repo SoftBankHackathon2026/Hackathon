@@ -16,6 +16,7 @@ dependencies = [
     "google-crc32c>=1.5,<2",
     "jsonschema>=4.23,<5",
     "psycopg[binary]>=3.2,<4",
+    "PyYAML>=6.0,<7",
     "requests>=2.31,<3",
 ]
 

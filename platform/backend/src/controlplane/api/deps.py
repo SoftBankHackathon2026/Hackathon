@@ -9,6 +9,7 @@ from controlplane.core.errors import AccessDenied, NotConfigured, OperationNotFo
 from controlplane.cost.service import CostService
 from controlplane.repositories.accounts import SESSION_COOKIE
 from controlplane.schemas.accounts import Identity
+from controlplane.services.agent import AgentService
 from controlplane.services.auth import AuthService
 from controlplane.services.builds import BuildService
 from controlplane.services.cutover_commands import CutoverCommandService
@@ -22,6 +23,7 @@ from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
+from controlplane.services.traffic import TrafficRoutes
 
 EXECUTION_NOT_CONFIGURED = "실행 환경이 등록되지 않았습니다."
 NOT_LOGIN_MODE = "로그인 모드가 아닙니다."
@@ -98,6 +100,39 @@ def require_ingest_commands(
     return container.cutover_commands
 
 
+TRAFFIC_NOT_CONFIGURED = (
+    "공개 도메인 전환이 설정되지 않았습니다. ONEPORT_TRAFFIC_DIR 을 설정하세요."
+)
+
+
+def require_ingest_traffic(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> TrafficRoutes:
+    _check_ingest_token(container, authorization)
+    if container.traffic is None:
+        raise NotConfigured(TRAFFIC_NOT_CONFIGURED)
+    return container.traffic
+
+
+AGENT_NOT_CONFIGURED = (
+    "에이전트 기록에는 플랫폼 DB 가 필요해요. ONEPORT_DATABASE_URL_FILE 을 설정하세요."
+)
+
+
+def get_agent(container: ContainerDep) -> AgentService:
+    if container.agent is None:
+        raise NotConfigured(AGENT_NOT_CONFIGURED)
+    return container.agent
+
+
+def require_ingest_agent(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> AgentService:
+    service = get_agent(container)
+    _check_ingest_token(container, authorization)
+    return service
+
+
 def get_cutover_commands(container: ContainerDep) -> CutoverCommandService:
     return container.cutover_commands
 
@@ -120,6 +155,9 @@ FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
 IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]
+IngestTrafficDep = Annotated[TrafficRoutes, Depends(require_ingest_traffic)]
+AgentDep = Annotated[AgentService, Depends(get_agent)]
+IngestAgentDep = Annotated[AgentService, Depends(require_ingest_agent)]
 CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
 DataMappingsDep = Annotated[DataMappingService, Depends(get_data_mappings)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
@@ -200,6 +238,25 @@ def optional_viewer(
 
 
 ViewerIdentity = Annotated[Identity | None, Depends(optional_viewer)]
+
+
+def deploy_permitted(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> bool:
+    if not container.execution_configured:
+        return False
+    if container.auth_mode == AuthMode.OPERATOR:
+        if container.operator_token is None:
+            return False
+        expected = "Bearer " + container.operator_token.get_secret_value()
+        return secrets.compare_digest(authorization.encode(), expected.encode())
+    if container.auth_mode != AuthMode.LOGIN:
+        return True
+    identity = session_identity(request, container)
+    return identity is not None and identity.can_deploy
+
+
+DeployPermitted = Annotated[bool, Depends(deploy_permitted)]
 
 
 def _require_commander(

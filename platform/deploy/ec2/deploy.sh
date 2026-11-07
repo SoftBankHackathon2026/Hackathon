@@ -17,6 +17,7 @@ domain=$(sed -n 's/^ONEPORT_DOMAIN=//p' "$root/settings.env")
 [[ -n "$domain" ]] || { echo "$root/settings.env 에 ONEPORT_DOMAIN 이 없습니다." >&2; exit 1; }
 
 install -d -m 0755 "$root/sites"
+install -d -m 0755 -o 10001 -g 10001 "$root/routes"
 install -d -m 0755 "$root/connection" "$root/connection/public"
 install -d -m 0700 -o 10001 -g 10001 "$root/connection/server"
 install -d -m 0700 "$root/connection/broker"

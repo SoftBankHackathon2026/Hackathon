@@ -144,12 +144,20 @@ class FakeProber:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.seen: list[dict[str, Any]] = []
+        self.diagnosed: list[dict[str, Any]] = []
+
+    def _result(self, config: Mapping[str, Any]) -> ProbeResult:
+        if self.fail or config.get("DB_HOST") != GOOD_HOST:
+            return ProbeResult(False, "tcp", "gaierror", "DNS: 호스트 이름을 찾지 못함")
+        return ProbeResult(True, "done")
+
+    def diagnose(self, config: Mapping[str, Any]) -> ProbeResult:
+        self.diagnosed.append(dict(config))
+        return self._result(config)
 
     def probe(self, config: Mapping[str, Any]) -> ProbeResult:
         self.seen.append(dict(config))
-        if self.fail or config.get("DB_HOST") != GOOD_HOST:
-            return ProbeResult(False, "tcp", "gaierror")
-        return ProbeResult(True, "done")
+        return self._result(config)
 
 
 class FakeEvaluator:

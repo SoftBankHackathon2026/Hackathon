@@ -3,6 +3,7 @@
 //   node demo/viewer/server.js                      http://127.0.0.1:5050
 //   node demo/viewer/server.js --config config.local.json
 //   PORT=6060 VIEWER_CONFIG=./my.json node demo/viewer/server.js
+//   HOST=0.0.0.0 VIEWER_HOSTED=1 node demo/viewer/server.js   (클러스터 배포)
 // config.demo.json(기본값)은 실제 주소, config.local.json 은 리허설용 로컬 docker 다.
 // 시연은 환경마다 DB 가 다르다(온프렘 Postgres → AWS RDS CDC). 같은 DB 를 보면
 // 칸마다 수치가 같아 전환이 숫자로 드러나지 않는다.
@@ -45,7 +46,11 @@ function configFileFrom(args, env) {
   return env.VIEWER_CONFIG || DEFAULT_CONFIG_FILE;
 }
 
-function loadConfig(file) {
+/**
+ * hosted 는 노트북이 아니라 클러스터에서 도는 뷰어다. 거기서는 "이 노트북에서만
+ * 접속"이 사실이 아니므로 local_only 를 무시한다.
+ */
+function loadConfig(file, {hosted = false} = {}) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
   return {
     pollMillis: config.pollMillis || DEFAULT_POLL_MILLIS,
@@ -58,7 +63,7 @@ function loadConfig(file) {
       // 폰이 여는 주소다. 칸의 숫자와 같은 서버여야 하니 url 과 같게 두고,
       // 로컬 칸은 폰에서 열 수 없으므로 비운다.
       publicUrl: pageUrlOf(environment.public_url),
-      localOnly: environment.local_only === true,
+      localOnly: !hosted && environment.local_only === true,
       // 주소로 판단하지 않는다. port-forward 로 붙은 실제 서버도 localhost 다.
       localTest: environment.local_test === true,
     })),
@@ -130,22 +135,41 @@ function sendStatic(response, [name, contentType]) {
   });
 }
 
+/**
+ * 보는 사람이 몇 명이든 앱 하나에는 pollMillis 마다 한 번만 요청한다. 진행 중인
+ * 요청은 모두가 같이 기다리고, 시작한 지 pollMillis 가 지나기 전에는 그 답을
+ * 다시 쓴다. 주소가 키라서 설정을 고치면 바로 새 주소로 요청한다.
+ */
+function createLiveCache() {
+  const entries = new Map();
+  return (pageUrl, config) => {
+    const now = Date.now();
+    const entry = entries.get(pageUrl);
+    if (entry && (entry.pending || now - entry.startedAt < config.pollMillis)) {
+      return entry.answer;
+    }
+    const fresh = {startedAt: now, pending: true};
+    fresh.answer = requestLive(pageUrl, config.timeoutMillis).then((answer) => {
+      fresh.pending = false;
+      return answer;
+    });
+    entries.set(pageUrl, fresh);
+    return fresh.answer;
+  };
+}
+
 /** 대상은 설정 파일의 id 로만 고른다. 브라우저는 주소를 넘길 수 없다. */
-async function sendLive(response, id, configFile) {
-  let config;
-  try {
-    config = loadConfig(configFile);
-  } catch {
-    return sendJson(response, 500, {error: 'config unreadable'});
-  }
+async function sendLive(response, id, config, liveOf) {
   const environment = config.environments.find((each) => each.id === id);
   if (!environment) return sendJson(response, 404, {error: 'unknown id'});
   if (!environment.pageUrl) return sendJson(response, 200, {unset: true});
-  sendJson(response, 200,
-      await requestLive(environment.pageUrl, config.timeoutMillis));
+  sendJson(response, 200, await liveOf(environment.pageUrl, config));
 }
 
-function createViewerServer(configFile = DEFAULT_CONFIG_FILE) {
+function createViewerServer(configFile = DEFAULT_CONFIG_FILE,
+    {hosted = false} = {}) {
+  const liveOf = createLiveCache();
+  const readConfig = () => loadConfig(configFile, {hosted});
   return http.createServer(async (request, response) => {
     if (request.method !== 'GET') {
       return sendJson(response, 405, {error: 'GET only'});
@@ -159,15 +183,17 @@ function createViewerServer(configFile = DEFAULT_CONFIG_FILE) {
     if (STATIC_FILES[url.pathname]) {
       return sendStatic(response, STATIC_FILES[url.pathname]);
     }
-    if (url.pathname === '/api/environments') {
+    if (url.pathname === '/api/environments' || url.pathname === '/api/live') {
+      let config;
       try {
-        return sendJson(response, 200, loadConfig(configFile));
+        config = readConfig();
       } catch {
         return sendJson(response, 500, {error: 'config unreadable'});
       }
-    }
-    if (url.pathname === '/api/live') {
-      return sendLive(response, url.searchParams.get('id'), configFile);
+      if (url.pathname === '/api/environments') {
+        return sendJson(response, 200, config);
+      }
+      return sendLive(response, url.searchParams.get('id'), config, liveOf);
     }
     sendJson(response, 404, {error: 'not found'});
   });
@@ -175,12 +201,14 @@ function createViewerServer(configFile = DEFAULT_CONFIG_FILE) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 5050;
-  // 뷰어가 설정의 주소로 대신 요청하므로 발표 노트북 안에서만 연다.
+  // 기본은 발표 노트북 안에서만 연다. 클러스터 이미지는 HOST=0.0.0.0 으로 연다.
+  // 브라우저는 주소를 넘길 수 없고 설정의 id 만 고르므로 열어도 임의 요청 중계는 안 된다.
   const host = process.env.HOST || '127.0.0.1';
+  const hosted = process.env.VIEWER_HOSTED === '1';
   const configFile = configFileFrom(process.argv.slice(2), process.env);
   // 파일 이름을 잘못 쓰면 빈 화면 대신 시작할 때 바로 실패한다.
   loadConfig(configFile);
-  createViewerServer(configFile).listen(port, host, () => {
+  createViewerServer(configFile, {hosted}).listen(port, host, () => {
     console.log(`demo viewer: http://${host}:${port} (${configFile})`);
   });
 }

@@ -359,9 +359,18 @@ def test_register_only_valid_selected_inventory_and_duplicate_rejected(svc):
         svc.browser(request_id, OWNER, "register", bad)
     result = svc.browser(request_id, OWNER, "register", data)
     assert result["environmentId"]
+    assert result["workloads"]["items"][0]["name"] == "actual-app"
     assert svc.list(OWNER)[0]["environmentId"] == result["environmentId"]
     with pytest.raises(ConnectionError, match="ALREADY_REGISTERED"):
         svc.browser(request_id, OWNER, "register", data)
+    with pytest.raises(ConnectionError, match="ALREADY_REGISTERED"):
+        svc.browser(request_id, OWNER, "collect", {"discoveredId": "different-cluster"})
+    refreshed = svc.browser(
+        request_id, OWNER, "collect", {"discoveredId": value["target_id"]}
+    )
+    assert refreshed["environmentId"] == result["environmentId"]
+    assert refreshed["collectionPending"]
+    assert refreshed["workloads"] is None
 
 
 def test_rekey_discards_inflight_report(svc):

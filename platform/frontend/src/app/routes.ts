@@ -1,6 +1,7 @@
 export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
+  | { view: "agent"; runId?: string }
   | { view: "prepare"; requestId?: string }
   | {
       view: "environments";
@@ -31,6 +32,8 @@ export function readRoute(hash = "#"): Route {
     }
   }
   if (head === "migrations" && id) return { view: "migration", id: decode(id) };
+  if (head === "agent")
+    return id ? { view: "agent", runId: decode(id) } : { view: "agent" };
   if (head === "environments") {
     if (id === "nodes")
       return {
@@ -83,6 +86,10 @@ export function migrationHash(jobId: string) {
   return `#migrations/${encodeURIComponent(jobId)}`;
 }
 
+export function agentHash(runId?: string) {
+  return runId ? `#agent/${encodeURIComponent(runId)}` : "#agent";
+}
+
 export function controlHash(controlId: string) {
   return `#security/${encodeURIComponent(controlId)}`;
 }
@@ -106,6 +113,8 @@ export function routeTitle(route: Route, teamName: string) {
       return route.id;
     case "prepare":
       return "마이그레이션 준비";
+    case "agent":
+      return "AI 에이전트";
     case "environments":
       return "환경";
     case "security":

@@ -32,3 +32,14 @@ def test_restore_writes_plan_values_and_restarts() -> None:
     restarts: list[int] = []
     restore(cfg(), kv, SimpleNamespace(restart_and_wait=lambda: restarts.append(1)))
     assert kv.data == {"DB_HOST": GOOD_HOST, "DB_PORT": "5432"} and restarts == [1]
+
+
+def test_inject_can_leave_old_source_endpoint() -> None:
+    kv = FakeKv({"DB_HOST": GOOD_HOST, "DB_PORT": "5432"})
+
+    class Api:
+        def get(self, path):
+            return {"items": []}
+
+    inject(cfg(), kv, Api(), host="old-source.example.rds.amazonaws.com")
+    assert kv.data["DB_HOST"] == "old-source.example.rds.amazonaws.com" and kv.data["DB_PORT"] == "5432"

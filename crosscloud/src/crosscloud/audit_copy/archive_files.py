@@ -7,7 +7,10 @@ D2 축소).
 *   digest_signatures: 다이제스트마다 원위치 S3 메타데이터의 서명·알고리즘.
     체인 끝 다이제스트의 서명은 오프라인에서 달리 얻을 수 없어(RC-A21)
     반드시 여기 있어야 하고, 중간 다이제스트 것도 함께 둬서 하나가
-    지워져도 나머지를 각각 검증할 수 있게 한다.
+    지워져도 나머지를 각각 검증할 수 있게 한다. backfill 다이제스트면
+    backfill-generation-timestamp 메타데이터도 남긴다 — 지금은 backfill 을
+    검증하지 않지만, 나중에 생성 시각 기준으로 공개키를 다시 찾으려면
+    이관 뒤에는 다시 얻을 수 없는 이 값이 필요하다.
 *   public_keys: 이관 때 받은 ListPublicKeys 결과. 검증의 신뢰 기준이 아니라
     운영자가 따로 보관한 공개키와 대조하는 용도다.
 
@@ -38,6 +41,7 @@ DIRECTIONS = ("aws_to_gcp", "gcp_to_aws")
 Direction = Literal["aws_to_gcp", "gcp_to_aws"]
 _SIGNATURE = "signature"
 _SIGNATURE_ALGORITHM = "signature-algorithm"
+_BACKFILL_GENERATION_TIMESTAMP = "backfill-generation-timestamp"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,7 +50,7 @@ class PublicKey:
 
     Attributes:
         fingerprint: 공개키 지문(다이제스트의 digestPublicKeyFingerprint).
-        value: PKCS#1 DER 바이트.
+        value: DER 바이트(PKCS#1 또는 SPKI — AWS 가 인코딩을 바꿀 수 있다).
         validity_start: 유효 시작 시각(출력 문자열 그대로).
         validity_end: 유효 끝 시각(출력 문자열 그대로).
     """
@@ -96,7 +100,8 @@ def public_keys_from_cli_output(document: object) -> tuple[PublicKey, ...]:
     """`aws cloudtrail list-public-keys` 출력(JSON)을 PublicKey 로 읽는다.
 
     온라인 단계에서 받아 운영자가 보관한 파일이 입력이다(RC-A21). Value 는
-    base64 로 인코딩된 PKCS#1 DER 이고, 시각은 출력 문자열 그대로 둔다.
+    base64 로 인코딩된 DER(PKCS#1 또는 SPKI)이고, 시각은 출력 문자열 그대로
+    둔다.
 
     Args:
         document: 출력 JSON 을 json.loads 로 읽은 값.
@@ -154,14 +159,18 @@ def bundle_to_json(
     signatures = []
     for item in copied:
         metadata = dict(item.metadata)
-        if _SIGNATURE in metadata:
-            signatures.append(
-                {
-                    "source": item.source_uri,
-                    "signature": metadata[_SIGNATURE],
-                    "algorithm": metadata.get(_SIGNATURE_ALGORITHM, ""),
-                }
-            )
+        if _SIGNATURE not in metadata:
+            continue
+        entry = {
+            "source": item.source_uri,
+            "signature": metadata[_SIGNATURE],
+            "algorithm": metadata.get(_SIGNATURE_ALGORITHM, ""),
+        }
+        if _BACKFILL_GENERATION_TIMESTAMP in metadata:
+            entry["backfill_generation_timestamp"] = metadata[
+                _BACKFILL_GENERATION_TIMESTAMP
+            ]
+        signatures.append(entry)
     return {
         "format": BUNDLE_FORMAT,
         "direction": "aws_to_gcp",

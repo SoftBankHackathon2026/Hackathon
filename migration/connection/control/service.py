@@ -222,6 +222,10 @@ class ConnectionService:
             "collectionPending": collection_pending,
             "discovered": row["discovered"],
             "collected": row["collected"],
+            "workloads": deepcopy(row.get("inventory_report", {}).get("workloads"))
+            if row["device"] == "APPROVED"
+            and row.get("inventory_epoch") == row["epoch"]
+            else None,
             "permissions": {
                 "approveDevice": actor.can_write,
                 "registerEnvironment": actor.can_write,
@@ -490,7 +494,11 @@ class ConnectionService:
                 row["task"] = None
             elif action == "collect":
                 self._ready(row)
-                require(not row.get("environment_id"), "ALREADY_REGISTERED")
+                require(
+                    not row.get("environment_id")
+                    or data.get("discoveredId") == row.get("selected_id"),
+                    "ALREADY_REGISTERED",
+                )
                 selected = next(
                     (
                         e
@@ -521,6 +529,7 @@ class ConnectionService:
                 row["collection"] = "WAITING"
                 row["collected"] = []
                 row.pop("inventory_digest", None)
+                row.pop("inventory_report", None)
                 row["selected_id"] = selected["id"]
             elif action == "register":
                 self._ready(row)
