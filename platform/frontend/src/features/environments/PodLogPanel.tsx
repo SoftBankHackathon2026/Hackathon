@@ -77,6 +77,7 @@ export function PodLogPanel({
     retry: false,
   });
   const lines = logs.data?.lines ?? [];
+  const refetch = logs.refetch;
   const visible = lines.filter((line) => matches(line.message, query));
   const counts = levelCounts(lines);
 
@@ -99,15 +100,24 @@ export function PodLogPanel({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.key !== "/" || target?.closest("input, select, textarea"))
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, select, textarea")
+      )
         return;
-      event.preventDefault();
-      search.current?.focus();
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "/") {
+        event.preventDefault();
+        search.current?.focus();
+      } else if (event.key === "r" || event.key === "R") {
+        event.preventDefault();
+        void refetch();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [refetch]);
 
   useEffect(() => {
     const onWheel = (event: WheelEvent) => {
@@ -257,6 +267,16 @@ export function PodLogPanel({
               )}
             </span>
             <span className="pl-actions">
+              <button
+                type="button"
+                className="cp-ep-copy"
+                disabled={logs.isFetching}
+                aria-busy={logs.isFetching}
+                title="지금 로그를 다시 불러와요 (R)"
+                onClick={() => void logs.refetch()}
+              >
+                {logs.isFetching ? "불러오는 중" : "새로 고침"}
+              </button>
               <button
                 type="button"
                 className="cp-ep-copy"
