@@ -8,8 +8,12 @@
 "현재 값"은 `latest` 가 아니라 활성(ENABLED) 버전 중 가장 최근 것으로 정한다
 (목록 조회라 secretmanager.versions.list 권한이 필요하다). 되돌리기는 이 실행이
 만든 버전을 파기(destroy)하는 것이고, 그러면 앞 활성 버전이 현재 값이 된다.
-쓰기에 멱등 토큰이 없어서, 현재 값이 이미 같으면 쓰지 않는다. 오가는
-페이로드는 CRC32C 로 확인한다.
+다만 되돌리기(파기) 뒤에도 `latest` 는 그 파기된 버전을 가리켜, `latest` 로
+읽는 소비자(Cloud Run secret_key_ref 등)는 FAILED_PRECONDITION 으로 깨진다.
+그래서 소비자는 버전 번호(WrittenVersion.version_id 끝의 N)로 고정한다 —
+target_app 의 secret_env 가 latest 를 거부하는 이유다. 쓰기에 멱등 토큰이
+없어서, 현재 값이 이미 같으면 쓰지 않는다. 오가는 페이로드는 CRC32C 로
+확인한다.
 """
 
 from typing import Any
