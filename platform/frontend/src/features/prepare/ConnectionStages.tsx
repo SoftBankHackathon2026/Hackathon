@@ -4,6 +4,7 @@ import type { ConnectionGateway, ConnectionSnapshot } from "./connectionTypes";
 import {
   canApproveDevice,
   codeValid,
+  normalizeCode,
   remainingSeconds,
   TUNNEL_CHECKS,
 } from "./model";
@@ -70,7 +71,12 @@ export function DeviceApproval({
             e.preventDefault();
             if (eligible && confirmed && codeValid(code))
               run(
-                () => gateway.approveDevice(s.id, s.candidate!.digest, code),
+                () =>
+                  gateway.approveDevice(
+                    s.id,
+                    s.candidate!.digest,
+                    normalizeCode(code),
+                  ),
                 "단말을 승인했어요. 보안 연결을 준비해요.",
               );
           }}

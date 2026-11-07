@@ -5,14 +5,18 @@ import { headline } from "../src/features/migrations/headline.ts";
 
 const names = { source: "온프렘 k3s", target: "AWS EKS" };
 
-function detail(over: Record<string, unknown>, failed = 0): MigrationDetail {
+function detail(
+  over: Record<string, unknown>,
+  failed = 0,
+  writeFailed = 0,
+): MigrationDetail {
   return {
     summary: {
       status: "completed",
       stage: "COMPLETED",
       stage_index: 9,
       stage_count: 10,
-      writes: { committed_target: 2978 },
+      writes: { committed_target: 2978, failed: writeFailed },
       downtime: { failed_requests: failed, write_pause_seconds: 30 },
       ...over,
     },
@@ -66,4 +70,17 @@ test("stopped jobs name the stage and flag failures", () => {
   assert.equal(result.tone, "bad");
   assert.match(text(result.parts), /쓰기 차단 단계에서 멈췄어요/);
   assert.equal(result.parts.filter((p) => p.bad).length, 1);
+});
+
+test("failed writes count rejected writes and failed requests together", () => {
+  const parts = headline(detail({}, 2, 5), names).parts;
+  assert.deepEqual(
+    parts.filter((p) => p.bad).map((p) => p.text),
+    ["7건"],
+  );
+  const running = headline(
+    detail({ status: "running", stage: "SYNCING", stage_index: 4 }, 0, 1),
+    names,
+  );
+  assert.match(text(running.parts), /실패한 쓰기는 1건이에요/);
 });

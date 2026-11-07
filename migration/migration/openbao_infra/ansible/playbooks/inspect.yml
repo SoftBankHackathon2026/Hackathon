@@ -1,0 +1,8 @@
+- name: Inspect explicit HTTPS endpoint
+  hosts: controllers
+  gather_facts: false
+  tasks:
+  - name: Read health without authentication
+    openbao_endpoint_info:
+      endpoint: '{{ ob.endpoint.url }}'
+      ca_file: '{{ ob.endpoint.ca_file | default(omit) }}'

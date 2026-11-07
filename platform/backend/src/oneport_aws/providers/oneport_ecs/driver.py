@@ -26,7 +26,11 @@ class OneportEcsCandidateDriver:
         self.restores: dict[str, str] = {}
 
     def configuration(self) -> dict:
-        return {"environment": self.provider.environment.model_dump(mode="json")}
+        return {
+            "environment": self.provider.environment.model_dump(
+                mode="json", exclude={"public_images"}
+            )
+        }
 
     def prepare(self, request: DeploymentRequest, release: ReleaseKey) -> EcsCheckpoint:
         restore_of = self.restores.get(release.value)

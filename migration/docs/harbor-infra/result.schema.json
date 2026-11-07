@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harbor infrastructure result v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "status",
+    "reason_codes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "operation": {
+      "enum": [
+        "discover",
+        "inspect",
+        "preflight",
+        "install",
+        "configure",
+        "trust",
+        "verify",
+        "handoff"
+      ]
+    },
+    "status": {
+      "enum": [
+        "discovered",
+        "inspected",
+        "preflight_passed",
+        "installed",
+        "configured",
+        "trust_configured",
+        "handoff_prepared",
+        "handoff_acknowledged",
+        "handoff_cleaned",
+        "partially_ready",
+        "ready",
+        "blocked",
+        "failed"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "plan_digest": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "artifact_ref": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string"
+    },
+    "workload_image_transfer_performed": {
+      "type": "boolean"
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "changed_unknown": {
+      "type": "boolean"
+    },
+    "acknowledged": {
+      "type": "boolean"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "reports": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "binding": {
+      "type": "object"
+    },
+    "expires_at": {
+      "type": "integer"
+    }
+  }
+}

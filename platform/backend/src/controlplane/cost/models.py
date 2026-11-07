@@ -98,6 +98,7 @@ class CostInventory(BaseModel):
     provider: Literal["onprem", "aws", "gcp"]
     region: str
     observed_at: datetime
+    kubernetes_observed_at: datetime | None = None
     nodes: list[Node] = Field(default_factory=list)
     volumes: list[Volume] = Field(default_factory=list)
     workloads: list[WorkloadDemand] = Field(default_factory=list)

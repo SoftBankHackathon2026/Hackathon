@@ -1,0 +1,17 @@
+- name: Inspect manually supplied or selected existing Keycloak endpoint
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read identity discovery and signing key metadata
+      keycloak_endpoint_info:
+        base_url: "{{ kc.endpoint.base_url }}"
+        realm: "{{ kc.endpoint.realm }}"
+        ca_file: "{{ kc.endpoint.ca_file | default(omit) }}"
+        management_url: "{{ kc.endpoint.management_url | default(omit) }}"
+      register: kc_endpoint
+      no_log: true
+    - name: Save endpoint checks
+      ansible.builtin.copy:
+        content: "{{ kc_endpoint.report | to_json }}"
+        dest: "{{ kc_report_dir }}/endpoint.json"
+        mode: '0600'

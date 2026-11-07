@@ -1,0 +1,22 @@
+- name: Discover existing Wazuh metadata
+  hosts: localhost
+  gather_facts: false
+  tasks:
+  - name: Read cluster candidates
+    wazuh_cluster:
+      config: '{{ wi }}'
+    no_log: true
+    register: wi_task_report
+    failed_when: false
+  - name: Store only the module report in the private controller workspace
+    wazuh_report:
+      report: '{{ wi_task_report.report | default({}) }}'
+      enforce: false
+    no_log: true
+- name: Inspect supplied hosts without changing services
+  hosts: wazuh_nodes
+  gather_facts: false
+  vars:
+    wi_operation: discover
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml

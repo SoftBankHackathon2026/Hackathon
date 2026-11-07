@@ -1,0 +1,12 @@
+- name: Inspect selected host without changing it
+  openbao_host_info:
+    action: preflight
+    config: '{{ ob }}'
+    expected: '{{ hostvars[''controller''][''cluster_result''].report.nodes | selectattr(''name'', ''equalto'', node_name)
+      | first }}'
+  register: host_check
+- name: Require successful preflight
+  ansible.builtin.assert:
+    that:
+    - host_check.report.status == 'preflight_passed'
+    quiet: true

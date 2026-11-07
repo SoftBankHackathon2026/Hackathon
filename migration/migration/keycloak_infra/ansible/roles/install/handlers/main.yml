@@ -1,0 +1,11 @@
+- name: Restart dedicated PostgreSQL
+  ansible.builtin.systemd_service:
+    name: oneport-keycloak-postgres
+    daemon_reload: true
+    state: restarted
+
+- name: Restart dedicated Keycloak
+  ansible.builtin.systemd_service:
+    name: oneport-keycloak
+    daemon_reload: true
+    state: restarted

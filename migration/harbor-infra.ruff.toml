@@ -1,0 +1,7 @@
+target-version = "py312"
+
+[lint]
+select = ["E9", "F", "I"]
+
+[lint.isort]
+known-first-party = ["migration"]

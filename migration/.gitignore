@@ -9,3 +9,6 @@ config.yaml
 *.sqlite3-wal
 *.sqlite3-shm
 reports/
+dist/
+keycloak-infra.local.yaml
+keycloak-results/

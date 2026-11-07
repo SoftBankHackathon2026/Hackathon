@@ -1,0 +1,261 @@
+- name: Claim only this verified new installation
+  wazuh_manage:
+    action: claim
+    config: '{{ wi }}'
+    digest: '{{ wi_digest }}'
+  no_log: true
+  register: wi_task_report
+  failed_when: false
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_task_report.report | default({}) }}'
+    enforce: true
+  no_log: true
+- name: Install host configuration dependencies without auto-starting packages
+  ansible.builtin.apt:
+    name:
+    - ca-certificates
+    - gnupg
+    - python3-cryptography
+    - python3-yaml
+    - python3-bcrypt
+    - python3-boto3
+    state: present
+    update_cache: true
+    policy_rc_d: 101
+- name: Download the pinned Wazuh repository signing key
+  ansible.builtin.get_url:
+    url: '{{ wi_artifacts.signing_key.url }}'
+    dest: /var/lib/oneport-wazuh-infra/wazuh.key
+    checksum: sha256:{{ wi_artifacts.signing_key.sha256 }}
+    mode: '0600'
+- name: Prepare the dedicated repository key
+  ansible.builtin.command:
+    argv:
+    - gpg
+    - --batch
+    - --yes
+    - --dearmor
+    - --output
+    - /usr/share/keyrings/oneport-wazuh.gpg
+    - /var/lib/oneport-wazuh-infra/wazuh.key
+    creates: /usr/share/keyrings/oneport-wazuh.gpg
+- name: Limit repository key permissions
+  ansible.builtin.file:
+    path: /usr/share/keyrings/oneport-wazuh.gpg
+    mode: '0644'
+- name: Add a dedicated signed package source
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/oneport-wazuh.list
+    content: 'deb [signed-by=/usr/share/keyrings/oneport-wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main
+
+      '
+    mode: '0644'
+- name: Install exact component versions without automatic service starts
+  ansible.builtin.apt:
+    name: '{{ wi_packages }}'
+    state: present
+    update_cache: true
+    policy_rc_d: 101
+    allow_downgrade: false
+- name: Hold component versions for deliberate upgrades
+  ansible.builtin.dpkg_selections:
+    name: '{{ item.split(''='')[0] }}'
+    selection: hold
+  loop: '{{ wi_packages }}'
+- name: Create the external archive writer account without login
+  ansible.builtin.user:
+    name: oneport-archive
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+- name: Prepare original archive storage
+  ansible.builtin.import_tasks: storage-parents.yml
+- name: Create the original archive directory
+  ansible.builtin.file:
+    path: '{{ wi.storage.raw_path }}'
+    state: directory
+    owner: oneport-archive
+    group: oneport-archive
+    mode: '0700'
+- name: Prepare the selected search storage
+  ansible.builtin.file:
+    path: '{{ wi.storage.index_path }}'
+    state: directory
+    owner: wazuh-indexer
+    group: wazuh-indexer
+    mode: '0700'
+- name: Prepare the external manifest exchange directory
+  ansible.builtin.file:
+    path: /var/lib/oneport-wazuh-archive-manifests
+    state: directory
+    owner: oneport-archive
+    group: oneport-archive
+    mode: '0700'
+- name: Download the fixed Filebeat module archive
+  ansible.builtin.get_url:
+    url: '{{ wi_artifacts.filebeat_module.url }}'
+    dest: /var/lib/oneport-wazuh-infra/filebeat-module.tar.gz
+    checksum: sha256:{{ wi_artifacts.filebeat_module.sha256 }}
+    mode: '0600'
+- name: Expand the verified Filebeat module
+  ansible.builtin.unarchive:
+    src: /var/lib/oneport-wazuh-infra/filebeat-module.tar.gz
+    dest: /usr/share/filebeat/module
+    remote_src: true
+    creates: /usr/share/filebeat/module/wazuh/archives/manifest.yml
+- name: Download the fixed Wazuh index template
+  ansible.builtin.get_url:
+    url: '{{ wi_artifacts.template.url }}'
+    dest: /etc/filebeat/wazuh-template.json
+    checksum: sha256:{{ wi_artifacts.template.sha256 }}
+    mode: '0644'
+- name: Create protected certificates and component configuration
+  wazuh_manage:
+    action: material
+    config: '{{ wi }}'
+    digest: '{{ wi_digest }}'
+    credentials: '{{ wi_credentials }}'
+  no_log: true
+  register: wi_task_report
+  failed_when: false
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_task_report.report | default({}) }}'
+    enforce: true
+  no_log: true
+- name: Configure the manager AWS credential location
+  ansible.builtin.file:
+    path: /etc/systemd/system/wazuh-manager.service.d
+    state: directory
+    mode: '0755'
+- name: Limit the owned services' memory use
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ item.name }}.service.d
+    state: directory
+    mode: '0755'
+  loop:
+  - name: wazuh-indexer
+  - name: wazuh-manager
+  - name: wazuh-dashboard
+  - name: filebeat
+- name: Write per-service memory ceilings
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/{{ item.name }}.service.d/oneport-memory.conf
+    content: '[Unit]
+
+      RequiresMountsFor={{ wi.storage.raw_path }} {{ wi.storage.index_path }} /var/ossec
+
+      [Service]
+
+      MemoryMax={{ item.memory }}M
+
+      UMask=0077
+
+      '
+    mode: '0644'
+  loop:
+  - name: wazuh-indexer
+    memory: '{{ wi.target.heap_mb + 1024 }}'
+  - name: wazuh-manager
+    memory: 1536
+  - name: wazuh-dashboard
+    memory: 1536
+  - name: filebeat
+    memory: 512
+- name: Set explicit manager credential environment
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/wazuh-manager.service.d/oneport.conf
+    content: '[Service]
+
+      Environment=AWS_SHARED_CREDENTIALS_FILE=/var/ossec/.aws/credentials
+
+      UMask=0077
+
+      '
+    mode: '0644'
+- name: Validate Filebeat configuration before starting
+  ansible.builtin.command:
+    argv:
+    - filebeat
+    - test
+    - config
+    - -c
+    - /etc/filebeat/filebeat.yml
+  changed_when: false
+  no_log: true
+- name: Validate manager modules before starting
+  ansible.builtin.command:
+    argv:
+    - /var/ossec/bin/wazuh-modulesd
+    - -t
+  changed_when: false
+  no_log: true
+- name: Start the loopback indexer and manager
+  ansible.builtin.systemd_service:
+    name: '{{ item }}'
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+  - wazuh-indexer
+  - wazuh-manager
+- name: Wait for the local indexer socket
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 9200
+    timeout: 180
+- name: Wait for the local manager API socket
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 55000
+    timeout: 180
+- name: Initialize this installation's identities and index template
+  wazuh_manage:
+    action: security
+    config: '{{ wi }}'
+    digest: '{{ wi_digest }}'
+  no_log: true
+  register: wi_task_report
+  failed_when: false
+  retries: 15
+  delay: 2
+  until: wi_task_report.report.reason_codes | default(['MODULE_REPORT_MISSING']) | length == 0
+  ignore_errors: true
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_task_report.report | default({}) }}'
+    enforce: true
+  no_log: true
+- name: Start the event forwarder and dashboard
+  ansible.builtin.systemd_service:
+    name: '{{ item }}'
+    enabled: true
+    state: started
+  loop:
+  - filebeat
+  - wazuh-dashboard
+- name: Install the independent storage guard
+  ansible.builtin.import_tasks: guard.yml
+- name: Wait for the selected dashboard listener
+  ansible.builtin.wait_for:
+    host: '{{ wi.target.bind_address }}'
+    port: '{{ wi.target.dashboard_port }}'
+    timeout: 180
+- name: Confirm installed services and permissions
+  wazuh_manage:
+    action: finalize
+    config: '{{ wi }}'
+    digest: '{{ wi_digest }}'
+  no_log: true
+  register: wi_task_report
+  failed_when: false
+  retries: 15
+  delay: 2
+  until: wi_task_report.report.reason_codes | default(['MODULE_REPORT_MISSING']) | length == 0
+  ignore_errors: true
+- name: Store only the module report in the private controller workspace
+  wazuh_report:
+    report: '{{ wi_task_report.report | default({}) }}'
+    enforce: true
+  no_log: true

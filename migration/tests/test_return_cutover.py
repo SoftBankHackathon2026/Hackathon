@@ -236,7 +236,7 @@ def _fail_worker_target(fakes) -> None:
 
 
 def _fail_final_verify(fakes) -> None:
-    fakes["verify"].results = [True, True, False]
+    fakes["verify"].results = [True, True, True, False]
 
 
 @pytest.mark.parametrize(("arrange", "failed_stage"), [

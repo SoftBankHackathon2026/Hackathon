@@ -477,6 +477,64 @@ def test_registered_meter_is_created_and_read_by_collector():
     assert failed.gaps == ["온프렘 측정기: 읽기 실패 (TimeoutError)"]
 
 
+def test_collect_inventory_survives_a_cluster_that_stops_answering():
+    from urllib3.exceptions import MaxRetryError, ReadTimeoutError
+
+    def slow_kube(env):
+        raise MaxRetryError(
+            None, "/api/v1/nodes", ReadTimeoutError(None, "/api/v1/nodes", "timeout")
+        )
+
+    inv = collect_inventory(ONPREM, {}, kube=slow_kube)
+    assert inv.gaps == ["클러스터 자원: 읽지 못함 (MaxRetryError)"]
+
+
+def test_collector_tick_keeps_going_when_one_environment_fails():
+    from urllib3.exceptions import MaxRetryError
+
+    from controlplane.execution.fleet_collector import FleetCollector
+
+    saved, facts = [], []
+
+    class Store:
+        def get(self, env_id):
+            return None
+
+        def put(self, inventory):
+            saved.append(inventory.env_id)
+
+    class Journal:
+        def put_facts(self, env_id, at, payload):
+            facts.append(env_id)
+
+    class Reader:
+        def __init__(self, env):
+            self.env = env
+
+        def read(self):
+            if self.env.id == "onprem":
+                raise ApiException(status=500)
+            from controlplane.domain.fleet import ClusterFacts
+
+            return ClusterFacts(observed_at=None, connected=True)
+
+    def cost_reader(env, tags, meter, project):
+        if env.id == "onprem":
+            raise MaxRetryError(None, "/api/v1/nodes")
+        return collect_inventory(env, tags, kube=lambda e: ([], [], []))
+
+    collector = FleetCollector(
+        FleetConfig(mode="live", environments=[ONPREM, AWS], migrations=[]),
+        journal=Journal(),
+        reader=Reader,
+        costs=Store(),
+        cost_reader=cost_reader,
+    )
+    collector.tick()
+    assert facts == ["aws"]
+    assert saved == ["aws"]
+
+
 def test_collector_keeps_running_with_unknown_meter():
     from controlplane.cost.config import EnvironmentCostConfig, MeterConfig
     from controlplane.execution.fleet_collector import FleetCollector
@@ -484,6 +542,9 @@ def test_collector_keeps_running_with_unknown_meter():
     saved = []
 
     class Store:
+        def get(self, env_id):
+            return None
+
         def put(self, inventory):
             saved.append(inventory)
 

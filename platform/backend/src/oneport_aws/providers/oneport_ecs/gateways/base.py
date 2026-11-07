@@ -73,10 +73,17 @@ class AwsGateway:
             raise ProviderUnavailable("AWS 조회가 일시적으로 실패했습니다.") from None
 
     def _write(self, method: str, **kwargs: Any) -> Payload:
+        return self._write_optional(method, frozenset(), **kwargs)
+
+    def _write_optional(
+        self, method: str, missing: frozenset[str], **kwargs: Any
+    ) -> Payload | None:
         try:
             return getattr(self._client, method)(**kwargs)
         except ClientError as exc:
             code = error_code(exc)
+            if code in missing:
+                return None
             if code in CONFLICT_CODES:
                 raise ProviderConflict(f"AWS 리소스 상태가 충돌합니다 ({code}).") from None
             if code in REJECTED_CODES:

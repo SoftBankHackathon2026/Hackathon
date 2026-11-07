@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   bucketPosition,
+  clampIndex,
   compactCount,
   linePath,
   nearestIndex,
@@ -65,4 +66,12 @@ test("nearestIndex picks the closest sample", () => {
   assert.equal(nearestIndex([], 5), -1);
   assert.equal(nearestIndex([0, 10, 20], 4), 0);
   assert.equal(nearestIndex([0, 10, 20], 16), 2);
+});
+
+test("clampIndex keeps a stale hover inside a shrunk series", () => {
+  assert.equal(clampIndex(null, 5), null);
+  assert.equal(clampIndex(3, 0), null);
+  assert.equal(clampIndex(9, 4), 3);
+  assert.equal(clampIndex(2, 4), 2);
+  assert.equal(clampIndex(-1, 4), 0);
 });

@@ -1,6 +1,6 @@
 import type { MigrationDetail } from "../../api/migrations.ts";
 import { formatCount, formatSeconds } from "../../lib/format.ts";
-import { jobVerify } from "./summary.ts";
+import { failedWrites, jobVerify } from "./summary.ts";
 import {
   STATUS_LABELS,
   stepLabel,
@@ -18,7 +18,7 @@ export function headline(
   const { summary } = detail;
   const tone = statusTone(summary.status);
   const label = STATUS_LABELS[summary.status];
-  const failed = summary.downtime.failed_requests;
+  const failed = failedWrites(summary);
   const verify = jobVerify(detail.verify.pre, detail.verify.post);
   const failedPart = { text: `${formatCount(failed)}건`, bad: failed > 0 };
   const pause = formatSeconds(summary.downtime.write_pause_seconds ?? 0);

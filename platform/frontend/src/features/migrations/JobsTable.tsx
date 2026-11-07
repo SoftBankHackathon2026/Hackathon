@@ -3,11 +3,17 @@ import { migrationHash } from "../../app/routes";
 import { StatusLabel } from "../../components/PageKit";
 import { ProviderLogo } from "../../components/ProviderLogo";
 import { useSort } from "../../components/SortableTable";
-import { formatAgo, formatCount, formatSeconds } from "../../lib/format";
+import {
+  formatAgo,
+  formatCount,
+  formatRatio,
+  formatSeconds,
+} from "../../lib/format";
 import { phaseIndex } from "./flow";
 import { DIRECTION_LABELS, envShortName } from "./fleetView";
 import { PhaseChevrons } from "./PhaseChevrons";
 import { statusTone, STATUS_LABELS } from "./stages";
+import { failedWrites } from "./summary";
 
 /** 작업 표: 열을 눌러 정렬, 행(또는 이름)을 누르면 작업 상세 화면. */
 export function JobsTable({
@@ -29,7 +35,7 @@ export function JobsTable({
       m.writes.committed_source > 0
         ? m.writes.committed_target / m.writes.committed_source
         : null,
-    failed: (m) => m.writes.failed + m.downtime.failed_requests,
+    failed: failedWrites,
     pause: (m) => m.downtime.write_pause_seconds,
     updated: (m) => (m.updated_at ? Date.parse(m.updated_at) : null),
   });
@@ -56,7 +62,7 @@ export function JobsTable({
       </thead>
       <tbody>
         {sorted.map((m) => {
-          const failed = m.writes.failed + m.downtime.failed_requests;
+          const failed = failedWrites(m);
           return (
             <tr
               key={m.job_id}
@@ -131,7 +137,7 @@ function RatioCell({ part, whole }: { part: number; whole: number }) {
       <span className="ratio-track" aria-hidden="true">
         <span style={{ width: `${ratio * 100}%` }} />
       </span>
-      {(ratio * 100).toFixed(1)}%
+      {formatRatio(part, whole)}
     </span>
   );
 }

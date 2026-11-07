@@ -4,7 +4,7 @@ import sqlite3
 from argparse import Namespace
 from pathlib import Path
 
-path = Path(__file__).parents[2] / "ops" / "fleet_reporter.py"
+path = Path(__file__).parents[2] / "deploy" / "onprem" / "fleet_reporter.py"
 spec = importlib.util.spec_from_file_location("fleet_reporter", path)
 reporter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reporter)

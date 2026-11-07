@@ -1,0 +1,15 @@
+# Verified against upstream release metadata on 2026-11-06; never resolve latest at apply time.
+kc_versions:
+  keycloak_version: 26.8.2
+  java_version: 25.0.5+8
+  postgres_major: 18
+kc_keycloak:
+  url: https://github.com/keycloak/keycloak/releases/download/26.8.2/keycloak-26.8.2.tar.gz
+  checksum: sha256:dd124787283918bc597628887168333465ee2a811a389e0003569e52be7e487f
+kc_java:
+  x86_64:
+    url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_linux_hotspot_25.0.5_8.tar.gz
+    checksum: sha256:6fac98f0c8202efc3135a9e9e42aa61963ec42d1c5cbb40caf231e7b14a24ef6
+  aarch64:
+    url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_aarch64_linux_hotspot_25.0.5_8.tar.gz
+    checksum: sha256:963931723891302ebb2687178532c3d793d71e2577cd058061c7efb396140a86

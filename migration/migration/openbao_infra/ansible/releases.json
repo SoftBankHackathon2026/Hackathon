@@ -1,0 +1,10 @@
+{
+  "x86_64": {
+    "url": "https://github.com/openbao/openbao/releases/download/v2.7.2/openbao_2.7.2_linux_amd64.tar.gz",
+    "checksum": "sha256:582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96"
+  },
+  "aarch64": {
+    "url": "https://github.com/openbao/openbao/releases/download/v2.7.2/openbao_2.7.2_linux_arm64.tar.gz",
+    "checksum": "sha256:5b97bf816fa820e5e521abec1db19c6161fcca2f666cf4a84e335089c0e83edd"
+  }
+}

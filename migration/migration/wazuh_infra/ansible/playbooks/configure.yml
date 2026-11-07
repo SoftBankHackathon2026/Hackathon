@@ -1,0 +1,35 @@
+- name: Reconcile configuration of this owned installation
+  hosts: wazuh_nodes
+  any_errors_fatal: true
+  gather_facts: false
+  vars:
+    wi_operation: configure
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+  - name: Reconcile protected component configuration
+    wazuh_manage:
+      action: material
+      config: '{{ wi }}'
+      digest: '{{ wi_digest }}'
+      credentials: '{{ wi_credentials }}'
+    no_log: true
+    register: wi_task_report
+    failed_when: false
+  - name: Store only the module report in the private controller workspace
+    wazuh_report:
+      report: '{{ wi_task_report.report | default({}) }}'
+      enforce: true
+    no_log: true
+  - name: Verify configured services and role boundaries
+    wazuh_manage:
+      action: verify
+      config: '{{ wi }}'
+      digest: '{{ wi_digest }}'
+    no_log: true
+    register: wi_task_report
+    failed_when: false
+  - name: Store only the module report in the private controller workspace
+    wazuh_report:
+      report: '{{ wi_task_report.report | default({}) }}'
+      enforce: true
+    no_log: true

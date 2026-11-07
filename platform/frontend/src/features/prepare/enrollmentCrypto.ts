@@ -32,7 +32,11 @@ export function enrollmentCommand(
     parsed.password ||
     parsed.search ||
     parsed.hash ||
-    !/^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[A-Za-z0-9/_-]+$/.test(url) ||
+    url
+      .split("/")
+      .slice(3)
+      .some((segment) => segment === "." || segment === "..") ||
+    !/^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[A-Za-z0-9/_.-]+$/.test(url) ||
     !/^[A-Za-z0-9_-]{22}$/.test(requestId) ||
     seed.length !== 32
   ) {

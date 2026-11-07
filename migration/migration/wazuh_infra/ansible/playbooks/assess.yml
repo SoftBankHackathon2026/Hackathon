@@ -1,0 +1,7 @@
+- name: Assess a selected host and bounded source metadata
+  hosts: wazuh_nodes
+  gather_facts: false
+  vars:
+    wi_operation: assess
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml

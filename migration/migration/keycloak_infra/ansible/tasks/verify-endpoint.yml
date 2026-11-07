@@ -1,0 +1,37 @@
+- name: Refresh cluster membership after host installation or verification
+  ansible.builtin.import_tasks: cluster.yml
+
+- name: Require selected node to remain present and Ready
+  ansible.builtin.assert:
+    that: >-
+      kc_cluster.nodes | selectattr('name', 'equalto', kc.install.node_name)
+      | selectattr('uid', 'equalto', (kc.nodes | selectattr('name', 'equalto', kc.install.node_name) | first).uid)
+      | selectattr('ready', 'equalto', true) | list | length == 1
+    fail_msg: NODE_NOT_READY_AFTER_INSTALLATION
+
+- name: Verify published HTTPS address from the platform execution environment
+  keycloak_endpoint_info:
+    base_url: "{{ kc.install.base_url }}"
+    realm: master
+    ca_file: "{{ kc.install.ca_file }}"
+  register: kc_external
+  no_log: true
+
+- name: Save external endpoint check results
+  ansible.builtin.copy:
+    content: "{{ kc_external.report | to_json }}"
+    dest: "{{ kc_report_dir }}/endpoint.json"
+    mode: '0600'
+
+- name: Require valid published identity discovery and signing keys
+  ansible.builtin.assert:
+    that:
+      - kc_external.report.checks | selectattr('status', 'equalto', 'fail') | list | length == 0
+      - kc_external.report.checks | selectattr('name', 'equalto', 'signing_keys') | selectattr('status', 'equalto', 'pass') | list | length == 1
+    fail_msg: PUBLISHED_ENDPOINT_NOT_VERIFIED
+
+- name: Save verified infrastructure connection information
+  ansible.builtin.copy:
+    content: "{{ {'connection': kc_external.report.connection, 'checks': [{'name': 'published_endpoint', 'status': 'pass'}]} | to_json }}"
+    dest: "{{ kc_report_dir }}/verified.json"
+    mode: '0600'

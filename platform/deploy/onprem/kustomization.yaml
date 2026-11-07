@@ -2,13 +2,14 @@
 #   1. 워커·Connect 상태           → gitops apps/platform-status-proxy (읽기 전용 프록시, SoftBankHackathon2026/gitops#19)
 #   2. reporter-sidecar.patch.yaml → 플랫폼을 띄워 내부 ALB 주소가 나온 뒤 gitops apps/db-insert-worker 의 patches 에 추가
 #                                    (주소 없이 붙이면 sidecar 가 재시작을 반복해 워커 파드가 NotReady 가 된다)
-#   3. 보고기 스크립트 ConfigMap    → 아래 configMapGenerator 와 같은 방식으로 생성
+#   3. 보고기 스크립트 ConfigMap    → 아래 configMapGenerator 와 같은 방식으로 생성 (kubectl kustomize platform/deploy/onprem 로 확인)
+#                                    스크립트는 kustomize 가 루트 밖 파일을 읽지 않아 이 폴더(fleet_reporter.py)에 둔다
 #   4. Secret oneport-ingest(token) → kubectl -n hackathon create secret generic oneport-ingest --from-file=token=<파일>
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: hackathon
 configMapGenerator:
   - name: oneport-fleet-reporter
-    files: [../../ops/fleet_reporter.py]
+    files: [fleet_reporter.py]
     options:
       disableNameSuffixHash: true

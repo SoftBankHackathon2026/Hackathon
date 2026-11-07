@@ -1,0 +1,13 @@
+/var/log/openbao/audit.json {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0600 openbao openbao
+    sharedscripts
+    postrotate
+        /bin/systemctl kill -s HUP --kill-whom=main openbao.service
+    endscript
+}
