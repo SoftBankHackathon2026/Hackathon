@@ -1,6 +1,6 @@
 output "name_prefix" {
-  description = "모든 자원 이름 접두사. 잔여 검사(ResidueSelector.name_prefix)에 쓴다."
-  value       = local.name_prefix
+  description = "모든 자원 이름 접두사. 잔여 검사(ResidueScanner.scan)에 넘긴다."
+  value       = var.name_prefix
 }
 
 output "roles" {
@@ -12,7 +12,7 @@ output "roles" {
 }
 
 output "vpc_id" {
-  description = "전용 VPC. 비공개 호스팅 영역을 여기에 붙인다."
+  description = "전용 VPC."
   value       = module.base.vpc_id
 }
 
@@ -41,10 +41,6 @@ output "cluster_arn" {
   value       = module.base.cluster_arn
 }
 
-output "bot" {
-  description = "트래픽 봇 실행에 필요한 값. 봇 이미지가 없으면 null."
-  value       = module.base.bot
-}
 
 output "app" {
   description = "앱 층(ECS 서비스·ALB). include_app 이 false 면 null."

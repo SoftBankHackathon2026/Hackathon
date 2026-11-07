@@ -28,10 +28,6 @@ variable "task_execution_role_arn" {
   type        = string
 }
 
-variable "db_resource_id" {
-  description = "IAM DB 인증 정책에 쓰는 RDS 자원 ID."
-  type        = string
-}
 
 variable "image" {
   description = "앱 컨테이너 이미지."
@@ -63,7 +59,3 @@ variable "desired_count" {
   type        = number
 }
 
-variable "iam_db_users" {
-  description = "rds-db:connect 를 줄 DB 사용자."
-  type        = list(string)
-}

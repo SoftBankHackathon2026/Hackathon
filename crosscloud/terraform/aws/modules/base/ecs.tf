@@ -1,5 +1,5 @@
-# ECS 클러스터·작업 실행 역할·로그와 트래픽 봇 작업 정의. 봇은 이 VPC 안에서
-# 돌아야 비공개 호스팅 영역 이름을 푼다. 실행은 run-task 로 한다(공인 IP 켬).
+# ECS 클러스터·작업 실행 역할·로그. 대상 앱(gcp_to_aws)을 나중에 더해도 같은
+# 클러스터·역할을 쓰도록 기반 층에 둔다.
 
 data "aws_iam_policy_document" "ecs_tasks_assume" {
   statement {
@@ -21,11 +21,10 @@ resource "aws_cloudwatch_log_group" "this" {
   retention_in_days = 1
 }
 
-# IAM 은 전역이라 리전 태그 질의에 안 잡힌다. 경로를 접두사로 두어 잔여
-# 검사가 경로 접두사 질의로 찾게 한다(crosscloud.provision.residue_aws).
+# IAM 은 전역이라 리전 태그 질의에 안 잡힌다. 잔여 검사는 역할 이름 접두사로
+# 찾는다(crosscloud.provision.residue_aws).
 resource "aws_iam_role" "task_execution" {
   name               = "${var.name_prefix}-exec"
-  path               = "/${var.name_prefix}/"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
@@ -48,43 +47,3 @@ resource "aws_iam_role_policy" "read_secrets" {
   role   = aws_iam_role.task_execution.id
   policy = data.aws_iam_policy_document.read_secrets.json
 }
-
-resource "aws_security_group" "bot" {
-  name        = "${var.name_prefix}-bot"
-  description = "Traffic bot egress only"
-  vpc_id      = aws_vpc.this.id
-}
-
-resource "aws_vpc_security_group_egress_rule" "bot_all" {
-  security_group_id = aws_security_group.bot.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_ecs_task_definition" "bot" {
-  count = var.bot_image == null ? 0 : 1
-
-  family                   = "${var.name_prefix}-bot"
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = 256
-  memory                   = 512
-  execution_role_arn       = aws_iam_role.task_execution.arn
-
-  container_definitions = jsonencode([{
-    name        = "bot"
-    image       = var.bot_image
-    essential   = true
-    environment = [for key, value in var.bot_env : { name = key, value = value }]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.this.name
-        awslogs-region        = data.aws_region.current.region
-        awslogs-stream-prefix = "bot"
-      }
-    }
-  }])
-}
-
-data "aws_region" "current" {}

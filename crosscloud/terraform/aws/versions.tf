@@ -9,8 +9,9 @@ terraform {
     }
   }
 
-  # state 위치는 실행기가 init 때 -backend-config 로 준다.
-  backend "s3" {}
+  # state 경로는 실행기(crosscloud.provision.terraform)가 init 때
+  # -backend-config=path=... 로 준다.
+  backend "local" {}
 }
 
 provider "aws" {
@@ -18,7 +19,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      "crosscloud-run"       = var.run_id
+      "crosscloud-run"       = var.name_prefix
       "crosscloud-direction" = var.direction
     }
   }

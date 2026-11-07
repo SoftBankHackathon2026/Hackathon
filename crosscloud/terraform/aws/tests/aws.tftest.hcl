@@ -15,8 +15,8 @@ mock_provider "aws" {
 }
 
 variables {
-  run_id    = "r1"
-  app_image = "public.ecr.aws/docker/library/nginx:stable"
+  name_prefix = "ccx-r1"
+  app_image   = "public.ecr.aws/docker/library/nginx:stable"
 }
 
 run "aws_to_gcp_is_one_source_fixture" {
@@ -33,7 +33,7 @@ run "aws_to_gcp_is_one_source_fixture" {
 
   assert {
     condition     = output.name_prefix == "ccx-r1"
-    error_message = "이름 접두사는 ccx-<run_id> 다."
+    error_message = "이름 접두사를 그대로 내보낸다(잔여 검사 입력)."
   }
 
   assert {
@@ -108,13 +108,13 @@ run "rejects_postgres_older_than_15" {
   expect_failures = [var.db_engine_version]
 }
 
-run "rejects_run_id_that_breaks_name_limits" {
+run "rejects_name_prefix_outside_run_pattern" {
   command = plan
 
   variables {
-    direction = "aws_to_gcp"
-    run_id    = "Run_With_Upper"
+    direction   = "aws_to_gcp"
+    name_prefix = "ccx-run-1"
   }
 
-  expect_failures = [var.run_id]
+  expect_failures = [var.name_prefix]
 }

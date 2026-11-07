@@ -21,10 +21,6 @@ output "db" {
   }
 }
 
-output "db_resource_id" {
-  description = "IAM DB 인증 정책(rds-db:connect)에 쓰는 자원 ID."
-  value       = aws_db_instance.this.resource_id
-}
 
 output "secret_arns" {
   description = "Secret 그릇 이름 → ARN."
@@ -49,13 +45,4 @@ output "log_group_name" {
 output "task_execution_role_arn" {
   description = "ECS 작업 실행 역할(이미지 받기·Secret 읽기·로그)."
   value       = aws_iam_role.task_execution.arn
-}
-
-output "bot" {
-  description = "트래픽 봇 run-task 에 필요한 값. 봇 이미지가 없으면 null."
-  value = var.bot_image == null ? null : {
-    task_definition_arn = aws_ecs_task_definition.bot[0].arn
-    security_group_id   = aws_security_group.bot.id
-    subnet_ids          = aws_subnet.public[*].id
-  }
 }

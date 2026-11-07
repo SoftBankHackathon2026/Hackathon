@@ -23,20 +23,17 @@ variables {
   db_name           = "app"
   db_username       = "ccxadmin"
   secret_names      = ["database-url"]
-  bot_image         = null
-  bot_env           = {}
 }
 
-run "db_is_public_single_az_with_logical_replication_and_iam_auth" {
+run "db_is_public_single_az_with_logical_replication" {
   command = plan
 
   assert {
     condition = (
       aws_db_instance.this.publicly_accessible
       && !aws_db_instance.this.multi_az
-      && aws_db_instance.this.iam_database_authentication_enabled
     )
-    error_message = "DB 는 공개·단일 AZ·IAM 인증 켬이어야 한다."
+    error_message = "DB 는 공개·단일 AZ 여야 한다."
   }
 
   assert {
@@ -79,7 +76,7 @@ run "secrets_are_empty_containers_deleted_without_recovery_window" {
   command = plan
 
   assert {
-    condition     = aws_secretsmanager_secret.this["database-url"].name == "ccx-r1/database-url"
+    condition     = aws_secretsmanager_secret.this["database-url"].name == "ccx-r1-database-url"
     error_message = "Secret 이름은 접두사 아래에 둔다."
   }
 
@@ -94,30 +91,11 @@ run "secrets_are_empty_containers_deleted_without_recovery_window" {
   }
 }
 
-run "iam_role_lives_under_prefix_path_for_residue_scan" {
+run "iam_role_is_named_with_prefix_for_residue_scan" {
   command = plan
 
   assert {
-    condition     = aws_iam_role.task_execution.path == "/ccx-r1/"
-    error_message = "IAM 역할 경로가 접두사여야 잔여 검사가 찾는다."
-  }
-
-  assert {
-    condition     = length(aws_ecs_task_definition.bot) == 0
-    error_message = "봇 이미지가 없으면 봇 작업 정의를 만들지 않는다."
-  }
-}
-
-run "bot_task_definition_when_image_given" {
-  command = plan
-
-  variables {
-    bot_image = "kty1021/traffic-bot:latest"
-    bot_env   = { TARGET_URL = "http://app.ccx-r1.internal" }
-  }
-
-  assert {
-    condition     = jsondecode(aws_ecs_task_definition.bot[0].container_definitions)[0].image == "kty1021/traffic-bot:latest"
-    error_message = "봇 작업 정의는 주어진 이미지를 쓴다."
+    condition     = aws_iam_role.task_execution.name == "ccx-r1-exec"
+    error_message = "IAM 역할 이름이 접두사로 시작해야 잔여 검사가 찾는다."
   }
 }

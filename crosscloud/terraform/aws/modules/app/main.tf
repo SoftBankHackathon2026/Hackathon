@@ -1,27 +1,14 @@
 # 앱 층: ALB(HTTP 80) → ECS Fargate 서비스. 작업은 퍼블릭 서브넷에서 공인 IP 로
 # 나간다(NAT 없음).
 #
+# ALB 는 인터넷 연결형이다 — 운영자 PC 의 ingress 가 인터넷으로 이 앱을 부른다.
+#
 # 리스너 기본 동작과 서비스의 작업 정의는 Terraform 이 처음 한 번만 정한다.
-# 그 뒤에는 제어 어댑터가 바꾼다(리스너 503 ↔ forward, 대상 프로필 Secret 참조로
-# 바꾼 작업 정의). 재 apply 가 이것을 원본으로 되돌리면 대상 DB 가 쓰기를 받은
-# 뒤 앱이 원본 DB 로 돌아가는 롤백이 된다 — 불변식 위반이라 무시한다.
+# 그 뒤에는 전환 단계가 Terraform 밖에서 바꿀 수 있다(앱 멈춤, 대상 DB 를 가리키는
+# Secret 참조로 바꾼 작업 정의). 재 apply 가 이것을 원본으로 되돌리면 대상 DB 가
+# 쓰기를 받은 뒤 앱이 원본 DB 로 돌아가는 롤백이 된다 — 불변식 위반이라 무시한다.
 
 data "aws_region" "current" {}
-
-data "aws_partition" "current" {}
-
-data "aws_caller_identity" "current" {}
-
-data "aws_iam_policy_document" "ecs_tasks_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
-    }
-  }
-}
 
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb"
@@ -102,31 +89,6 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# IAM 역할 경로를 접두사로 두는 이유는 base 모듈 ecs.tf 와 같다(잔여 검사).
-resource "aws_iam_role" "task" {
-  name               = "${var.name_prefix}-task"
-  path               = "/${var.name_prefix}/"
-  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
-}
-
-data "aws_iam_policy_document" "rds_connect" {
-  statement {
-    actions = ["rds-db:connect"]
-    resources = [
-      for user in var.iam_db_users :
-      "arn:${data.aws_partition.current.partition}:rds-db:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:dbuser:${var.db_resource_id}/${user}"
-    ]
-  }
-}
-
-resource "aws_iam_role_policy" "rds_connect" {
-  count = length(var.iam_db_users) > 0 ? 1 : 0
-
-  name   = "rds-connect"
-  role   = aws_iam_role.task.id
-  policy = data.aws_iam_policy_document.rds_connect.json
-}
-
 resource "aws_ecs_task_definition" "app" {
   family                   = "${var.name_prefix}-app"
   requires_compatibilities = ["FARGATE"]
@@ -134,7 +96,6 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = 256
   memory                   = 512
   execution_role_arn       = var.task_execution_role_arn
-  task_role_arn            = aws_iam_role.task.arn
 
   container_definitions = jsonencode([{
     name         = "app"

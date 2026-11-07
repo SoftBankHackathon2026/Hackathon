@@ -1,11 +1,10 @@
-variable "run_id" {
-  description = "실행 식별자. 자원 이름 접두사 ccx-<run_id> 와 태그 crosscloud-run 값이 된다."
+variable "name_prefix" {
+  description = "실행 접두사 ccx-<run>. 모든 자원 이름이 이것으로 시작하고 태그 crosscloud-run 값이 된다. run 은 영문 소문자·숫자 1–16자(crosscloud.provision.residue 와 같다)."
   type        = string
 
   validation {
-    # ALB·대상 그룹 이름 32자 상한 안에 접두사와 접미사가 들어가야 한다.
-    condition     = can(regex("^[a-z0-9]{1,12}$", var.run_id))
-    error_message = "run_id 는 소문자·숫자 1~12자여야 한다."
+    condition     = can(regex("^ccx-[a-z0-9]{1,16}$", var.name_prefix))
+    error_message = "name_prefix 는 ccx-<영문 소문자·숫자 1–16자> 여야 한다."
   }
 }
 
@@ -67,7 +66,7 @@ variable "secret_names" {
 }
 
 variable "include_app" {
-  description = "앱 층(ECS·ALB·봇)을 만들지. gcp_to_aws 에서 대상 기반만 먼저 깔 때 false."
+  description = "앱 층(ECS 서비스·ALB)을 만들지. gcp_to_aws 에서 대상 기반만 먼저 깔 때 false."
   type        = bool
   default     = true
 }
@@ -116,22 +115,4 @@ variable "app_desired_count" {
   description = "앱 작업 수."
   type        = number
   default     = 1
-}
-
-variable "iam_db_users" {
-  description = "앱 작업 역할에 rds-db:connect 를 줄 DB 사용자. IAM 인증 변형 앱에만 쓴다."
-  type        = list(string)
-  default     = []
-}
-
-variable "bot_image" {
-  description = "트래픽 봇 이미지. null 이면 봇 작업 정의를 만들지 않는다."
-  type        = string
-  default     = null
-}
-
-variable "bot_env" {
-  description = "트래픽 봇 env(예: 대상 주소)."
-  type        = map(string)
-  default     = {}
 }

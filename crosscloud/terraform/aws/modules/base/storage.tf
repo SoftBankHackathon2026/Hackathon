@@ -4,13 +4,13 @@
 resource "aws_secretsmanager_secret" "this" {
   for_each = toset(var.secret_names)
 
-  name = "${var.name_prefix}/${each.key}"
+  name = "${var.name_prefix}-${each.key}"
   # 해체 즉시 지운다. 복구 대기 중인 Secret 은 이름을 막고 잔여로 남는다.
   recovery_window_in_days = 0
 }
 
 resource "aws_ecr_repository" "app" {
-  name = "${var.name_prefix}/app"
+  name = "${var.name_prefix}-app"
   # 이미지가 남아 있어도 해체한다.
   force_delete = true
 }

@@ -48,12 +48,11 @@ resource "aws_db_instance" "this" {
   # 비밀번호는 RDS 가 만들어 Secrets Manager 에 둔다 — state 에 평문이 남지 않는다.
   manage_master_user_password = true
 
-  iam_database_authentication_enabled = true
-  parameter_group_name                = aws_db_parameter_group.this.name
-  db_subnet_group_name                = aws_db_subnet_group.this.name
-  vpc_security_group_ids              = [aws_security_group.db.id]
-  publicly_accessible                 = true
-  multi_az                            = false
+  parameter_group_name   = aws_db_parameter_group.this.name
+  db_subnet_group_name   = aws_db_subnet_group.this.name
+  vpc_security_group_ids = [aws_security_group.db.id]
+  publicly_accessible    = true
+  multi_az               = false
 
   backup_retention_period  = 0
   delete_automated_backups = true

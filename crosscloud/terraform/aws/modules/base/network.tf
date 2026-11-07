@@ -7,7 +7,7 @@ data "aws_availability_zones" "available" {
 
 resource "aws_vpc" "this" {
   cidr_block = var.vpc_cidr
-  # 비공개 호스팅 영역을 쓰려면 둘 다 켜야 한다.
+  # RDS 공개 엔드포인트(publicly_accessible)를 쓰려면 둘 다 켜야 한다.
   enable_dns_support   = true
   enable_dns_hostnames = true
 

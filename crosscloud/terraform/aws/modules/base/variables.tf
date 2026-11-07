@@ -32,13 +32,3 @@ variable "secret_names" {
   description = "값 없이 만들 Secret 그릇 이름."
   type        = list(string)
 }
-
-variable "bot_image" {
-  description = "트래픽 봇 이미지. null 이면 봇 작업 정의를 만들지 않는다."
-  type        = string
-}
-
-variable "bot_env" {
-  description = "트래픽 봇 env."
-  type        = map(string)
-}

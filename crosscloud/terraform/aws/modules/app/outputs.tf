@@ -3,7 +3,6 @@ output "app" {
   value = {
     service_name        = aws_ecs_service.app.name
     task_definition_arn = aws_ecs_task_definition.app.arn
-    task_role_arn       = aws_iam_role.task.arn
     alb_arn             = aws_lb.this.arn
     alb_dns_name        = aws_lb.this.dns_name
     alb_zone_id         = aws_lb.this.zone_id
