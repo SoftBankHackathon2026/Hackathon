@@ -13,6 +13,7 @@ import json
 import pathlib
 import shlex
 import shutil
+import urllib.parse
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -24,10 +25,10 @@ from google.cloud import secretmanager
 
 from crosscloud import cli as crosscloud_cli
 from crosscloud import cutover_stage, datapath, pg_client
-from crosscloud.provision import residue_aws, residue_gcp
+from crosscloud.provision import residue_aws, residue_gcp, terraform
 from crosscloud.rehearsal import commands, config, dbprep, runner, wiring
 from crosscloud.secret_transfer import run as secret_run
-from crosscloud.secret_transfer import store_aws, store_gcp
+from crosscloud.secret_transfer import store, store_aws, store_gcp
 
 _TERRAFORM = commands.CROSSCLOUD_DIR / "terraform"
 MODULES = {
@@ -68,6 +69,8 @@ PG_TOOLS = pg_client.PgTools(
     )
 )
 _SESSION_LABEL = "com.ghost.crosscloud.session"
+# 스택 하나의 destroy 실패로 나머지 정리를 멈추지 않는다.
+_DESTROY_ERRORS = (terraform.TerraformError, runner.StepError, OSError)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -148,12 +151,23 @@ class Step:
 
 
 def run_step(ctx: Context, step: Step, *, force: bool) -> None:
-    """끝나지 않은 단계만 돌리고 완료 표시를 남긴다(dry-run 은 남기지 않음)."""
+    """끝나지 않은 단계만 돌리고 완료 표시를 남긴다(dry-run 은 남기지 않음).
+
+    단계마다 시작 직전에 AWS 계정을 다시 대조한다. 사전 점검 뒤 자격 증명을
+    바꿔도 다른 계정에 자원을 만들지 않는다. --force 는 이전 완료 표시를 먼저
+    지운다 — 다시 돌리다 실패하면 끝나지 않은 단계로 남는다.
+
+    Raises:
+        runner.StepError: AWS 계정이 설정과 다를 때.
+    """
     done = ctx.paths.done(step.name)
     if done.exists() and not force:
         ctx.echo(f"{step.name}: 이미 끝났다 — 다시 하려면 --force")
         return
+    _require_aws_account(ctx)
     ctx.echo(f"== {step.name}{' (dry-run)' if ctx.dry else ''}")
+    if not ctx.dry:
+        done.unlink(missing_ok=True)
     step.run(ctx)
     if not ctx.dry:
         done.parent.mkdir(parents=True, exist_ok=True)
@@ -195,10 +209,9 @@ def preflight_problems(
 ) -> list[str]:
     """사전 점검 판정. dry-run 자리표시는 판정하지 않는다."""
     problems = [f"도구 없음: {tool}" for tool in missing_tools]
-    if not isinstance(identity_json, runner.Placeholder):
-        account = json.loads(identity_json).get("Account")
-        if account != cfg.aws_account:
-            problems.append(f"AWS 계정 {account} ≠ {cfg.aws_account}")
+    account = _account_problem(cfg, identity_json)
+    if account:
+        problems.append(account)
     if not isinstance(project, runner.Placeholder):
         if project.strip() != cfg.gcp_project:
             problems.append(
@@ -416,7 +429,11 @@ def audit(ctx: Context) -> None:
 
 
 def cleanup(ctx: Context) -> None:
-    """9. 봇 중지 → 미처리 0 → compose down → destroy 역순 → 잔여 0."""
+    """9. 봇 중지 → 미처리 0 → compose down → destroy 역순 → 잔여 0.
+
+    스택 하나의 destroy 가 실패해도 나머지 스택을 계속 지우고, 레지스트리
+    로그아웃·잔여 질의까지 한 뒤 실패를 모아 알린다.
+    """
     with contextlib.ExitStack() as locks:
         if not ctx.dry:
             for job in config.JOBS:
@@ -424,10 +441,9 @@ def cleanup(ctx: Context) -> None:
                 if state.is_dir():
                     locks.enter_context(cutover_stage.cloud_lock(state))
         _stop_operator_pc(ctx)
-        remaining = {
-            stack: ctx.runner.destroy(stack, MODULES[stack])
-            for stack in DESTROY_ORDER
-        }
+        remaining, failed = _destroy_all(ctx)
+    for host in _registry_hosts(ctx):
+        ctx.runner.sh(["docker", "logout", host])
     left = {stack: list(addrs) for stack, addrs in remaining.items() if addrs}
     residue = ctx.runner.call(
         f"잔여 질의 AWS {ctx.cfg.prefix}·{ctx.cfg.return_prefix},"
@@ -436,13 +452,16 @@ def cleanup(ctx: Context) -> None:
         [],
     )
     docker_left = _docker_residue(ctx)
-    for host in _registry_hosts(ctx):
-        ctx.runner.sh(["docker", "logout", host])
-    if left or residue or docker_left:
+    if failed or left or residue or docker_left:
         raise runner.StepError(
             "잔여가 있다: "
             + json.dumps(
-                {"state": left, "cloud": residue, "docker": docker_left},
+                {
+                    "destroy_failed": failed,
+                    "state": left,
+                    "cloud": residue,
+                    "docker": docker_left,
+                },
                 ensure_ascii=False,
             )
         )
@@ -491,7 +510,8 @@ def _render_handoff(
     discover = [*discover, "--output", str(files.discover)]
     ctx.runner.call(
         "crosscloud " + shlex.join(discover),
-        lambda: _crosscloud(discover, files, accept=(0, 3)),
+        # 종료 3(사람 결정 필요)도 멈춘다 — 미지원이면 인계하지 않는다.
+        lambda: _crosscloud(discover, files, accept=(0,)),
         None,
     )
     ctx.runner.write(files.source_tf, json.dumps(result.source_tf, indent=2))
@@ -528,11 +548,11 @@ def _write_readiness(
 
 
 def _stop_operator_pc(ctx: Context) -> None:
-    env = commands.compose_env(ctx.cfg, ctx.paths)
-    if not ctx.dry and not pathlib.Path(env["INGRESS_ENV_FILE"]).exists():
-        # 인계 전에 멈췄다 — compose 를 띄운 적이 없다(ingress.env 가 없다).
-        ctx.echo("  운영자 PC compose: 띄운 적 없음 — 건너뜀")
+    if not _compose_started(ctx):
+        ctx.echo("  운영자 PC compose: 이 세션 컨테이너·볼륨 없음 — 건너뜀")
         return
+    _require_session_ports(ctx)
+    env = commands.compose_env(ctx.cfg, ctx.paths)
     ingress = ["docker", "compose", "-f", str(commands.INGRESS_COMPOSE)]
     connect = ["docker", "compose", "-f", str(commands.CONNECT_COMPOSE)]
     ctx.runner.sh([*ingress, "stop", "traffic-bot"], env=env)
@@ -550,6 +570,84 @@ def _stop_operator_pc(ctx: Context) -> None:
     )
     ctx.runner.sh([*ingress, "down", "-v"], env=env)
     ctx.runner.sh([*connect, "down", "-v"], env=env)
+
+
+def _compose_started(ctx: Context) -> bool:
+    """이 세션 라벨의 컨테이너나 볼륨(접수 기록)이 있으면 띄운 적이 있다."""
+    label = f"label={_SESSION_LABEL}={ctx.cfg.run}"
+    for kind in (["ps", "-a"], ["volume", "ls"]):
+        listed = ctx.runner.sh(
+            ["docker", *kind, "-q", "--filter", label], capture=True
+        )
+        if isinstance(listed, runner.Placeholder) or listed.split():
+            return True
+    return False
+
+
+def _require_session_ports(ctx: Context) -> None:
+    """미처리 검사가 볼 Redis·ingress 포트가 이 세션 컨테이너의 것인지 본다.
+
+    포트는 고정이라 다른 세션이 떠 있으면 그 세션을 검사하게 된다. 그러면
+    이 세션의 미처리 원본을 확인 없이 지우게 되므로 거부한다.
+    """
+    for url in (wiring.HOST_REDIS_URL, wiring.INGRESS_CONTROL_URL):
+        port = urllib.parse.urlsplit(url).port
+        owners = ctx.runner.sh(
+            [
+                "docker",
+                "ps",
+                "--filter",
+                f"publish={port}",
+                "--format",
+                f'{{{{.Label "{_SESSION_LABEL}"}}}}',
+            ],
+            capture=True,
+        )
+        if isinstance(owners, runner.Placeholder):
+            continue
+        if owners.split() != [ctx.cfg.run]:
+            raise runner.StepError(
+                f"포트 {port} 는 세션 {ctx.cfg.run} 의 compose 가 아니다"
+                f"({owners.split() or '떠 있지 않음'}) — 이 세션 compose 를"
+                " 띄운 뒤 다시 정리한다"
+            )
+
+
+def _destroy_all(
+    ctx: Context,
+) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
+    """역순으로 모든 스택을 지운다. (남은 주소, 실패 사유)를 돌려준다."""
+    remaining: dict[str, tuple[str, ...]] = {}
+    failed: dict[str, str] = {}
+    for stack in DESTROY_ORDER:
+        try:
+            remaining[stack] = ctx.runner.destroy(stack, MODULES[stack])
+        except _DESTROY_ERRORS as error:
+            failed[stack] = f"{type(error).__name__}: {error}"
+            ctx.echo(f"  {stack}: destroy 실패 — 나머지를 계속 지운다")
+    return remaining, failed
+
+
+def _require_aws_account(ctx: Context) -> None:
+    identity = ctx.runner.sh(
+        ["aws", "sts", "get-caller-identity", "--output", "json"],
+        capture=True,
+    )
+    problem = _account_problem(ctx.cfg, identity)
+    if problem:
+        raise runner.StepError(problem + " — 자격 증명(AWS_PROFILE)을 확인")
+
+
+def _account_problem(
+    cfg: config.RehearsalConfig, identity_json: str
+) -> str | None:
+    """AWS 신원(sts)이 설정 계정과 다르면 사유. 자리표시는 보지 않는다."""
+    if isinstance(identity_json, runner.Placeholder):
+        return None
+    account = json.loads(identity_json).get("Account")
+    if account != cfg.aws_account:
+        return f"AWS 계정 {account} ≠ {cfg.aws_account}"
+    return None
 
 
 def _docker_residue(ctx: Context) -> list[str]:
@@ -652,6 +750,8 @@ def _aws_master(
     ctx: Context, outputs: Mapping[str, Any], database: str
 ) -> pg_client.PgLogin:
     db = outputs["db"]
+    # 응답 본문에 관리자 비밀번호가 있다. SDK DEBUG 로그에 남기 전에 거부한다.
+    store.refuse_sdk_debug_logging()
     client = boto3.client("secretsmanager", region_name=ctx.cfg.aws_region)
     value = client.get_secret_value(SecretId=db["master_user_secret_arn"])
     endpoint = pg_client.DbEndpoint(db["address"], int(db["port"]), database)

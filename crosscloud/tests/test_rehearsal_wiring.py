@@ -283,3 +283,21 @@ def test_return_password_exports_use_return_stack_for_aws_target():
     assert any("ccx-r1107a-gcp-cdc-password" in x for x in lines)
     assert any("ccx-r1107ac-aws-sink-password" in x for x in lines)
     assert not any("AWS_CDC_PASSWORD" in x for x in lines)
+
+
+def test_aws_stacks_pin_allowed_account():
+    for tfvars in (
+        wiring.aws_source_tfvars(CFG),
+        wiring.aws_source_tfvars(CFG, app_image="repo@sha256:ab"),
+        wiring.aws_return_tfvars(CFG),
+        wiring.audit_tfvars(CFG),
+    ):
+        assert tfvars["allowed_account_ids"] == ["187478112557"]
+
+
+def test_target_app_tfvars_grant_profile_b_read_for_warmup():
+    tfvars = wiring.target_app_tfvars(
+        CFG, image="ar/app@sha256:ab", db_ssl_ca="PEM", database_url_version="2"
+    )
+
+    assert tfvars["readable_secrets"] == ["ccx-r1107a-database-url-b"]

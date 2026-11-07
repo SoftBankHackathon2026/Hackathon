@@ -268,6 +268,7 @@ def aws_source_tfvars(
         "db_name": cfg.source_database,
         "secret_names": list(AWS_SECRETS),
         "include_app": app_image is not None,
+        "allowed_account_ids": [cfg.aws_account],
     }
     if app_image is not None:
         tfvars["app_image"] = app_image
@@ -287,6 +288,7 @@ def aws_return_tfvars(cfg: config.RehearsalConfig) -> dict[str, Any]:
         "secret_names": list(AWS_RETURN_SECRETS),
         "include_app": False,
         "app_secret_env": {},
+        "allowed_account_ids": [cfg.aws_account],
     }
 
 
@@ -311,7 +313,10 @@ def target_app_tfvars(
     db_ssl_ca: str,
     database_url_version: str,
 ) -> dict[str, Any]:
-    """Cloud Run 을 원본 프로필(A, 이관한 URL Secret 의 고정 버전)로 띄운다."""
+    """Cloud Run 을 원본 프로필(A, 이관한 URL Secret 의 고정 버전)로 띄운다.
+
+    READY 예열이 대상 프로필(B)로 재배포하므로 B 의 읽기 권한도 미리 준다.
+    """
     return {
         **_gcp_common(cfg),
         "image": image,
@@ -322,12 +327,17 @@ def target_app_tfvars(
                 "version": database_url_version,
             }
         },
+        "readable_secrets": [f"{cfg.prefix}-database-url-b"],
     }
 
 
 def audit_tfvars(cfg: config.RehearsalConfig) -> dict[str, Any]:
     """감사 기록 보존 버킷 2개."""
-    return {**_gcp_common(cfg), "aws_region": cfg.aws_region}
+    return {
+        **_gcp_common(cfg),
+        "aws_region": cfg.aws_region,
+        "allowed_account_ids": [cfg.aws_account],
+    }
 
 
 def copied_image(repository_url: str, source_image: str) -> tuple[str, str]:

@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 
 import boto3
@@ -6,7 +7,10 @@ import psycopg
 import pytest
 import rehearsal_outputs as tf
 
+from crosscloud import cli as crosscloud_cli
+from crosscloud.provision import terraform
 from crosscloud.rehearsal import cli, config, runner, steps
+from crosscloud.secret_transfer import store
 
 AUTOMATED = (
     "preflight",
@@ -289,3 +293,183 @@ def test_cleanup_refuses_to_report_success_with_residue(state, monkeypatch):
 
     with pytest.raises(runner.StepError, match="abc123"):
         steps.cleanup(ctx)
+
+
+class _ScriptedRunner:
+    """밖을 부르지 않는 실행기. 명령 앞부분에 맞춰 표준 출력을 돌려준다."""
+
+    def __init__(self, replies=None, fail_destroy=()):
+        self.replies = {
+            "aws sts get-caller-identity": json.dumps({"Account": tf.ACCOUNT}),
+            **(replies or {}),
+        }
+        self.fail_destroy = set(fail_destroy)
+        self.log = []
+
+    def sh(self, argv, *, capture=False, env=None):
+        line = " ".join(argv)
+        self.log.append(line)
+        for prefix, out in self.replies.items():
+            if not line.startswith(prefix):
+                continue
+            if isinstance(out, list):  # 차례로 돌려주고 마지막 것을 유지한다.
+                return out.pop(0) if len(out) > 1 else out[0]
+            return out
+        return ""
+
+    def pipe(self, producer, consumer):
+        self.log.append(" ".join(producer) + " | " + " ".join(consumer))
+
+    def call(self, title, action, placeholder):
+        self.log.append("· " + title)
+        return placeholder
+
+    def apply(self, stack, module, tfvars):
+        self.log.append(f"apply {stack}")
+        return {}
+
+    def destroy(self, stack, module):
+        self.log.append(f"destroy {stack}")
+        if stack in self.fail_destroy:
+            raise terraform.TerraformError("destroy", 1, "보존 기간")
+        return ()
+
+    def write(self, path, text):
+        self.log.append(f"write {path.name}")
+
+
+_STARTED = "docker ps -a -q --filter label=com.ghost.crosscloud.session"
+_PORT_OWNER = "docker ps --filter publish="
+
+
+def _real_ctx(state, scripted):
+    return steps.Context.open(state, scripted, dry=False, echo=lambda _: None)
+
+
+def _destroyed(scripted):
+    return [
+        line.split()[1] for line in scripted.log if line.startswith("destroy")
+    ]
+
+
+def test_cleanup_refuses_drain_check_on_other_sessions_ports(state):
+    scripted = _ScriptedRunner({_STARTED: "c1\n", _PORT_OWNER: "otherrun\n"})
+
+    with pytest.raises(runner.StepError, match="otherrun"):
+        steps.cleanup(_real_ctx(state, scripted))
+
+    assert not any("ingress-drain-check" in line for line in scripted.log)
+    assert not any("down -v" in line for line in scripted.log)
+    assert _destroyed(scripted) == []
+
+
+def test_cleanup_drains_own_session_then_downs_compose(state):
+    scripted = _ScriptedRunner(
+        {_STARTED: ["c1\n", ""], _PORT_OWNER: tf.RUN + "\n"}
+    )
+
+    steps.cleanup(_real_ctx(state, scripted))
+
+    drain = next(
+        i
+        for i, line in enumerate(scripted.log)
+        if "ingress-drain-check" in line
+    )
+    down = next(i for i, line in enumerate(scripted.log) if "down -v" in line)
+    assert drain < down
+    assert len(_destroyed(scripted)) == 6
+
+
+def test_cleanup_skips_drain_when_compose_never_started(state):
+    ingress_env = config.StatePaths(state).job("forward").out / "ingress.env"
+    ingress_env.parent.mkdir(parents=True)
+    ingress_env.write_text("TARGET=x\n")
+    scripted = _ScriptedRunner()
+
+    steps.cleanup(_real_ctx(state, scripted))
+
+    assert not any("ingress-drain-check" in line for line in scripted.log)
+    assert _destroyed(scripted) == list(steps.DESTROY_ORDER)
+
+
+def test_cleanup_keeps_destroying_after_one_stack_fails(state):
+    _save_outputs(state)
+    scripted = _ScriptedRunner(fail_destroy={"audit"})
+
+    with pytest.raises(runner.StepError, match="audit") as caught:
+        steps.cleanup(_real_ctx(state, scripted))
+
+    assert _destroyed(scripted) == list(steps.DESTROY_ORDER)
+    assert any("잔여 질의" in line for line in scripted.log)
+    assert sum(line.startswith("docker logout") for line in scripted.log) == 2
+    assert "보존 기간" in str(caught.value)
+
+
+def test_run_step_refuses_wrong_aws_account(state):
+    calls = []
+    scripted = _ScriptedRunner(
+        {"aws sts get-caller-identity": json.dumps({"Account": "111"})}
+    )
+
+    with pytest.raises(runner.StepError, match="111"):
+        steps.run_step(
+            _real_ctx(state, scripted),
+            steps.Step("demo", calls.append),
+            force=False,
+        )
+
+    assert calls == []
+
+
+def test_forced_rerun_failure_leaves_step_not_done(state):
+    def broken(ctx):
+        raise runner.StepError("이미지 복사 실패")
+
+    ctx = _real_ctx(state, _ScriptedRunner())
+    steps.run_step(ctx, steps.Step("demo", lambda ctx: None), force=False)
+
+    with pytest.raises(runner.StepError):
+        steps.run_step(ctx, steps.Step("demo", broken), force=True)
+
+    assert not config.StatePaths(state).done("demo").exists()
+
+
+def test_handoff_stops_when_discover_needs_human_decision(state, monkeypatch):
+    _save_outputs(state)
+    paths = config.StatePaths(state)
+    paths.values.write_text(json.dumps({"profile_b_version": "2"}))
+    monkeypatch.setattr(crosscloud_cli, "main", lambda argv: 3)
+    ctx = steps.Context.open(
+        state, runner.RealRunner(state, echo=lambda _: None), dry=False
+    )
+
+    with pytest.raises(runner.StepError, match="종료 코드 3"):
+        steps.handoff_forward(ctx)
+
+    assert not paths.job("forward").deploy.exists()
+
+
+def test_aws_master_refuses_sdk_debug_logging_before_reading_secret(
+    state, monkeypatch
+):
+    reads = []
+
+    class FakeSecrets:
+        def get_secret_value(self, **kwargs):
+            reads.append(kwargs)
+            return {"SecretString": "{}"}
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: FakeSecrets())
+    botocore_logger = logging.getLogger("botocore")
+    before = botocore_logger.level
+    ctx = _real_ctx(state, _ScriptedRunner())
+
+    # setLevel 로 바꾸고 되돌린다 — 수준 캐시를 비워 다른 시험에 새지 않게.
+    botocore_logger.setLevel(logging.DEBUG)
+    try:
+        with pytest.raises(store.UnsafeLoggingError):
+            steps._aws_master(ctx, tf.AWS, "shop")
+    finally:
+        botocore_logger.setLevel(before)
+
+    assert reads == []
