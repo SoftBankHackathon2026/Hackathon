@@ -136,7 +136,7 @@ def _fleet_source(config: FleetConfig, store: ReleaseStore | None) -> FleetSourc
 
 def _connections(store: ReleaseStore | None, mode: AuthMode) -> ConnectionService | None:
     # Optional package: unchanged legacy deployments do not require it.
-    if mode != AuthMode.LOGIN:
+    if mode not in {AuthMode.DEMO, AuthMode.LOGIN}:
         return None
     try:
         from migration_connection.platform_bridge.factory import build
