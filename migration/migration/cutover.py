@@ -19,7 +19,7 @@ from psycopg import sql
 from . import db as dbmod
 from . import verify as verifymod
 from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask_config, prepare_source, \
-    drop_slot, sink_kafka_offsets, template_variables
+    sink_kafka_offsets, template_variables
 from .config import Config, ConfigError, load_config
 from .state import CutoverJob, CutoverStore, RequestStore
 from .cutover_policy import CutoverPolicyGate
@@ -226,18 +226,10 @@ class PgAdminPort:
                                   owner=self.config.target(target).user_spec("cdc").user)
 
     def drop_source_slot(self, target: str) -> dict[str, Any]:
-        """커넥터 삭제 뒤 원본에 남은 비활성 slot 과 publication 을 지운다. 남겨 두면 WAL 이 계속 쌓인다."""
-        job = self.config.job
-        with self._admin(target) as conn:
-            slot_dropped = drop_slot(conn, job.slot_name)
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pg_publication WHERE pubname = %s", (job.publication_name,))
-                pub_exists = cur.fetchone() is not None
-                if pub_exists:
-                    cur.execute(sql.SQL("DROP PUBLICATION {}").format(sql.Identifier(job.publication_name)))
-            conn.commit()
-        return {"slot": job.slot_name, "slot_dropped": slot_dropped,
-                "publication": job.publication_name, "publication_dropped": pub_exists}
+        """Use admin for the slot and the configured CDC owner for publication."""
+        from .source_cleanup import cleanup_source
+        return cleanup_source(self.config, target)
+
 
 
 class VerifyAdapter:
@@ -569,10 +561,13 @@ class Cutover:
             def _cleanup() -> dict[str, Any]:
                 try:
                     return self.p.db.drop_source_slot(self.source)
-                except Exception as exc:  # noqa: BLE001 - 정리 실패는 전환 결과를 바꾸지 않는다. 경고만 남기고 수동 정리로 넘긴다
-                    log.warning("원본 slot/publication 정리 실패 — 수동으로 `python -m migration.cdc drop-slot` 실행: %s", exc)
-                    return {"error": str(exc)}
+                except Exception:  # noqa: BLE001 - 정리 실패는 전환 결과를 바꾸지 않는다. 경고만 남기고 수동 정리로 넘긴다
+                    log.warning("원본 후처리 실패 — 같은 설정으로 python -m migration.source_cleanup 재실행 필요")
+                    return {"error": "SOURCE_CLEANUP_FAILED"}
             cleanup = self._step("drop_source_slot", _cleanup)
+            if cleanup.get("error"):
+                log.warning("원본 후처리 미완료 (%s) — python -m migration.source_cleanup --config <same-config>",
+                            cleanup["error"])
         self._save(COMPLETED, verify_final=result, post_switch=info, source_cleanup=cleanup)
 
     # ---- 실행 -----
