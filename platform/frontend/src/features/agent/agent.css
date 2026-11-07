@@ -1,0 +1,77 @@
+.agent-strip {
+  display: grid;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-5);
+  padding: 0;
+  list-style: none;
+}
+.agent-strip li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-5);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+}
+.agent-strip .sub,
+.agent-run-id {
+  color: var(--text-tertiary);
+}
+.agent-strip-id {
+  font-weight: 600;
+}
+.agent-run-id {
+  display: block;
+}
+.agent-decide {
+  display: grid;
+  gap: var(--sp-3);
+}
+.agent-confirm {
+  display: grid;
+  gap: var(--sp-3);
+}
+.agent-timeline {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-timeline li {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 0 0 var(--sp-4) 20px;
+}
+.agent-timeline li::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: -4px;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+.agent-timeline li:last-child::before {
+  display: none;
+}
+.agent-timeline li .dot {
+  position: absolute;
+  top: 5px;
+  left: 0;
+}
+.agent-timeline time {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-timeline-state {
+  font-weight: 600;
+}
+.agent-timeline-message {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

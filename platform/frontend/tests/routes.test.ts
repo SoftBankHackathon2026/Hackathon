@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ROUTE_EVENT } from "../src/app/routes.ts";
 import {
+  agentHash,
   controlHash,
   migrationHash,
   nodesHash,
@@ -33,6 +34,17 @@ test("environments, security and team routes", () => {
     routeTitle({ view: "migration", id: "forward_001" }, ""),
     "forward_001",
   );
+});
+
+test("agent console and run deep links", () => {
+  assert.deepEqual(readRoute("#agent"), { view: "agent" });
+  assert.equal(agentHash(), "#agent");
+  assert.equal(agentHash("run-0a1b2c"), "#agent/run-0a1b2c");
+  assert.deepEqual(readRoute(agentHash("run-0a1b2c")), {
+    view: "agent",
+    runId: "run-0a1b2c",
+  });
+  assert.equal(routeTitle({ view: "agent" }, ""), "AI 에이전트");
 });
 
 test("security and environment deep links carry their target", () => {
