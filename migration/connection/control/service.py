@@ -23,6 +23,22 @@ from migration_connection.control.errors import ConnectionError
 from migration_connection.control.limits import LimitScope
 
 RECONNECT_WAIT_MS = 90_000
+CLOUD_PROVIDERS = ("aws", "gcp")
+DISCOVERY_CODES = {
+    "CLI_MISSING",
+    "LOGIN_REQUIRED",
+    "PERMISSION_DENIED",
+    "REGION_REQUIRED",
+    "SCOPE_LIMIT",
+    "LOOKUP_FAILED",
+}
+CLOUD_COLLECTION_MESSAGES = {
+    "LOGIN_REQUIRED": "클라우드 로그인이 만료됐어요. 단말에서 다시 로그인해 주세요.",
+    "PERMISSION_DENIED": "선택한 클러스터를 조회할 권한이 없어요.",
+    "GKE_AUTH_PLUGIN_MISSING": "단말에 GKE 인증 도구를 설치한 뒤 다시 수집해 주세요.",
+    "SELECTED_TARGET_CHANGED_OR_MISSING": "클러스터가 바뀌었어요. 대상을 다시 확인해 주세요.",
+}
+
 
 PROOF_FIELDS = {
     "version",
@@ -109,6 +125,7 @@ class ConnectionService:
         runtime_tenant_id="",
         runtime_gateway_id="",
         clock=None,
+        cloud_tenants=(),
     ):
         self.store, self.crypto, self.limiter = store, crypto, limiter
         self.bootstrap_url, self.release_version = bootstrap_url, release_version
@@ -116,6 +133,7 @@ class ConnectionService:
         self.bootstrap_sha384 = bootstrap_sha384
         self.runtime_tenant_id = runtime_tenant_id
         self.runtime_gateway_id = runtime_gateway_id
+        self.cloud_tenants = frozenset(cloud_tenants)
         self.clock = clock or (lambda: time.time_ns() // 1000000)
 
     def capabilities(self, team=None):
@@ -162,7 +180,11 @@ class ConnectionService:
             else "연결 실행 환경과 서명·요청 제한 설정을 확인해야 합니다.",
             "bootstrapUrl": self.bootstrap_url if ready else None,
             "releaseVersion": self.release_version if ready else None,
-            "providers": ["kubernetes"] if ready else [],
+            "providers": (
+                ["kubernetes", *(CLOUD_PROVIDERS if team in self.cloud_tenants else ())]
+                if ready
+                else []
+            ),
         }
 
     def _touch(self, row, message):
@@ -240,6 +262,7 @@ class ConnectionService:
             "revision": row["revision"],
             "organization": row["team"],
             "target": row.get("target"),
+            "provider": row.get("provider", "kubernetes"),
             "serverNow": self.clock(),
             "observedAt": self.clock(),
             "registrationExpiresAt": row["expires_at"],
@@ -268,6 +291,15 @@ class ConnectionService:
                 "releaseVersion": self.release_version,
             },
         }
+        if result["provider"] in CLOUD_PROVIDERS:
+            result.update(
+                discoveryGeneration=row.get("discovery_generation", 0),
+                discoveryComplete=(
+                    row.get("discovery_epoch") == row["epoch"]
+                    and row["tunnel"] == "READY"
+                ),
+                discoveryWarnings=row.get("discovery_warnings", []),
+            )
         for internal, external in [
             ("approval_expires_at", "approvalExpiresAt"),
             ("collected_at", "collectedAt"),
@@ -306,12 +338,12 @@ class ConnectionService:
         require(row is not None, "CONNECTION_NOT_FOUND", 404)
         return self.snapshot(row, actor)
 
-    def create(self, actor, public_key, operation_id):
+    def create(self, actor, public_key, operation_id, provider="kubernetes"):
         require(actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
         self.limiter.check(actor_scope(actor), self.clock())
-        require(
-            self.capabilities(actor.team)["available"], "CONNECTION_UNAVAILABLE", 503
-        )
+        capability = self.capabilities(actor.team)
+        require(capability["available"], "CONNECTION_UNAVAILABLE", 503)
+        require(provider in capability["providers"], "PROVIDER_UNAVAILABLE", 422)
         try:
             unb64(public_key, 1952)
         except ValueError:
@@ -330,6 +362,7 @@ class ConnectionService:
                 "owner": actor.email,
                 "operation_id": operation_id,
                 "public_key": public_key,
+                "provider": provider,
                 "expires_at": now + 60000,
                 "registration": "ISSUED",
                 "device": "NONE",
@@ -346,7 +379,11 @@ class ConnectionService:
                 "device_challenges": {},
             }
         )
-        require(row["public_key"] == public_key, "IDEMPOTENCY_CONFLICT")
+        require(
+            row["public_key"] == public_key
+            and row.get("provider", "kubernetes") == provider,
+            "IDEMPOTENCY_CONFLICT",
+        )
         return self.snapshot(row, actor)
 
     def challenge(self, request_id, candidate_id, *, device=False):
@@ -579,6 +616,20 @@ class ConnectionService:
                 row["reconnect_after_epoch"] = row["epoch"]
                 row["task"] = None
                 row.pop("issue", None)
+            elif action == "rediscover":
+                self._ready(row)
+                require(
+                    row.get("provider") in CLOUD_PROVIDERS
+                    and not row.get("environment_id")
+                    and row.get("discovery_epoch") == row["epoch"]
+                    and not row.get("task"),
+                    "DISCOVERY_UNAVAILABLE",
+                )
+                row["discovery_generation"] = row.get("discovery_generation", 0) + 1
+                row["discovered"] = []
+                row.pop("discovery_epoch", None)
+                row.pop("discovery_warnings", None)
+                row.pop("issue", None)
             elif action == "collect":
                 self._ready(row)
                 require(
@@ -609,6 +660,13 @@ class ConnectionService:
                     "target_id": selected["id"],
                     "expires_at_ms": self.clock() + 120000,
                 }
+                if row.get("provider") in CLOUD_PROVIDERS:
+                    require(
+                        row.get("discovery_epoch") == row["epoch"],
+                        "TARGET_NOT_DISCOVERED",
+                    )
+                    task["cloud_context"] = selected["context"]
+                row.pop("issue", None)
                 row["task"] = {
                     "payload": task,
                     "signature": self.crypto.sign(signed_bytes("job", task)),
@@ -631,12 +689,15 @@ class ConnectionService:
                 target = data.get("target", {})
                 selected = row["collected"][0]
                 require(
-                    set(target)
-                    == {"organization", "project", "name", "kind", "role", "region"}
+                    isinstance(target, dict)
+                    and set(target) - {"role"}
+                    == {"organization", "project", "name", "kind", "region"}
                     and target["organization"] == row["team"]
-                    and target["kind"] == "kubernetes"
+                    and target["kind"] == selected["kind"]
                     and target["region"] == selected["region"]
-                    and target["role"] in ("source", "target"),
+                    and (
+                        "role" not in target or target["role"] in ("source", "target")
+                    ),
                     "INVALID_REGISTRATION",
                     422,
                 )
@@ -656,6 +717,7 @@ class ConnectionService:
                     "revoke": "서버 권한을 철회했습니다. 정리 확인을 기다립니다.",
                     "reconnect": "새 연결을 요청했습니다.",
                     "collect": "선택한 환경정보 수집을 요청했습니다.",
+                    "rediscover": "정보수집 대상을 다시 확인합니다.",
                     "register": "환경정보를 등록했습니다.",
                 }[action],
             )
@@ -782,8 +844,15 @@ class ConnectionService:
                         task = None
                     return {"snapshot": self.snapshot(row, actor), "task": task}
                 if action == "discovered":
+                    provider = row.get("provider", "kubernetes")
+                    cloud = provider in CLOUD_PROVIDERS
                     require(
-                        set(data) == {"environments"}
+                        set(data)
+                        == (
+                            {"environments", "warnings", "generation", "epoch"}
+                            if cloud
+                            else {"environments"}
+                        )
                         and isinstance(data["environments"], list)
                         and len(data["environments"]) <= 100,
                         "INVALID_DISCOVERY",
@@ -795,7 +864,7 @@ class ConnectionService:
                             isinstance(env, dict)
                             and set(env)
                             == {"id", "kind", "name", "identity", "region", "context"}
-                            and env["kind"] == "kubernetes",
+                            and env["kind"] == provider,
                             "INVALID_DISCOVERY",
                             422,
                         )
@@ -810,16 +879,51 @@ class ConnectionService:
                             422,
                         )
                         found.append(deepcopy(env))
+                    if cloud:
+                        require(
+                            type(data["generation"]) is int
+                            and data["generation"] == row.get("discovery_generation", 0)
+                            and type(data["epoch"]) is int
+                            and data["epoch"] == row["epoch"],
+                            "STALE_DISCOVERY",
+                        )
+                        warnings = data["warnings"]
+                        require(
+                            isinstance(warnings, list) and len(warnings) <= 20,
+                            "INVALID_DISCOVERY",
+                            422,
+                        )
+                        for warning in warnings:
+                            require(
+                                isinstance(warning, dict)
+                                and set(warning) == {"code", "scope"}
+                                and warning["code"] in DISCOVERY_CODES
+                                and isinstance(warning["scope"], str)
+                                and bool(
+                                    re.fullmatch(
+                                        r"[A-Za-z0-9_/-]{0,230}", warning["scope"]
+                                    )
+                                ),
+                                "INVALID_DISCOVERY",
+                                422,
+                            )
+                        row["discovery_warnings"] = deepcopy(warnings)
+                        row["discovery_epoch"] = row["epoch"]
                     row["discovered"] = found
-                    self._touch(row, "단말의 Kubernetes 문맥 후보를 확인했습니다.")
+                    self._touch(row, "단말의 정보수집 대상을 확인했습니다.")
                     return {"accepted": True}
-                if action == "inventory":
+                if action in ("inventory", "inventory-failed"):
                     from migration_connection.inventory import (
                         inventory_digest,
                         validate_report,
                     )
 
-                    require(set(data) == {"job_id", "report"}, "INVALID_INVENTORY", 422)
+                    failed = action == "inventory-failed"
+                    require(
+                        set(data) == {"job_id", "reason" if failed else "report"},
+                        "INVALID_INVENTORY",
+                        422,
+                    )
                     task = row.get("task")
                     require(
                         task is not None
@@ -828,6 +932,20 @@ class ConnectionService:
                         and now < task["payload"]["expires_at_ms"],
                         "STALE_COLLECTION",
                     )
+                    if failed:
+                        require(
+                            row.get("provider") in CLOUD_PROVIDERS
+                            and isinstance(data["reason"], str),
+                            "INVALID_INVENTORY",
+                            422,
+                        )
+                        row["task"] = None
+                        row["issue"] = CLOUD_COLLECTION_MESSAGES.get(
+                            data["reason"],
+                            "클러스터에 접속하지 못했어요. 네트워크와 Kubernetes 조회 권한을 확인해 주세요.",
+                        )
+                        self._touch(row, "선택한 클러스터를 수집하지 못했습니다.")
+                        return {"accepted": True}
                     try:
                         validate_report(
                             data["report"],
@@ -837,6 +955,19 @@ class ConnectionService:
                             expected_target_id=task["payload"]["target_id"],
                         )
                         report = data["report"]
+                        require(
+                            report["environment"]["kind"]
+                            == row.get("provider", "kubernetes"),
+                            "INVALID_INVENTORY",
+                            422,
+                        )
+                        if row.get("provider") in CLOUD_PROVIDERS:
+                            require(
+                                report["environment"]["context"]
+                                == task["payload"]["cloud_context"],
+                                "INVALID_INVENTORY",
+                                422,
+                            )
                         require(
                             abs(now - report["collected_at_ms"]) <= 60000,
                             "STALE_COLLECTION",

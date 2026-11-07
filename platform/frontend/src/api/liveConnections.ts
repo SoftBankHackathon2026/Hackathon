@@ -5,7 +5,11 @@ import type {
 } from "../features/prepare/connectionTypes.ts";
 
 type Transport = <T>(path: string, options?: RequestOptions) => Promise<T>;
-type Capabilities = { available: boolean; reason?: string };
+type Capabilities = {
+  available: boolean;
+  reason?: string;
+  providers?: string[];
+};
 const PREFIX = "connections";
 const OFFLINE =
   "연결 상태를 갱신하지 못했어요. 연결을 확인한 뒤 다시 시도하세요.";
@@ -32,6 +36,8 @@ const MESSAGES: Record<string, string> = {
   REQUEST_RATE_LIMITED: "요청이 많아요. 잠시 후 다시 시도하세요.",
   REQUEST_LIMIT_UNAVAILABLE:
     "인증 상태를 확인할 수 없어요. 잠시 후 다시 시도하세요.",
+  PROVIDER_UNAVAILABLE: "이 환경 유형의 연결이 아직 활성화되지 않았어요.",
+  DISCOVERY_UNAVAILABLE: "대상을 확인하고 있어요. 잠시 후 다시 시도하세요.",
   CONNECTION_UNAVAILABLE:
     "연결 실행 환경이 준비되지 않았어요. 관리자에게 확인해 주세요.",
   CONNECTION_PERMISSION_DENIED: "이 연결을 변경할 권한이 없어요.",
@@ -122,6 +128,14 @@ export function createLiveConnections(
         apply(snapshots(data));
       }
       gateway.available = capability.available;
+      gateway.providers = capability.available
+        ? [
+            "kubernetes",
+            ...(["aws", "gcp"] as const).filter((p) =>
+              capability.providers?.includes(p),
+            ),
+          ]
+        : [];
       gateway.reason = capability.available
         ? undefined
         : (capability.reason ?? "연결 서비스 준비가 필요해요.");
@@ -194,7 +208,7 @@ export function createLiveConnections(
         }
       };
     },
-    async create(_context, publicKey, operationId) {
+    async create(context, publicKey, operationId) {
       if (!gateway.available) throw new Error(gateway.reason);
       const current = lifecycle;
       writes++;
@@ -204,7 +218,13 @@ export function createLiveConnections(
       try {
         const result = await transport<unknown>(PREFIX, {
           method: "POST",
-          body: { publicKey, operationId },
+          body: {
+            publicKey,
+            operationId,
+            ...(context.provider && context.provider !== "kubernetes"
+              ? { provider: context.provider }
+              : {}),
+          },
         });
         const s = snapshots([result])[0];
         if (current === lifecycle) {
@@ -222,6 +242,7 @@ export function createLiveConnections(
     approveDevice: (id, candidateDigest, code, replaceId) =>
       mutate(id, "approve", { candidateDigest, code, replaceId }),
     reject: (id) => mutate(id, "reject"),
+    rediscover: (id) => mutate(id, "rediscover"),
     collect: (id, discoveredId) => mutate(id, "collect", { discoveredId }),
     register: (id, collectedId, inventoryDigest, target) =>
       mutate(id, "register", { collectedId, inventoryDigest, target }),

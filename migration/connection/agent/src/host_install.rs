@@ -328,7 +328,14 @@ fn unit_arg(value: &str) -> Result<String> {
     ))
 }
 
-fn unit(bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str) -> Result<String> {
+// Preserve local CLI configuration selectors across the service boundary.
+// Access keys, tokens and arbitrary environment variables never enter the unit.
+const CLOUD_SELECTORS: [&str; 3] = ["AWS_PROFILE", "AWS_REGION", "CLOUDSDK_ACTIVE_CONFIG_NAME"];
+
+fn unit(
+    bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str,
+    selectors: &[String; 3],
+) -> Result<String> {
     crate::api::identifier(request)?;
     if uid == 0
         || !bundle.is_absolute()
@@ -351,10 +358,20 @@ fn unit(bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str) ->
     let state = unit_arg(state.to_str().ok_or("invalid state path")?)?;
     let home = unit_arg(&format!("HOME={home}"))?;
     let kubeconfig = unit_arg(&format!("KUBECONFIG={kubeconfig}"))?;
+    let mut cloud = String::new();
+    for (name, value) in CLOUD_SELECTORS.iter().zip(selectors) {
+        if !value.is_empty() {
+            if value.len() > 128 {
+                return Err("클라우드 명령줄 도구 설정 이름이 너무 깁니다.".into());
+            }
+            cloud.push(' ');
+            cloud.push_str(&unit_arg(&format!("{name}={value}"))?);
+        }
+    }
     Ok(format!("# migration-connector uid={uid} request={request}\n\
 [Unit]\nDescription=On-premises migration tunnel\nStartLimitIntervalSec=10min\nStartLimitBurst=5\nWants=network-online.target\nAfter=network-online.target\n\
 [Service]\nType=notify\nNotifyAccess=main\nUser={uid}\nUMask=0077\n\
-Environment={home} {kubeconfig}\n\
+Environment={home} {kubeconfig}{cloud}\n\
 Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin\n\
 ExecCondition=:/usr/bin/test -f {state}\n\
 ExecStart=:/bin/sh -c {launcher} migration-connector-launch {executable} serve {config} {request}\n\
@@ -382,7 +399,12 @@ pub fn start_service(bundle: &Path, request: &str, replaces: Option<&str>) -> Re
         .map_err(|_| "invalid kubeconfig path")?,
         None => String::new(),
     };
-    unit(&bundle, uid, request, &home, &kubeconfig)?;
+    let mut selectors = CLOUD_SELECTORS.map(|name| std::env::var(name).unwrap_or_default());
+    if selectors[1].is_empty() {
+        selectors[1] = std::env::var("AWS_DEFAULT_REGION").unwrap_or_default();
+    }
+    unit(&bundle, uid, request, &home, &kubeconfig, &selectors)?;
+    let selectors = serde_json::to_string(&selectors)?;
     let (_, executable, digest) = signed_installer(&bundle, uid)?;
     let mut tty = OpenOptions::new()
         .read(true)
@@ -410,6 +432,7 @@ pub fn start_service(bundle: &Path, request: &str, replaces: Option<&str>) -> Re
             home.as_ref(),
             kubeconfig.as_ref(),
             replaces.unwrap_or_default().as_ref(),
+            selectors.as_ref(),
         ],
     )
 }
@@ -424,13 +447,18 @@ pub fn install_service(
     home: &str,
     kubeconfig: &str,
     replaces: Option<&str>,
+    selectors: Option<&str>,
 ) -> Result<()> {
     if let Some(previous) = replaces {
         crate::api::identifier(previous)?;
     }
     let uid = uid.parse::<u32>()?;
     installation_account(uid, user)?;
-    let content = unit(bundle, uid, request, home, kubeconfig)?;
+    let selectors = selectors
+        .map(serde_json::from_str::<[String; 3]>)
+        .transpose()?
+        .unwrap_or_default();
+    let content = unit(bundle, uid, request, home, kubeconfig, &selectors)?;
     for path in ["/", "/etc", "/etc/systemd", SERVICE_DIR, "/run"] {
         trusted_directory(Path::new(path))?;
     }
@@ -764,8 +792,10 @@ mod tests {
             "request_12345678901234",
             "/home/client",
             "/home/client/a config:/home/client/$KUBE",
+            &["demo-profile".into(), "ap-northeast-2".into(), "demo-config".into()],
         )
         .unwrap();
+        assert!(content.contains(r#""AWS_PROFILE=demo-profile" "AWS_REGION=ap-northeast-2" "CLOUDSDK_ACTIVE_CONFIG_NAME=demo-config""#));
         assert!(content.contains("Type=notify\nNotifyAccess=main\nUser=1001\n"));
         assert!(content.contains(
             r#"ExecStart=:/bin/sh -c "exec \"$@\"" migration-connector-launch "/home/client/with spaces/%%u \"quoted\"/migration-connector" serve "#
@@ -776,7 +806,8 @@ mod tests {
             0,
             "request_12345678901234",
             "/root",
-            ""
+            "",
+            &Default::default()
         )
         .is_err());
         assert!(unit(
@@ -784,7 +815,8 @@ mod tests {
             1001,
             "request_12345678901234",
             "/home/client\n[Service]",
-            ""
+            "",
+            &Default::default()
         )
         .is_err());
     }

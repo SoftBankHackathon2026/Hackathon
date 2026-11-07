@@ -1,8 +1,10 @@
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
 
 from controlplane.api.deps import (
+    ContainerDep,
     CutoverCommandsDep,
     CutoverOperatorIdentity,
     DataMappingsDep,
@@ -15,7 +17,8 @@ from controlplane.api.deps import (
     TasksDep,
     ViewerIdentity,
 )
-from controlplane.core.errors import OperationNotFound
+from controlplane.core.config import AuthMode
+from controlplane.core.errors import InvalidRequest, OperationNotFound
 from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
     ClaimedCommand,
@@ -68,9 +71,35 @@ def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> 
 
 @router.post("/migrations", status_code=201)
 def create_migration(
-    body: MigrationCreate, tasks: TasksDep, identity: CutoverOperatorIdentity
+    body: MigrationCreate,
+    tasks: TasksDep,
+    identity: CutoverOperatorIdentity,
+    container: ContainerDep,
 ) -> MigrationCreated:
-    return tasks.create(body, identity.email if identity else None)
+    providers = {}
+    for side, env_id in (("source", body.source_env), ("target", body.target_env)):
+        if not re.fullmatch(r"connected-[A-Za-z0-9_-]{22}", env_id):
+            continue
+        connection = container.connections
+        if connection is None or (identity is None and container.auth_mode != AuthMode.DEMO):
+            raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
+        from migration_connection.control.errors import ConnectionError
+        from migration_connection.control.service import Actor
+
+        actor = (
+            Actor(identity.team, identity.email, False)
+            if identity
+            else Actor(connection.runtime_tenant_id, "demo", False)
+        )
+        try:
+            snapshot = connection.get(env_id.removeprefix("connected-"), actor)
+        except ConnectionError:
+            raise InvalidRequest("등록한 환경을 확인할 수 없어요.") from None
+        if snapshot.get("environmentId") != env_id or snapshot["device"] != "APPROVED":
+            raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
+        kind = snapshot["target"]["kind"]
+        providers[f"{side}_provider"] = "onprem" if kind == "kubernetes" else kind
+    return tasks.create(body.model_copy(update=providers), identity.email if identity else None)
 
 
 @router.get("/migrations/{job_id}/plan")

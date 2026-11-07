@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from .cloud import collect_cloud, discover_cloud
 from .collector import InventoryError, Kubectl, collect, discover
 from .schema import inventory_digest
 
@@ -18,20 +19,33 @@ def main(argv=None) -> int:
     parser.add_argument("--device-id", required=True)
     parser.add_argument("--epoch", required=True, type=int)
     parser.add_argument("--target-id")
+    parser.add_argument(
+        "--provider", choices=("kubernetes", "aws", "gcp"), default="kubernetes"
+    )
+    parser.add_argument("--cloud-context")
     args = parser.parse_args(argv)
     try:
-        client = Kubectl()
         binding = {
             "request_id": args.request_id,
             "device_id": args.device_id,
             "epoch": args.epoch,
         }
         if args.operation == "discover":
-            result = discover(client, **binding)
+            result = (
+                discover(Kubectl(), **binding)
+                if args.provider == "kubernetes"
+                else discover_cloud(args.provider)
+            )
         else:
             if not args.target_id:
                 raise InventoryError("TARGET_SELECTION_REQUIRED")
-            report = collect(client, selected_target_id=args.target_id, **binding)
+            report = (
+                collect(Kubectl(), selected_target_id=args.target_id, **binding)
+                if args.provider == "kubernetes"
+                else collect_cloud(
+                    args.provider, args.cloud_context or "", args.target_id, **binding
+                )
+            )
             result = {"report": report, "inventory_digest": inventory_digest(report)}
     except InventoryError as error:
         print(

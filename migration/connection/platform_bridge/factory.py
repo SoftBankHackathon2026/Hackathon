@@ -38,4 +38,9 @@ def build(releases):
         bootstrap_sha384=os.environ.get("ONEPORT_CONNECTION_BOOTSTRAP_SHA384", ""),
         runtime_tenant_id=os.environ.get("ONEPORT_CONNECTION_RUNTIME_TENANT_ID", ""),
         runtime_gateway_id=os.environ.get("ONEPORT_CONNECTION_RUNTIME_GATEWAY_ID", ""),
+        cloud_tenants=(
+            tenant.strip()
+            for tenant in os.getenv("ONEPORT_CONNECTION_CLOUD_TENANTS", "").split(",")
+            if tenant.strip()
+        ),
     )

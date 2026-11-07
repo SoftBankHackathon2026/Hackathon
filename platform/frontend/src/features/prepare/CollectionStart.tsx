@@ -1,5 +1,5 @@
 import { Icon } from "../../components/Icon";
-import type { ConnectionSnapshot } from "./connectionTypes";
+import type { ConnectionSnapshot, Provider } from "./connectionTypes";
 import { remainingSeconds } from "./model";
 export function CollectionStart({
   snapshot: s,
@@ -10,6 +10,9 @@ export function CollectionStart({
   acknowledged,
   onAcknowledge,
   onCopy,
+  provider,
+  providers,
+  onProvider,
 }: {
   snapshot: ConnectionSnapshot | null;
   available: boolean;
@@ -19,9 +22,46 @@ export function CollectionStart({
   acknowledged: boolean;
   onAcknowledge: (value: boolean) => void;
   onCopy: () => void;
+  provider: Provider;
+  providers: readonly Provider[];
+  onProvider: (provider: Provider) => void;
 }) {
   return (
     <section>
+      <fieldset className="connection-provider">
+        <legend>환경 유형</legend>
+        <div>
+          {(
+            [
+              ["aws", "AWS"],
+              ["gcp", "GCP"],
+              ["kubernetes", "온프레미스"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value}>
+              <input
+                type="radio"
+                name="connection-provider"
+                value={value}
+                checked={provider === value}
+                disabled={busy || Boolean(s) || !providers.includes(value)}
+                onChange={() => onProvider(value)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+        {s && (
+          <p className="connection-note">
+            환경 유형을 바꾸려면 새 환경정보 수집을 시작하세요.
+          </p>
+        )}
+        {!s && available && providers.length === 1 && (
+          <p className="connection-note">
+            이 조직에서 AWS·GCP 연결을 아직 사용할 수 없어요.
+          </p>
+        )}
+      </fieldset>
       <header className="connection-title">
         <h2>
           {s?.registration === "EXPIRED"
@@ -43,9 +83,10 @@ export function CollectionStart({
           <div>
             <dt>도구</dt>
             <dd>
-              {preview
-                ? "Bash, curl, 환경에 맞는 kubectl/aws/gcloud"
-                : "Bash, curl, Python 3, kubectl — Kubernetes 환경 조회"}
+              Bash, curl, Python 3, kubectl
+              {provider === "aws" && ", AWS 명령줄 도구(aws)"}
+              {provider === "gcp" &&
+                ", Google Cloud 명령줄 도구(gcloud), GKE 인증 도구"}
             </dd>
           </div>
           <div>
@@ -105,7 +146,7 @@ export function CollectionStart({
       </div>
       <p className="connection-note">
         60초는 단말 등록 증명의 접수 기한이에요. 접수 후 웹 확인은 최대 5분 안에
-        마치면 돼요. 환경 이름과 역할은 수집 후 입력해요.
+        마치면 돼요. 환경 이름은 수집 후 입력해요.
       </p>
     </section>
   );

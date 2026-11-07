@@ -1,3 +1,6 @@
+from dataclasses import replace
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -111,6 +114,29 @@ def test_create_endpoint_makes_a_task_with_its_plan(monkeypatch):
     rejected = client.post("/api/v1/migrations", json={"source_env": "aws", "target_env": "aws"})
     assert rejected.status_code == 422
     assert "같아요" in rejected.json()["detail"]
+
+
+def test_task_resolves_a_registered_environment_from_the_current_team(monkeypatch):
+    monkeypatch.delenv("ONEPORT_ACCESS_PIN", raising=False)
+    app = create_app(auth_mode="demo")
+    request_id = "x" * 22
+    registered_id = "connected-" + request_id
+    client = TestClient(app, headers=ORIGIN)
+    body = {"source_env": "aws", "target_env": registered_id, "target_provider": "onprem"}
+    assert client.post("/api/v1/migrations", json=body).status_code == 422
+
+    def registered(connection_id, actor):
+        assert connection_id == request_id
+        assert actor.team == "test-team"
+        return {"environmentId": registered_id, "device": "APPROVED", "target": {"kind": "gcp"}}
+
+    app.state.container = replace(
+        app.state.container,
+        connections=SimpleNamespace(runtime_tenant_id="test-team", get=registered),
+    )
+    created = client.post("/api/v1/migrations", json=body)
+    assert created.status_code == 201
+    assert created.json()["label"] == "AWS → GCP"
 
 
 def test_a_task_saved_elsewhere_is_not_given_the_same_id():

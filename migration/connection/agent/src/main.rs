@@ -111,19 +111,31 @@ fn net_req(op: &str, s: &Local) -> Request {
         key_expires_at_ms: 0,
     }
 }
+struct InventoryQuery<'a> {
+    operation: &'a str,
+    target: Option<&'a str>,
+    provider: &'a str,
+    context: Option<&'a str>,
+}
+
+impl InventoryQuery<'_> {
+    fn cloud(&self) -> bool {
+        matches!(self.provider, "aws" | "gcp")
+    }
+}
+
 fn collect_raw(
     c: &Config,
     base: &Path,
     s: &Local,
-    op: &str,
-    target: Option<&str>,
+    query: &InventoryQuery,
     valid: &std::sync::atomic::AtomicBool,
 ) -> Result<Value> {
-    if !matches!(op, "discover" | "collect") {
+    if !matches!(query.operation, "discover" | "collect") {
         return Err("operation denied".into());
     }
     let mut cmd = Command::new("/usr/bin/python3");
-    cmd.arg(asset(base, &c.collector_archive)?).arg(op).args([
+    cmd.arg(asset(base, &c.collector_archive)?).arg(query.operation).args([
         "--request-id",
         &s.request_id,
         "--device-id",
@@ -131,7 +143,13 @@ fn collect_raw(
         "--epoch",
         &s.epoch.to_string(),
     ]);
-    if let Some(t) = target {
+    if query.cloud() {
+        cmd.args(["--provider", query.provider]);
+        if let Some(context) = query.context {
+            cmd.arg(format!("--cloud-context={context}"));
+        }
+    }
+    if let Some(t) = query.target {
         cmd.args(["--target-id", t]);
     }
     let mut child = cmd
@@ -150,7 +168,7 @@ fn collect_raw(
         if let Some(status) = child.try_wait()? {
             let (result, b) = reader.join().map_err(|_| "collector reader")?;
             result?;
-            if !status.success() || b.len() > 2_097_152 {
+            if (!status.success() && !query.cloud()) || b.len() > 2_097_152 {
                 return Err("environment collection failed".into());
             }
             return Ok(serde_json::from_slice(&b)?);
@@ -170,8 +188,7 @@ fn collect(
     c: &Config,
     base: &Path,
     s: &Local,
-    op: &str,
-    target: Option<&str>,
+    query: &InventoryQuery,
     key: &PKey<Private>,
     api_base: &str,
 ) -> Result<Option<Value>> {
@@ -215,7 +232,7 @@ fn collect(
                 break;
             }
         });
-        let result = collect_raw(c, base, s, op, target, &valid);
+        let result = collect_raw(c, base, s, query, &valid);
         *stop.lock().unwrap() = true;
         wake.notify_all();
         result
@@ -436,6 +453,44 @@ enum SessionExit {
     Recover(&'static str),
 }
 
+fn relay_discovery(
+    c: &Config,
+    base: &Path,
+    state: &Local,
+    key: &PKey<Private>,
+    api_base: &str,
+    provider: &str,
+    generation: u64,
+) -> Result<bool> {
+    let query = InventoryQuery {
+        operation: "discover",
+        target: None,
+        provider,
+        context: None,
+    };
+    let Some(found) = collect(c, base, state, &query, key, api_base)? else {
+        return Ok(false);
+    };
+    let data = if query.cloud() {
+        if !found["discovered"].is_array() || !found["warnings"].is_array() {
+            json!({
+                "environments": [], "warnings": [{"code": "LOOKUP_FAILED", "scope": ""}],
+                "generation": generation, "epoch": state.epoch,
+            })
+        } else {
+            json!({
+                "environments": found["discovered"], "warnings": found["warnings"],
+                "generation": generation, "epoch": state.epoch,
+            })
+        }
+    } else {
+        json!({"environments": found["discovered"]})
+    };
+    Ok(api::device(
+        api_base, &state.request_id, &state.candidate_id, key, "discovered", data,
+    ).is_ok())
+}
+
 fn serve_tunnel(
     c: &Config,
     base: &Path,
@@ -448,25 +503,21 @@ fn serve_tunnel(
     let tunnel = SocketAddr::new(policy.peer_address, policy.job_port);
     let api_base = format!("http://{tunnel}/api/v1/connections");
     let request = &state.request_id;
-    let Some(found) = collect(c, base, state, "discover", None, key, &api_base)? else {
-        return Ok(SessionExit::Recover("discovery-lease"));
+    let initial = match api::device(
+        &api_base, request, &state.candidate_id, key, "poll", json!({}),
+    ) {
+        Ok(value) => value,
+        Err(_) => return Ok(SessionExit::Recover("discovery-poll")),
     };
-    if api::device(
-        &api_base,
-        request,
-        &state.candidate_id,
-        key,
-        "discovered",
-        json!({"environments":found["discovered"]}),
-    )
-    .is_err()
-    {
+    let provider = initial["snapshot"]["provider"].as_str().unwrap_or("kubernetes");
+    let mut generation = initial["snapshot"]["discoveryGeneration"].as_u64().unwrap_or(0);
+    if !relay_discovery(c, base, state, key, &api_base, provider, generation)? {
         return Ok(SessionExit::Recover("discovery-relay"));
     }
     if notify_service {
         service::ready()?;
     }
-    println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
+    println!("보안 연결을 확인했습니다. 웹에서 정보를 수집할 대상을 선택하세요.");
     let mut last_lease = None::<std::time::Instant>;
     let mut completed = std::collections::HashSet::new();
     loop {
@@ -506,32 +557,45 @@ fn serve_tunnel(
             Ok(value) => value,
             Err(_) => return Ok(SessionExit::Recover("job-poll")),
         };
+        let current_generation = response["snapshot"]["discoveryGeneration"].as_u64().unwrap_or(0);
+        if current_generation != generation {
+            if !relay_discovery(c, base, state, key, &api_base, provider, current_generation)? {
+                return Ok(SessionExit::Recover("discovery-relay"));
+            }
+            generation = current_generation;
+            continue;
+        }
         if !response["task"].is_null() {
             let task = &response["task"];
             let device = state.device_id.as_deref().ok_or("device missing")?;
             let op = protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
             let job = task["payload"]["job_id"].as_str().ok_or("job id")?;
             if !completed.contains(job) {
-                let Some(result) = collect(
-                    c,
-                    base,
-                    state,
-                    op,
-                    task["payload"]["target_id"].as_str(),
-                    key,
-                    &api_base,
-                )?
-                else {
+                let query = InventoryQuery {
+                    operation: op,
+                    target: task["payload"]["target_id"].as_str(),
+                    provider,
+                    context: task["payload"]["cloud_context"].as_str(),
+                };
+                let Some(result) = collect(c, base, state, &query, key, &api_base)? else {
                     return Ok(SessionExit::Recover("inventory-lease"));
                 };
                 protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
+                let (action, data) = if query.cloud() && result["report"].is_null() {
+                    ("inventory-failed", json!({
+                        "job_id": job,
+                        "reason": result["reason_code"].as_str().unwrap_or("LOOKUP_FAILED"),
+                    }))
+                } else {
+                    ("inventory", json!({"job_id": job, "report": result["report"]}))
+                };
                 if api::device(
                     &api_base,
                     request,
                     &state.candidate_id,
                     key,
-                    "inventory",
-                    json!({"job_id":job,"report":result["report"]}),
+                    action,
+                    data,
                 )
                 .is_err()
                 {
@@ -841,7 +905,7 @@ fn main() {
                 _ => RunMode::Foreground,
             },
         ),
-        Some("install-service") if matches!(args.len(), 8 | 9) => {
+        Some("install-service") if matches!(args.len(), 8..=10) => {
             migration_connector::host_install::install_service(
                 Path::new(&args[2]),
                 &args[3],
@@ -852,6 +916,7 @@ fn main() {
                 args.get(8)
                     .map(String::as_str)
                     .filter(|value| !value.is_empty()),
+                args.get(9).map(String::as_str),
             )
         }
         Some("crypto-vector") if args.len() == 2 => vector(),

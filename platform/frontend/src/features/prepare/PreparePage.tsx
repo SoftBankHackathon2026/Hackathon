@@ -14,6 +14,7 @@ import type {
   CollectionContext,
   ConnectionGateway,
   ConnectionSnapshot,
+  Provider,
 } from "./connectionTypes";
 import { ConnectionTargetForm } from "./ConnectionTargetForm";
 import { DeviceApproval, TunnelProgress } from "./ConnectionStages";
@@ -29,6 +30,7 @@ import {
   formatTime,
   isListedConnection,
   STEPS,
+  PROVIDERS,
   stepFor,
 } from "./model";
 import { CreateTaskBar } from "./CreateTaskBar";
@@ -85,7 +87,8 @@ export function PreparePage({
   const disconnectDialog = useRef<HTMLDialogElement>(null);
   const disconnectTarget = listedConnections.find((s) => s.id === disconnectId);
   // 준비 단계: 1 환경 연결 → 2 앱 선택. 환경을 등록한 뒤에만 2 로 갈 수 있다
-  const [phase, setPhase] = useState<"connect" | "apps">("connect");
+  const [phase, setPhase] = useState<"connect" | "apps" | "task">("connect");
+  const [provider, setProvider] = useState<Provider>("kubernetes");
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const lock = useRef(false),
     alive = useRef(true),
@@ -126,6 +129,7 @@ export function PreparePage({
     disconnectDialog.current?.close();
     setDisconnectId(undefined);
     setPhase("connect");
+    setSelectedApps([]);
   }, [requestId]);
   useEffect(() => {
     if (previousView.current && previousView.current !== view)
@@ -192,6 +196,7 @@ export function PreparePage({
   const startNew = () => {
     if (busy) return;
     setAcknowledged(false);
+    setProvider("kubernetes");
     setError("");
     setMessage("");
     onNavigate("#prepare");
@@ -203,7 +208,11 @@ export function PreparePage({
     setError("");
     setMessage("");
     const startedId = requestId;
-    void copyEnrollmentCommand(gateway, context, snapshot?.id)
+    void copyEnrollmentCommand(
+      gateway,
+      { ...context, provider: snapshot?.provider ?? provider },
+      snapshot?.id,
+    )
       .then((s) => {
         if (!alive.current || busyId.current !== startedId) return;
         copiedId.current = s.id;
@@ -237,6 +246,22 @@ export function PreparePage({
   const source = snapshot?.collected.find(
     (c) => c.id === snapshot.selectedEnvironmentId,
   );
+  if (phase === "task" && registered && snapshot?.environmentId) {
+    return (
+      <div className="pk-page connection-page">
+        <PageHeader title="마이그레이션 작업 만들기" />
+        <CreateTaskBar
+          prepared={snapshot}
+          connections={snapshots}
+          apps={selectedApps}
+          onBack={() => setPhase("apps")}
+          onCreated={(jobId) =>
+            onNavigate("#migrations/" + encodeURIComponent(jobId))
+          }
+        />
+      </div>
+    );
+  }
   return (
     <div
       className={`pk-page connection-page${apps ? " is-apps" : ""}${apps && gateway.mode !== "preview" ? " is-live-apps" : ""}`}
@@ -277,6 +302,7 @@ export function PreparePage({
               snapshot={snapshot}
               busy={busy}
               onSelect={setSelectedApps}
+              initialSelection={selectedApps}
               onRefresh={() =>
                 run(
                   () =>
@@ -304,14 +330,13 @@ export function PreparePage({
                 작업 만들기 (실제 연결에서만)
               </button>
             ) : (
-              <CreateTaskBar
-                environmentId={snapshot.environmentId}
-                role={snapshot.target.role}
-                apps={selectedApps}
-                onCreated={(jobId) =>
-                  onNavigate("#migrations/" + encodeURIComponent(jobId))
-                }
-              />
+              <button
+                className="primary"
+                disabled={!selectedApps.length || busy || stale}
+                onClick={() => setPhase("task")}
+              >
+                다음: 작업 만들기
+              </button>
             )}
           </div>
         </>
@@ -355,11 +380,13 @@ export function PreparePage({
                     >
                       <strong>{name}</strong>
                       <span>
-                        {s.target
-                          ? s.target.role === "source"
-                            ? "출발 환경"
-                            : "도착 환경"
-                          : "환경 이름, 역할 미등록"}
+                        {
+                          PROVIDERS.find(
+                            (p) =>
+                              p.value ===
+                              (s.target?.kind ?? s.provider ?? "kubernetes"),
+                          )?.title
+                        }
                       </span>
                       <StatusDot tone={state.tone}>{state.label}</StatusDot>
                     </button>
@@ -524,6 +551,12 @@ export function PreparePage({
                       key={snapshot.id + ":" + snapshot.epoch}
                       snapshot={snapshot}
                       busy={busy || stale}
+                      onRetry={
+                        gateway.rediscover
+                          ? () => run(() => gateway.rediscover!(snapshot.id))
+                          : undefined
+                      }
+                      onSkip={startNew}
                       onCollect={(sourceId) =>
                         run(
                           () => gateway.collect(snapshot.id, sourceId),
@@ -543,6 +576,12 @@ export function PreparePage({
                       acknowledged={acknowledged}
                       onAcknowledge={setAcknowledged}
                       onCopy={copy}
+                      provider={snapshot?.provider ?? provider}
+                      providers={gateway.providers ?? ["kubernetes"]}
+                      onProvider={(next) => {
+                        setProvider(next);
+                        setAcknowledged(false);
+                      }}
                     />
                   )}
                 </fieldset>
