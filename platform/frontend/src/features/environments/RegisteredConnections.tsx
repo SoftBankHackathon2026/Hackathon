@@ -1,7 +1,7 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { createLiveConnections } from "../../api/liveConnections";
 import { StatusDot } from "../../components/StatusDot";
-import { connectionStatus } from "../prepare/model";
+import { connectionStatus, PROVIDERS } from "../prepare/model";
 
 /** Connection records are not deployment providers or fabricated fleet topology. */
 export function RegisteredConnections() {
@@ -24,7 +24,7 @@ export function RegisteredConnections() {
           <tr>
             <th>환경</th>
             <th>프로젝트</th>
-            <th>역할</th>
+            <th>환경 유형</th>
             <th>연결 상태</th>
           </tr>
         </thead>
@@ -40,7 +40,7 @@ export function RegisteredConnections() {
                 </td>
                 <td>{item.target!.project}</td>
                 <td>
-                  {item.target!.role === "source" ? "출발 환경" : "도착 환경"}
+                  {PROVIDERS.find((p) => p.value === item.target!.kind)?.title}
                 </td>
                 <td>
                   <StatusDot tone={gateway.available ? status.tone : "idle"}>

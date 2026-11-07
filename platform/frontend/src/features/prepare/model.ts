@@ -30,7 +30,6 @@ export function emptyTarget(organization = ""): ConnectionTarget {
     project: "",
     name: "",
     kind: "kubernetes",
-    role: "source",
     region: "",
   };
 }
@@ -39,7 +38,6 @@ export function targetValid(target: ConnectionTarget) {
     target.organization.trim() &&
     target.project.trim() &&
     target.name.trim() &&
-    (target.role === "source" || target.role === "target") &&
     (target.kind === "kubernetes" || target.region.trim()),
   );
 }

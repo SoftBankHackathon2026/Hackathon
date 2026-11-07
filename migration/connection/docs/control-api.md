@@ -39,11 +39,12 @@ OpenSSL·Redis·배포 설정뿐 아니라 브로커의 **최근 60초 준비 �
 | --- | --- | --- |
 | GET `/capabilities` | 없음 | available/reason/providers/bootstrapUrl/releaseVersion |
 | GET 기본 경로 | 로그인 | 해당 조직의 ConnectionSnapshot 목록 |
-| POST 기본 경로 | publicKey, operationId | ConnectionSnapshot, deployment |
+| POST 기본 경로 | publicKey, operationId, 선택 provider | ConnectionSnapshot, deployment |
 | GET `/{id}` | 로그인 | 최신 ConnectionSnapshot |
 | POST `/{id}/cancel` | 빈 객체 | 미사용 요청 취소 |
 | POST `/{id}/approve` | candidateDigest, code, 선택 replaceId | 단말 승인 및 선택한 이전 연결 교체 |
 | POST `/{id}/reject` | 빈 객체 | 후보 폐기 |
+| POST `/{id}/rediscover` | 빈 객체 | 승인된 클라우드 단말에서 대상 탐색 재요청 |
 | POST `/{id}/collect` | discoveredId | 선택한 대상의 서명된 조회 작업 생성 |
 | POST `/{id}/register` | collectedId, inventoryDigest, target | 환경등록 |
 | POST `/{id}/reconnect` | 빈 객체 | 새 연결 요청 |
@@ -51,7 +52,9 @@ OpenSSL·Redis·배포 설정뿐 아니라 브로커의 **최근 60초 준비 �
 
 Snapshot의 `collectionPending`은 유효한 수집 작업이 있고 승인·터널 READY 상태일 때만 true입니다. 요청 접수와 완료를 구분하며 만료·키 세대 변경·철회·수집 완료 시 false로 표시합니다. 작업 서명·내부 payload는 브라우저 응답에 포함하지 않습니다.
 
-`target`은 organization/project/name/kind/role/region입니다. 종류는 kubernetes만 허용하며 조직·리전·수집 대상은 서버 자료와 일치해야 합니다. 현재 플랫폼에는 별도 프로젝트 권한 엔티티가 없으므로 project는 **조직 권한 아래의 분류 이름**입니다. 독립 프로젝트 접근권한을 검증했다고 표시하지 않습니다.
+`provider`는 `kubernetes`(기본값), `aws`, `gcp` 중 하나이며 명령 발급 후 바꿀 수 없습니다. 클라우드 요청의 탐색 완료 상태와 경고는 `discoveryComplete`와 `discoveryWarnings`로 전달합니다. 동일한 단말 연결에서 재탐색할 수 있으며 이전 탐색 세대의 결과는 수락하지 않습니다.
+
+`target`은 organization/project/name/kind/region입니다. 이전 웹 화면의 role 필드는 호환을 위해 수락합니다. 조직·종류·리전·수집 대상은 서버 자료와 일치해야 하며 출발·도착은 작업 생성 요청에 저장합니다. 현재 플랫폼에는 별도 프로젝트 권한 엔티티가 없으므로 project는 **조직 권한 아래의 분류 이름**입니다. 독립 프로젝트 접근권한을 검증했다고 표시하지 않습니다.
 
 환경등록은 고객 자원 생성·설치·데이터 이관 권한을 부여하지 않습니다. 기존 환경 조회 API에 연결된 환경을 `executable:false`로 추가하며, Provider 실행 등록과 분리합니다. 터널이 끊기거나 단말이 폐기되어도 등록 기록을 삭제하지 않습니다.
 

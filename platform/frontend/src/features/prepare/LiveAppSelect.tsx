@@ -42,16 +42,18 @@ export function LiveAppSelect({
   busy,
   onRefresh,
   onSelect,
+  initialSelection = [],
 }: {
   snapshot: ConnectionSnapshot;
   busy: boolean;
   onRefresh: () => void;
   onSelect?: (apps: string[]) => void;
+  initialSelection?: string[];
 }) {
   const [selection, setSelection] = useState<{
     inventoryDigest?: string;
     ids: string[];
-  }>({ inventoryDigest: snapshot.inventoryDigest, ids: [] });
+  }>({ inventoryDigest: snapshot.inventoryDigest, ids: initialSelection });
   if (selection.inventoryDigest !== snapshot.inventoryDigest) {
     setSelection({ inventoryDigest: snapshot.inventoryDigest, ids: [] });
   }

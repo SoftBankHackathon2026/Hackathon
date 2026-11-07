@@ -60,23 +60,31 @@ def decode_json(raw: bytes):
         raise InventoryError("INVALID_KUBECTL_RESPONSE") from None
 
 
-def run_bounded(command: list[str], timeout: float = 20.0) -> bytes:
+def run_bounded(
+    command: list[str],
+    timeout: float = 20.0,
+    *,
+    classify_failure: Callable[[bytes], str] | None = None,
+) -> bytes:
     """Keep responses only in bounded memory; never expose stderr/argv errors."""
     try:
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if classify_failure else subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
     except OSError:
         raise InventoryError("KUBECTL_START_FAILED") from None
     data = bytearray()
+    errors = bytearray()
     deadline = time.monotonic() + timeout
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
+            if process.stderr is not None:
+                selector.register(process.stderr, selectors.EVENT_READ)
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -85,6 +93,9 @@ def run_bounded(command: list[str], timeout: float = 20.0) -> bytes:
                     block = os.read(key.fileobj.fileno(), 65536)
                     if not block:
                         selector.unregister(key.fileobj)
+                        continue
+                    if key.fileobj is process.stderr:
+                        errors.extend(block[: max(0, 16384 - len(errors))])
                         continue
                     data.extend(block)
                     if len(data) > MAX_OUTPUT:
@@ -97,7 +108,11 @@ def run_bounded(command: list[str], timeout: float = 20.0) -> bytes:
             except subprocess.TimeoutExpired:
                 raise InventoryError("KUBECTL_TIMEOUT") from None
             if status != 0:
-                raise InventoryError("KUBECTL_REQUEST_FAILED")
+                raise InventoryError(
+                    classify_failure(bytes(errors))
+                    if classify_failure
+                    else "KUBECTL_REQUEST_FAILED"
+                )
         return bytes(data)
     finally:
         if process.poll() is None:
@@ -108,6 +123,8 @@ def run_bounded(command: list[str], timeout: float = 20.0) -> bytes:
             process.wait()
         if process.stdout:
             process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
 
 
 class Kubectl:
@@ -237,6 +254,7 @@ def collect(
     epoch: int,
     selected_target_id: str,
     clock: Callable[[], float] = time.time,
+    cloud_environment: dict | None = None,
 ) -> dict:
     _binding(request_id, device_id, epoch)
     descriptors = kubectl.descriptors()
@@ -408,6 +426,8 @@ def collect(
         "context": context,
         "facts": facts_for(cluster, resources),
     }
+    if cloud_environment:
+        environment.update(cloud_environment)
     report = {
         "schema_version": 1,
         "request_id": request_id,

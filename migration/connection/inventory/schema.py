@@ -162,16 +162,26 @@ def validate_report(
         report["environment"],
         {"id", "kind", "name", "identity", "region", "context", "facts"},
     )
-    if (
-        env["id"] != report["target_id"]
-        or env["kind"] != "kubernetes"
-        or env["region"] != ""
+    if env["id"] != report["target_id"] or env["kind"] not in (
+        "kubernetes",
+        "aws",
+        "gcp",
     ):
         raise ReportError("INVALID_ENVIRONMENT")
     for field in ("name", "identity", "context"):
         text(env[field])
-    if env["name"] != env["context"]:
-        raise ReportError("INVALID_ENVIRONMENT")
+    if env["kind"] == "kubernetes":
+        if env["name"] != env["context"] or env["region"] != "":
+            raise ReportError("INVALID_ENVIRONMENT")
+    else:
+        parts = env["context"].split("/")
+        if (
+            len(parts) != 3
+            or not all(parts)
+            or parts[1:] != [env["region"], env["name"]]
+            or env["identity"] != env["context"]
+        ):
+            raise ReportError("INVALID_ENVIRONMENT")
     cluster = exact(
         report["cluster"],
         {"server", "ca_sha384", "tls_server_name", "namespace_uid", "version"},
@@ -192,7 +202,10 @@ def validate_report(
         cluster["tls_server_name"],
     ):
         raise ReportError("REPORT_TARGET_CHANGED")
-    if env["identity"] != "kubernetes:" + cluster["namespace_uid"]:
+    if (
+        env["kind"] == "kubernetes"
+        and env["identity"] != "kubernetes:" + cluster["namespace_uid"]
+    ):
         raise ReportError("INVALID_IDENTITY")
     resources = exact(
         report["resources"], {"node_count", "namespace_count", "storage_classes"}

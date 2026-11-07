@@ -19,7 +19,6 @@ export function ConnectionTargetForm({
   const [draft, setDraft] = useState(() => ({
     project: "",
     name: s.collected.length === 1 ? s.collected[0].name : "",
-    role: "source" as "source" | "target",
   }));
   const target: ConnectionTarget = {
     ...emptyTarget(s.organization),
@@ -38,10 +37,7 @@ export function ConnectionTargetForm({
     >
       <header className="connection-title">
         <h2>수집한 환경을 등록하세요</h2>
-        <p>
-          확인된 환경정보에 이름과 역할을 지정해요. 마이그레이션 범위와 실행
-          계획은 앱 선택에서 검토해요.
-        </p>
+        <p>수집한 환경의 이름과 프로젝트를 입력하세요.</p>
       </header>
       {s.collected.length > 1 && (
         <label>
@@ -131,22 +127,6 @@ export function ConnectionTargetForm({
             onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
             placeholder="환경을 구분할 이름"
           />
-        </label>
-        <label>
-          환경 역할
-          <select
-            value={draft.role}
-            disabled={busy}
-            onChange={(e) =>
-              setDraft((d) => ({
-                ...d,
-                role: e.target.value as "source" | "target",
-              }))
-            }
-          >
-            <option value="source">출발 환경</option>
-            <option value="target">도착 환경</option>
-          </select>
         </label>
       </div>
       {!s.permissions.registerEnvironment && (

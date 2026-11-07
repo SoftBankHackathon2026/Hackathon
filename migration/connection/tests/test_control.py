@@ -111,8 +111,8 @@ def proof(svc, request_id, *, replacement=False):
     }
 
 
-def approved(svc):
-    request_id = issued(svc)
+def approved(svc, provider="kubernetes"):
+    request_id = svc.create(OWNER, PUBLIC, "operation_1234567890", provider)["id"]
     result = svc.prove(request_id, proof(svc, request_id))
     svc.browser(
         request_id,
@@ -126,8 +126,8 @@ def approved(svc):
     return request_id
 
 
-def ready(svc):
-    request_id = approved(svc)
+def ready(svc, provider="kubernetes"):
+    request_id = approved(svc, provider)
     svc.tunnel(
         request_id,
         {
@@ -672,3 +672,110 @@ def test_offline_reconnect_times_out_and_requires_a_new_tunnel(svc):
     assert restored["tunnel"] == "READY"
     assert restored["epoch"] == 2
     assert restored["lastTunnelActivityAt"] == svc.clock()
+
+
+@pytest.mark.parametrize(
+    ("provider", "scope", "region"),
+    [
+        ("aws", "123456789012", "ap-northeast-2"),
+        ("gcp", "test-project", "asia-northeast3"),
+    ],
+)
+def test_default_cloud_discovery_keeps_tunnel_ready_with_warnings(
+    svc, provider, scope, region
+):
+    assert provider in svc.capabilities(OWNER.team)["providers"]
+    request_id = ready(svc, provider)
+    context = f"{scope}/{region}/allowed"
+    candidate = {
+        "id": "k8s-" + "0" * 48,
+        "kind": provider,
+        "name": "allowed",
+        "identity": context,
+        "region": region,
+        "context": context,
+    }
+    warnings = [{"code": "PERMISSION_DENIED", "scope": f"{scope}/{region}/denied"}]
+
+    def submit(action, data):
+        return svc.device(
+            request_id, envelope(svc, request_id, action, data), through_tunnel=True
+        )
+
+    with pytest.raises(ConnectionError, match="INVALID_DISCOVERY"):
+        submit("discovered", {"environments": [candidate]})
+    submit(
+        "discovered",
+        {
+            "environments": [candidate],
+            "warnings": warnings,
+            "generation": 0,
+            "epoch": 1,
+        },
+    )
+    view = svc.get(request_id, OWNER)
+    assert view["tunnel"] == "READY"
+    assert view["discoveryComplete"]
+    assert view["discoveryWarnings"] == warnings
+    assert view["discovered"] == [candidate]
+    svc.browser(request_id, OWNER, "collect", {"discoveredId": candidate["id"]})
+    task = submit("poll", {})["task"]["payload"]
+    assert task["cloud_context"] == candidate["context"]
+    submit(
+        "inventory-failed", {"job_id": task["job_id"], "reason": "PERMISSION_DENIED"}
+    )
+    assert not svc.get(request_id, OWNER)["collectionPending"]
+    view = svc.browser(request_id, OWNER, "rediscover", {})
+    assert view["discoveryGeneration"] == 1
+    assert not view["discoveryComplete"] and not view["discovered"]
+    with pytest.raises(ConnectionError, match="STALE_DISCOVERY"):
+        submit(
+            "discovered",
+            {
+                "environments": [candidate],
+                "warnings": warnings,
+                "generation": 0,
+                "epoch": 1,
+            },
+        )
+    submit(
+        "discovered",
+        {"environments": [], "warnings": warnings, "generation": 1, "epoch": 1},
+    )
+    assert svc.get(request_id, OWNER)["tunnel"] == "READY"
+
+
+def test_environment_registration_does_not_require_a_direction(svc):
+    request_id = ready(svc)
+    task, value = report(svc, request_id)
+    svc.device(
+        request_id,
+        envelope(
+            svc, request_id, "inventory", {"job_id": task["job_id"], "report": value}
+        ),
+        through_tunnel=True,
+    )
+    view = svc.get(request_id, OWNER)
+    registered = svc.browser(
+        request_id,
+        OWNER,
+        "register",
+        {
+            "collectedId": value["target_id"],
+            "inventoryDigest": view["inventoryDigest"],
+            "target": {
+                "organization": OWNER.team,
+                "project": "project",
+                "name": "production",
+                "kind": "kubernetes",
+                "region": "",
+            },
+        },
+    )
+    assert registered["environmentId"]
+    assert "role" not in registered["target"]
+    environment_id = registered["environmentId"]
+    assert svc.registered_provider(environment_id, OWNER.team) == "onprem"
+    assert svc.registered_provider(environment_id, OTHER.team) is None
+    svc.browser(request_id, OWNER, "revoke", {})
+    assert svc.registered_provider(environment_id, OWNER.team) is None

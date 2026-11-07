@@ -138,8 +138,11 @@ async def create_connection(request: Request, container: Container = Depends(get
     implementation = service(container)
     identity = actor(request, container)
     body = await document(request)
-    fields(body, ("publicKey", "operationId"))
-    return await invoke(implementation.create, identity, body["publicKey"], body["operationId"])
+    fields(body, ("publicKey", "operationId"), ("provider",))
+    args = [identity, body["publicKey"], body["operationId"]]
+    if "provider" in body:
+        args.append(body["provider"])
+    return await invoke(implementation.create, *args)
 
 
 @router.get(PUBLIC + "/{request_id}")
@@ -199,6 +202,7 @@ async def browser_action(
         "approve": ("candidateDigest", "code"),
         "reject": (),
         "collect": ("discoveredId",),
+        "rediscover": (),
         "register": ("collectedId", "inventoryDigest", "target"),
         "reconnect": (),
         "revoke": (),
