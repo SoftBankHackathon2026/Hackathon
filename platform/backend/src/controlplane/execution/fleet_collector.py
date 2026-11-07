@@ -1,8 +1,10 @@
 import argparse
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from kubernetes.client.exceptions import ApiException
@@ -32,6 +34,8 @@ LOG = logging.getLogger(__name__)
 FACTS_EVERY_TICKS = 12
 # 노드·PVC·태그 자원은 자주 바뀌지 않고 AWS API 호출 수도 있어 5초 tick 기준 약 5분마다 읽는다.
 COST_EVERY_TICKS = 60
+# 이 환경변수에 파일 경로가 있으면 tick 을 시작할 때마다 수정 시각을 갱신한다. 컨테이너 healthcheck 가 읽는다.
+HEARTBEAT_ENV = "ONEPORT_COLLECTOR_HEARTBEAT"
 
 
 class _BrokenMeter:
@@ -152,9 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         costs=CostStore(platform.store),
         cost_config=load_cost_config(),
     )
+    heartbeat = os.environ.get(HEARTBEAT_ENV)
     with db.pooling():
         platform.store.migrate()
         while True:
+            if heartbeat:
+                Path(heartbeat).touch()
             collector.tick()
             if args.once:
                 return 0
