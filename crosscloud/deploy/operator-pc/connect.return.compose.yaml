@@ -1,0 +1,12 @@
+# 귀환(GCP→AWS) job 에서 connect.compose.yaml 위에 겹치는 파일.
+#
+#   docker compose -f connect.compose.yaml -f connect.return.compose.yaml \
+#       up -d --build
+#
+# 순방향 env(AWS_CDC_PASSWORD·GCP_SINK_PASSWORD)는 그대로 두고 귀환 방향
+# 비밀번호를 더한다. 값은 운영자 셸 env(Secret 에서)로만 받는다.
+services:
+  connect:
+    environment:
+      GCP_CDC_PASSWORD: ${GCP_CDC_PASSWORD:?귀환 원본 cdc 비밀번호}
+      AWS_SINK_PASSWORD: ${AWS_SINK_PASSWORD:?귀환 대상 sink 비밀번호}

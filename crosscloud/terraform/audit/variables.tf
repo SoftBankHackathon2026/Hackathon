@@ -54,3 +54,9 @@ locals {
     "crosscloud-direction" = var.direction
   }
 }
+
+variable "allowed_account_ids" {
+  description = "이 계정에서만 apply 한다(aws provider allowed_account_ids). null 이면 제한 없음."
+  type        = list(string)
+  default     = null
+}
