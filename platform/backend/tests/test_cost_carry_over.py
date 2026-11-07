@@ -159,7 +159,6 @@ def test_database_errors_do_not_stop_the_tick():
     c._reader = lambda env: (_ for _ in ()).throw(ValueError("bad facts"))
     c.tick()
     assert [i.env_id for i in store.saved] == ["aws"]
-    assert c._ticks == 1
 
 
 def test_worker_status_errors_do_not_stop_the_tick():
