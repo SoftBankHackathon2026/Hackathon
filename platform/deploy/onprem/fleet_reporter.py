@@ -14,11 +14,13 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 CUTOVER_DB = "cutover.sqlite3"
 POLICY_DB = "policy.sqlite3"
@@ -135,15 +137,42 @@ def command_argv(
     return argv
 
 
-def run_command(argv: list[str]) -> tuple[int, str]:
-    completed = subprocess.run(
+def run_command(
+    argv: list[str], on_tick: Callable[[], None] | None = None, tick_seconds: float = 5.0
+) -> tuple[int, str]:
+    """cutover 서브프로세스를 끝까지 돌린다. 실행 중에도 tick_seconds 마다 on_tick(보통 report_once)을
+    불러 플랫폼 화면의 단계가 멈추지 않게 한다. 출력은 가린 뒤 끝 LOG_TAIL_LIMIT 자만 남긴다."""
+    proc = subprocess.Popen(
         argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
     )
-    return completed.returncode, redact(completed.stdout or "")[-LOG_TAIL_LIMIT:]
+    chunks: list[str] = []
+
+    def drain() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            chunks.append(line)
+            if sum(len(c) for c in chunks) > LOG_TAIL_LIMIT * 4:
+                joined = "".join(chunks)[-LOG_TAIL_LIMIT * 2 :]
+                chunks.clear()
+                chunks.append(joined)
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    while proc.poll() is None:
+        reader.join(timeout=max(0.2, tick_seconds))
+        if proc.poll() is None and on_tick is not None:
+            try:
+                on_tick()
+            except (urllib.error.URLError, OSError) as exc:
+                log(f"report during command failed: {exc}")
+    reader.join()
+    return proc.returncode, redact("".join(chunks))[-LOG_TAIL_LIMIT:]
 
 
 def commands_url(args: argparse.Namespace, suffix: str) -> str:
-    return f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{args.job_id}/commands/{suffix}"
+    return (
+        f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{args.job_id}/commands/{suffix}"
+    )
 
 
 def claim_command(args: argparse.Namespace, token: str) -> dict | None:
@@ -158,7 +187,9 @@ def post_result(args: argparse.Namespace, token: str, command_id: str, result: d
             post_json(url, token, result)
             return
         except (urllib.error.URLError, OSError) as exc:
-            log(f"command {command_id} result post failed ({attempt}/{RESULT_POST_ATTEMPTS}): {exc}")
+            log(
+                f"command {command_id} result post failed ({attempt}/{RESULT_POST_ATTEMPTS}): {exc}"
+            )
             if attempt == RESULT_POST_ATTEMPTS:
                 raise
             time.sleep(2)
@@ -179,14 +210,16 @@ def execute_once(args: argparse.Namespace, token: str) -> bool:
             args.state_dir,
         )
         log(f"command {command_id} argv: {' '.join(argv)}")
-        exit_code, tail = run_command(argv)
+        exit_code, tail = run_command(
+            argv,
+            on_tick=lambda: report_once(args, token),
+            tick_seconds=float(getattr(args, "interval", 0) or 5),
+        )
     except (ValueError, OSError) as exc:
         exit_code, tail = EXIT_CONFIG, redact(str(exc))
     cutover = read_cutover(Path(args.state_dir), args.job_id)
     stage = cutover["stage"] if cutover else None
-    post_result(
-        args, token, command_id, {"exit_code": exit_code, "stage": stage, "log_tail": tail}
-    )
+    post_result(args, token, command_id, {"exit_code": exit_code, "stage": stage, "log_tail": tail})
     log(f"command {command_id} finished exit={exit_code} stage={stage}")
     return True
 

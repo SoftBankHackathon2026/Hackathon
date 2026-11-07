@@ -131,3 +131,24 @@ def test_execute_once_returns_false_when_nothing_is_pending(monkeypatch):
     monkeypatch.setattr(reporter, "post_json", lambda url, token, body: (204, None))
     args = Namespace(job_id="forward_001", state_dir="/nope", platform_url="http://p")
     assert reporter.execute_once(args, "token") is False
+
+
+def test_run_command_keeps_reporting_while_subprocess_runs(tmp_path):
+    import sys as _sys
+
+    script = tmp_path / "slow.py"
+    script.write_text(
+        "import sys, time\n"
+        "print('start password=abc123')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(0.9)\n"
+        "print('done')\n"
+        "sys.exit(3)\n"
+    )
+    ticks: list[int] = []
+    code, tail = reporter.run_command(
+        [_sys.executable, "-I", str(script)], on_tick=lambda: ticks.append(1), tick_seconds=0.2
+    )
+    assert code == 3
+    assert "done" in tail and "abc123" not in tail
+    assert len(ticks) >= 2, ticks

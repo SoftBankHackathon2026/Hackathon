@@ -92,6 +92,8 @@ env:
 
 `/opt/reporter/fleet_reporter.py` 는 `deploy/onprem/fleet_reporter.py` 를 ConfigMap 으로 올린 것입니다(`reporter-sidecar.patch.yaml` 참고). 동작 흐름은 "상태 보고 → claim → 있으면 `python -m migration.cutover --config $MIGRATION_CONFIG --state-dir /var/lib/worker run|run --approve <id>|run --retry|run --force-retry|abort` 실행 → 결과 push → 상태 보고" 를 `--interval` 초마다 반복합니다. 서브프로세스가 끝날 때까지 다음 명령을 가져가지 않으므로 두 명령이 동시에 돌지 않습니다. 결과 push 가 실패하면 3번까지 다시 시도하고, 그래도 실패하면 명령이 `running` 으로 남으므로 로그를 보고 수동으로 확인합니다.
 
+보고기는 명령 서브프로세스가 도는 동안에도 `--interval` 마다 cutover 단계를 계속 올린다(실행 중 화면이 멈추지 않는다). 명령은 한 번에 하나만 실행한다.
+
 ## 보안 통제
 
 통제 정의와 판정은 `backend/src/controlplane/domain/security_controls.py`에 있습니다. 점수는 심각도 가중치(critical 10, high 5, medium 3, low 1)로 통과 비율을 계산하고 `unknown`은 분모에서 뺍니다. `parity.regressions`는 출발 환경에서 통과했지만 도착 환경에서 실패한 통제이며, 전환 전 확인 대상입니다.
