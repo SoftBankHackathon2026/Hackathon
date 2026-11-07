@@ -4,16 +4,32 @@
 
 ## 실행
 
-다음 세 명령이 운영 진입점입니다. `REQUEST_ID`는 공개 요청 식별자이며 seed가 아닙니다. 최초 `run`의 표준입력은 검증된 bootstrap이 비공개 파이프로 `request_id.seed`를 전달합니다. 이를 명령 인수, 환경변수, 셸 기록에 넣지 마십시오.
+플랫폼에서 복사한 초기 설치 명령을 Ubuntu 24.04의 일반 사용자 터미널에서 실행합니다. 웹 승인과 관리자 설치 동의를 마치면 운영체제의 서비스 관리자(systemd)가 같은 일반 사용자로 \`migration-connector.service\`를 실행합니다. 양방향 터널 확인이 끝나면 초기 명령이 셸을 반환합니다. 처음 시작은 최대 90초 동안 기다립니다.
 
-```sh
-/path/to/verified-bundle/migration-connector run /path/to/verified-bundle/connector.json
+\`\`\`sh
+systemctl status migration-connector
+sudo systemctl start migration-connector
+sudo systemctl stop migration-connector
+journalctl -u migration-connector
+\`\`\`
+
+서비스는 부팅 시 시작하고 비정상 종료 후 재시작합니다. 관리자가 중지한 서비스는 단말에서 다시 시작해야 합니다. 서버가 단말 승인을 철회하면 작업 요청과 새 터널을 차단합니다. 단말은 철회를 확인한 뒤 관리 인터페이스와 인증 상태를 정리합니다. 정리 보고가 서버에 도착하지 않으면 웹에서 단말 정리가 확인될 때까지 대기 상태가 표시됩니다.
+
+전경 실행을 이미 종료한 단말이나 서비스 배포를 갱신할 단말은 **기존 등록과 동일한 사용자**로 새 서명 배포의 초기 스크립트를 실행하고 \`--resume REQUEST_ID\`를 전달합니다. 공개 요청 식별자와 기존 인증키를 사용합니다. 기존 인증 상태가 없거나 승인이 철회되면 새 등록이 필요합니다.
+
+\`\`\`sh
+curl -qfsS --proto '=https' https://APPROVED_RELEASE_HOST/RELEASE/bootstrap.sh | bash -s -- --resume REQUEST_ID
+\`\`\`
+
+기존 전경 프로그램이 실행 중이라면 먼저 종료한 뒤 전환합니다. 같은 요청의 동시 실행은 파일 잠금으로 차단합니다. 전경 실행이 필요한 격리 시험은 초기 스크립트에 \`--foreground\`를 지정하거나 검증된 묶음에서 아래 명령을 사용합니다.
+
+\`\`\`sh
 /path/to/verified-bundle/migration-connector resume /path/to/verified-bundle/connector.json REQUEST_ID
 /path/to/verified-bundle/migration-connector prepare-host /path/to/verified-bundle
 /usr/local/libexec/migration-key-broker /etc/migration-connector/broker.json
-```
+\`\`\`
 
-단말은 현재 포그라운드 프로세스입니다. 터미널 종료 시 계속 실행되는 서비스는 설치하지 않습니다. 다시 연결할 때는 동일 사용자로 `resume`을 실행하며 새 초대 seed를 요구하지 않습니다. 기존 상태가 없거나 장치 승인이 철회되면 새 등록이 필요합니다. 상태는 `$HOME/.local/state/migration-connector/REQUEST_ID`에 디렉터리0700·파일0600으로 저장합니다. 동시 실행은 파일 잠금으로 거절합니다. 승인 대기 중 재시작하면 확인 코드를 다시 표시합니다.
+요청별 상태는 \`$HOME/.local/state/migration-connector/REQUEST_ID\`의 사용자 전용 파일에 저장합니다. 서비스는 설치 시 설정한 사용자 홈과 Kubernetes 접속 설정 파일 경로를 사용합니다. 서비스가 참조하는 검증 묶음을 유지하고 배포 목록이 만료되기 전에 같은 요청으로 갱신합니다. 웹의 재접속 요청은 전원이 켜져 있고 연결 프로그램이 실행 중인 단말의 응답을 기다립니다.
 
 ## 서명된 단말 설정
 
@@ -37,7 +53,7 @@
 
 현재 구현은 **네트워크 이름공간 하나에 관리 인터페이스 하나·활성 연결 하나**를 지원합니다. 브로커를 테넌트마다 분리하고 전용 컨테이너나 네트워크 이름공간에서 실행하십시오. 여러 테넌트의 경로를 한 helper에 공유하는 배포는 지원하지 않습니다. 양쪽의 WireGuard UDP endpoint와 포트는 운영자가 미리 도달 가능하게 설정해야 하며 자동 NAT 중계는 구현하지 않았습니다.
 
-정상적으로 사전 설치된 단말은 추가 승인 없이 연결을 계속합니다. 준비가 안 된 단말은 단말 증명과 웹 승인을 먼저 마친 뒤 터미널에 설치 내용과 연결 상대를 표시합니다. 사용자가 동의하면 `sudo`가 관리자 인증을 직접 받고, Ubuntu 패키지 `iproute2`·`nftables`·`wireguard-tools` 중 없는 항목을 설치합니다. 서명된 배포 묶음의 보조 프로그램과 고객용 정책을 관리자 소유로 설치한 뒤 같은 요청의 터널 연결을 이어갑니다. 사용자 입력은 `/dev/tty`에서 받으므로 초기 등록 생성값의 표준입력과 섞이지 않습니다. 터미널이 없거나 동의를 거절하면 설치하지 않습니다.
+정상적으로 사전 설치된 단말은 네트워크 보조 프로그램 설치를 건너뜁니다. 준비가 안 된 단말은 단말 증명과 웹 승인을 먼저 마친 뒤 터미널에 설치 내용과 연결 상대를 표시합니다. 사용자가 동의하면 `sudo`가 관리자 인증을 직접 받고, Ubuntu 패키지 `iproute2`·`nftables`·`wireguard-tools` 중 없는 항목을 설치합니다. 서명된 배포 묶음의 보조 프로그램과 고객용 정책을 관리자 소유로 설치한 뒤 같은 요청의 터널 연결을 이어갑니다. 사용자 입력은 `/dev/tty`에서 받으므로 초기 등록 생성값의 표준입력과 섞이지 않습니다. 터미널이 없거나 동의를 거절하면 설치하지 않습니다.
 
 이 경로에는 이중서명 배포 목록에 포함된 `migration-net-helper`와 `net-policy.json`이 모두 필요합니다. 게시 정책은 `role: "client"`, `uid: 0`을 사용하고, 설치할 때 실제 실행 사용자의 UID(운영체제 사용자 번호)로 바꿉니다. 터널 상대·주소·포트는 게시자가 고객 네트워크에 맞게 준비해야 합니다. 기존 정책과 충돌하면 자동으로 바꾸지 않습니다. `prepare-host` 명령으로 등록 요청을 발급하기 전에 같은 관리자 승인 절차를 실행할 수도 있습니다.
 

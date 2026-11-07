@@ -61,6 +61,8 @@ function snapshots(value: unknown): ConnectionSnapshot[] {
       !Number.isSafeInteger(s.revision) ||
       !Number.isSafeInteger(s.serverNow) ||
       !Number.isSafeInteger(s.observedAt) ||
+      (s.lastTunnelActivityAt !== undefined &&
+        !Number.isSafeInteger(s.lastTunnelActivityAt)) ||
       !Array.isArray(s.discovered) ||
       !Array.isArray(s.collected) ||
       !Array.isArray(s.events) ||

@@ -154,7 +154,11 @@ export function TunnelProgress({
             ? "보안 연결을 확인하지 못했어요"
             : "보안 연결을 준비하고 있어요"}
         </h2>
-        <p>승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요.</p>
+        <p>
+          {s.tunnel === "DEGRADED"
+            ? (s.issue ?? "온프레미스 단말에서 연결 서비스를 확인해 주세요.")
+            : "승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요."}
+        </p>
       </header>
       <ol className="connection-check-list">
         {TUNNEL_CHECKS.map((text, i) => (
