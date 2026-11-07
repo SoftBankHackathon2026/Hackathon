@@ -182,7 +182,7 @@ def test_tampered_gcp_export_archive_is_invalid():
     assert result["result"] == "invalid"
 
 
-@pytest.mark.parametrize("run_id", ["", "UPPER", "a_b", "x" * 21, "-lead"])
+@pytest.mark.parametrize("run_id", ["", "UPPER", "a_b", "a-b", "x" * 17, "a\n"])
 def test_invalid_run_id_is_rejected(run_id):
     with pytest.raises(ValueError):
         archive.archive_gcp_export(

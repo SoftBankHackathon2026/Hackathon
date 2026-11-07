@@ -4,21 +4,14 @@
 # *   GCS: AWS→GCP 대상. 보존 정책은 있지만 미잠금(is_locked = false).
 # *   S3: GCP→AWS 대상. Object Lock 활성, 기본 보존 규칙은 두지 않는다.
 #
-# 이 실행이 만든 것만 지우도록 이름은 ccx-<run_id>- 접두사, 라벨·태그는
-# com-ghost-crosscloud-run 이다.
-
-locals {
-  name_prefix = "ccx-${var.run_id}"
-  run_label   = { "com-ghost-crosscloud-run" = var.run_id }
-}
+# 라벨·태그(crosscloud-run·crosscloud-direction)는 provider 기본값으로 붙는다.
 
 resource "google_storage_bucket" "audit_archive" {
-  name                        = "${local.name_prefix}-audit-gcs"
-  location                    = var.gcp_location
+  name                        = "${var.name_prefix}-audit-gcs"
+  location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = true
-  labels                      = local.run_label
 
   retention_policy {
     is_locked        = false
@@ -27,10 +20,9 @@ resource "google_storage_bucket" "audit_archive" {
 }
 
 resource "aws_s3_bucket" "audit_archive" {
-  bucket              = "${local.name_prefix}-audit-s3"
+  bucket              = "${var.name_prefix}-audit-s3"
   object_lock_enabled = true
   force_destroy       = true
-  tags                = local.run_label
 }
 
 resource "aws_s3_bucket_public_access_block" "audit_archive" {

@@ -24,8 +24,8 @@ from crosscloud.audit_copy import (
     object_store,
 )
 
-# 버킷 이름에도 들어가므로 소문자·숫자·하이픈만, 짧게.
-_RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,19}$")
+# Terraform name_prefix(ccx-<run>)와 같은 규약: run 은 영문 소문자·숫자 1–16자.
+_RUN_ID = re.compile(r"[a-z0-9]{1,16}")
 _JSON = "application/json"
 
 
@@ -42,7 +42,8 @@ def archive_cloudtrail(
         source: trail 버킷(원위치). 읽기만 한다.
         source_prefix: 옮길 키 접두사(예: "AWSLogs/<계정>/").
         target: 대상 보존 버킷.
-        run_id: 이관 실행 식별자. 소문자·숫자·하이픈 20자 이하.
+        run_id: 이관 실행 식별자 run(ccx-<run> 의 run). 영문 소문자·숫자
+            1–16자.
         public_keys: 해당 기간 ListPublicKeys 결과.
 
     Returns:
@@ -199,8 +200,8 @@ def _overall(transfer: list[dict[str, str]], provider_ok: bool) -> str:
 
 
 def _run_prefix(run_id: str) -> str:
-    if not _RUN_ID.match(run_id):
-        raise ValueError(f"run_id 는 소문자·숫자·하이픈 20자 이하: {run_id!r}")
+    if not _RUN_ID.fullmatch(run_id):
+        raise ValueError(f"run_id 는 영문 소문자·숫자 1–16자: {run_id!r}")
     return f"ccx-{run_id}/"
 
 

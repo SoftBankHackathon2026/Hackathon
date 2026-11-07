@@ -1,4 +1,0 @@
-# terraform init 산출물과 상태 파일. 잠금 파일(.terraform.lock.hcl)은 커밋한다.
-.terraform/
-*.tfstate
-*.tfstate.*

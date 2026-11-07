@@ -1,28 +1,42 @@
-variable "run_id" {
-  description = "이관 실행 식별자. 버킷 이름 접두사 ccx-<run_id> 와 라벨에 들어간다."
+variable "name_prefix" {
+  description = <<-EOT
+    실행 접두사 ccx-<run>. 버킷 이름이 이것으로 시작하고, 잔여 검사가 이것으로
+    질의한다. run 은 영문 소문자·숫자 1–16자다. 이관 객체도 버킷 안
+    <name_prefix>/ 아래에 둔다(crosscloud.audit_copy.archive).
+  EOT
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,19}$", var.run_id))
-    error_message = "run_id 는 소문자·숫자·하이픈 20자 이하이고 하이픈으로 시작하지 않는다."
+    condition     = can(regex("^ccx-[a-z0-9]{1,16}$", var.name_prefix))
+    error_message = "name_prefix 는 ccx-<영문 소문자·숫자 1–16자> 여야 한다."
   }
+}
+
+variable "direction" {
+  description = "이 실행의 이전 방향. 라벨로만 쓴다(버킷은 두 방향 모두 만든다)."
+  type        = string
+
+  validation {
+    condition     = contains(["aws_to_gcp", "gcp_to_aws"], var.direction)
+    error_message = "direction 은 aws_to_gcp 또는 gcp_to_aws 여야 한다."
+  }
+}
+
+variable "project_id" {
+  description = "GCS 보존 버킷(AWS→GCP 대상)을 만들 GCP 프로젝트 ID."
+  type        = string
+}
+
+variable "region" {
+  description = "GCS 보존 버킷 위치(GCP 리전)."
+  type        = string
+  default     = "asia-northeast3"
 }
 
 variable "aws_region" {
   description = "S3 보존 버킷(GCP→AWS 대상) 리전."
   type        = string
   default     = "ap-northeast-2"
-}
-
-variable "gcp_project" {
-  description = "GCS 보존 버킷(AWS→GCP 대상) 프로젝트."
-  type        = string
-}
-
-variable "gcp_location" {
-  description = "GCS 보존 버킷 위치."
-  type        = string
-  default     = "ASIA-NORTHEAST3"
 }
 
 variable "gcs_retention_seconds" {
@@ -32,4 +46,11 @@ variable "gcs_retention_seconds" {
   EOT
   type        = number
   default     = 60
+}
+
+locals {
+  labels = {
+    "crosscloud-run"       = var.name_prefix
+    "crosscloud-direction" = var.direction
+  }
 }
