@@ -349,3 +349,73 @@ def test_main_needs_exactly_one_of_job_id_or_all_jobs(monkeypatch):
         reporter.main(["--platform-url", "http://p"])
     with pytest.raises(SystemExit):
         reporter.main(["--job-id", "a", "--all-jobs", "--platform-url", "http://p"])
+
+
+COLLECTORS = {"aws": {"identifier": "db", "region": "r", "app_url": "http://app"}}
+
+
+def test_policy_env_gives_each_job_its_own_evidence_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTOVER_POLICY_EVIDENCE", "/var/lib/worker/other/forward.json")
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTOR_SETTINGS", "/var/lib/worker/other/settings.json")
+    monkeypatch.delenv("CUTOVER_POLICY_COLLECTORS", raising=False)
+    env = reporter.policy_env(CLAIMED, tmp_path)
+    assert env["CUTOVER_POLICY_EVIDENCE"] == str(tmp_path / "policy" / "onprem_to_aws_001.json")
+    assert "CUTOVER_POLICY_COLLECTOR_SETTINGS" not in env
+    assert env["PATH"] == reporter.os.environ["PATH"]
+
+
+def test_policy_env_writes_collector_settings_for_the_job_target(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    env = reporter.policy_env(CLAIMED, tmp_path)
+    settings = Path(env["CUTOVER_POLICY_COLLECTOR_SETTINGS"])
+    assert settings == tmp_path / "policy" / "onprem_to_aws_001.settings.json"
+    assert json.loads(settings.read_text()) == COLLECTORS["aws"]
+    assert oct(settings.stat().st_mode & 0o777) == "0o600"
+
+
+def test_policy_env_leaves_out_settings_for_targets_without_a_collector(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTOR_SETTINGS", "/var/lib/worker/other/settings.json")
+    env = reporter.policy_env({**CLAIMED, "data_target": "onprem_return"}, tmp_path)
+    assert "CUTOVER_POLICY_COLLECTOR_SETTINGS" not in env
+    assert env["CUTOVER_POLICY_EVIDENCE"].endswith("onprem_to_aws_001.json")
+
+
+def test_policy_env_rejects_collectors_that_are_not_keyed_by_target(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text("[]")
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    with pytest.raises(TypeError):
+        reporter.policy_env(CLAIMED, tmp_path)
+
+
+def test_execute_any_runs_the_tool_with_the_job_policy_env(tmp_path, monkeypatch):
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    script = (
+        "import os; print(os.environ['CUTOVER_POLICY_EVIDENCE']);"
+        " print(os.environ['CUTOVER_POLICY_COLLECTOR_SETTINGS'])"
+    )
+    monkeypatch.setenv("ONEPORT_CUTOVER_ARGV", f"{sys.executable} -c {shlex.quote(script)}")
+    monkeypatch.setenv("MIGRATION_CONFIG", str(base))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    monkeypatch.setenv("CUTOVER_POLICY_EVIDENCE", "/var/lib/worker/other/forward.json")
+    posted = []
+    monkeypatch.setattr(reporter, "claim_any_command", lambda args, token: CLAIMED)
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append(body) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: None)
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    tail = posted[-1]["log_tail"]
+    assert posted[-1]["exit_code"] == 0
+    assert str(tmp_path / "policy" / "onprem_to_aws_001.json") in tail
+    assert str(tmp_path / "policy" / "onprem_to_aws_001.settings.json") in tail
+    assert "other/forward.json" not in tail
