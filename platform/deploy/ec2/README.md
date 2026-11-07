@@ -135,3 +135,17 @@ EOF
 ```sh
 bash /opt/oneport/releases/<커밋>/deploy.sh /opt/oneport/releases/<커밋> <레지스트리> <커밋>
 ```
+
+## GCP 관리형 서비스 읽기 (Workload Identity Federation)
+
+비용 화면의 GCP 관리형 서비스(Cloud SQL, Managed Kafka, LB, Cloud NAT, VM, GCS)는 수집기가 GCP API 로 읽는다. 키 파일 없이 EC2 인스턴스 역할로 GCP 서비스 계정을 대신 쓴다.
+
+```sh
+GCP_PROJECT=<프로젝트 ID> AWS_PROFILE=<프로필> bash platform/deploy/ec2/gcp-wif.sh
+```
+
+- GCP 에 워크로드 ID 풀 `oneport-aws`, AWS 공급자 `oneport-ec2`, 서비스 계정 `oneport-cost-reader` 를 만든다. 공급자 조건은 인스턴스 역할 `ghost-oneport-platform-ec2` 하나만 받는다.
+- 서비스 계정 역할: `roles/cloudsql.viewer`, `roles/managedkafka.viewer`, `roles/compute.viewer`, `roles/storage.bucketViewer`, `roles/monitoring.viewer` (모두 읽기 전용).
+- 자격 증명 설정 파일(비밀값 없음, IMDSv2 로 AWS 자격 증명을 얻는 방법만 적힘)을 SSM 으로 `/opt/oneport/secrets/gcp/credentials.json` 에 두고 수집기를 다시 띄운다. compose 는 이 폴더를 `/etc/oneport/gcp` 로 붙이고 `GOOGLE_APPLICATION_CREDENTIALS` 를 가리킨다.
+- 파일이 없으면 수집기는 "관리형 서비스: GCP 읽기 실패 (DefaultCredentialsError)" 로 남기고 나머지는 그대로 계산한다.
+- 돌리는 사람은 GCP 프로젝트 IAM 관리 권한과, AWS 쪽 `sts:GetCallerIdentity`·`ec2:DescribeInstances`·`ssm:SendCommand` 권한이 있어야 한다.
