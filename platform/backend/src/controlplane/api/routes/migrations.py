@@ -13,6 +13,7 @@ from controlplane.api.deps import (
     SecurityDep,
     ViewerIdentity,
 )
+from controlplane.core.errors import OperationNotFound
 from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
     CommandCreate,
@@ -23,8 +24,10 @@ from controlplane.schemas.migrations import (
     MigrationEvent,
     MigrationIngest,
     MigrationSeries,
+    TaskPlan,
 )
 from controlplane.schemas.security import SecurityPosture
+from controlplane.services.data_mapping import DataMappingService
 
 router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
@@ -37,6 +40,20 @@ def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
 @router.get("/migrations/{job_id}")
 def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> MigrationDetail:
     return service.get_detail(job_id)
+
+
+@router.get("/migrations/{job_id}/plan")
+def plan(
+    job_id: str, service: MigrationsDep, mappings: DataMappingsDep, identity: ViewerIdentity
+) -> TaskPlan:
+    return service.get_plan(job_id, _mapping_status(mappings, job_id))
+
+
+def _mapping_status(mappings: DataMappingService, job_id: str) -> str | None:
+    try:
+        return mappings.get(job_id).status
+    except OperationNotFound:
+        return None
 
 
 @router.get("/migrations/{job_id}/series")

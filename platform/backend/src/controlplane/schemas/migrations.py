@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from controlplane.domain.migration import Direction, MigrationStatus, StageProgress
+from controlplane.domain.task_plan import PlanPhase, StepId, StepStatus
 
 DataSource = Literal["live", "simulated"]
 
@@ -310,3 +311,33 @@ class CommandResult(BaseModel):
     @classmethod
     def keep_tail(cls, value: str) -> str:
         return value[-LOG_TAIL_LIMIT:]
+
+
+class PlanStepView(BaseModel):
+    id: StepId
+    title: str
+    description: str
+    tool: str | None
+    status: StepStatus
+    runnable: bool
+
+
+class PlanPhaseView(BaseModel):
+    id: PlanPhase
+    title: str
+    status: StepStatus
+    steps: list[PlanStepView]
+
+
+class PlanRoute(BaseModel):
+    source_env: str
+    target_env: str
+    source_provider: str
+    target_provider: str
+    label: str
+
+
+class TaskPlan(BaseModel):
+    job_id: str
+    route: PlanRoute
+    phases: list[PlanPhaseView]
