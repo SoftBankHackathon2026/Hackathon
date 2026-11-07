@@ -9,6 +9,7 @@ import {
   longestPause,
   postureCompare,
   writeTotals,
+  failedWrites,
 } from "../src/features/migrations/summary.ts";
 
 function summary(
@@ -61,9 +62,17 @@ test("jobCounts separates active and waiting jobs", () => {
 
 test("writeTotals sums failed and rejected writes", () => {
   assert.deepEqual(writeTotals([summary(1, 0, 0, 0), summary(2, 0, 0, 0)]), {
-    failed: 3,
+    failed: 6,
     rejected: 0,
   });
+  const base = summary(0, 0, 0, 0);
+  const split = {
+    ...base,
+    writes: { ...base.writes, failed: 4 },
+    downtime: { ...base.downtime, failed_requests: 1 },
+  };
+  assert.equal(failedWrites(split), 5);
+  assert.deepEqual(writeTotals([split]), { failed: 5, rejected: 0 });
 });
 
 test("longestPause names the job and ignores jobs without a pause", () => {

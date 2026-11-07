@@ -44,6 +44,7 @@ migration/
   migration/cutover.py      전환 상태 머신
   migration/verify.py       B/T/S 집합 비교 보고서
   migration/worker_client.py 워커 HTTP API 클라이언트 (cutover 가 사용)
+  migration/ingress_client.py 접수 서비스(durable-ingress) 제어 API·대상 앱 readiness 클라이언트 (cutover 가 사용)
   tests/                    pytest (단위 + MIGRATION_TEST_DSN 있을 때 통합)
 ```
 
@@ -80,6 +81,8 @@ Connect 워커에 `config.providers=file`, `config.providers.file.class=org.apac
   이름 규칙은 코드가 만든다: slot `forward_001`, publication `forward_001_pub`, topic.prefix `forward_001`,
   데이터 토픽 `forward_001.public.migration_demo`, 커넥터 `forward_001-source` / `forward_001-sink`.
 - `kafka.connect_url`, `kafka.secrets_file`, `worker.url`, `cutover.*` (대기 조건·시간 제한).
+- `ingress` (선택): 접수 서비스(durable-ingress) 자동 제어. `control_url`, `token_env`, `targets`(job target → 접수 서비스 target 이름),
+  `app_checks`(큐를 돌리기 전 확인할 앱 URL·environment·database). 이 절이 없으면 큐는 운영자가 수동 제어한다.
 
 ## 명령
 
@@ -180,10 +183,10 @@ python -m migration.cutover --config config.yaml --state-dir /var/lib/worker abo
 | COPYING | publication/slot 준비, Source/Sink 등록, 커넥터 RUNNING + 대상 seed 건수 ≥ 원본 seed 건수 (3) | ABORTED |
 | CATCHING_UP | 원본에 snapshot 이후 `min_live_rows_after_snapshot`(100)건 추가, 최신 10건이 대상에 반영 (4) | ABORTED |
 | READY | `--approve` 없으면 종료 코드 3 으로 멈춤 | - |
-| FENCING | 워커 `/pause` → `/drain` → 원본 `REVOKE INSERT` → 앱 계정 세션만 `pg_terminate_backend` → 앱 계정으로 시험 INSERT 가 거절되는지 실제 확인 (5, 6) | ABORTED |
+| FENCING | 워커 `/pause` → `/drain` → (ingress 절이 있으면) 접수 큐 `/pause` settled·in_flight 0 확인 → 원본 `REVOKE INSERT` → 앱 계정 세션만 `pg_terminate_backend` → 앱 계정으로 시험 INSERT 가 거절되는지 실제 확인 (5, 6) | ABORTED |
 | DRAINING | 마지막 커밋 요청 ID 가 대상에 있고 원본·대상 건수가 같고 sink `/offsets` 가 `offset_stable_seconds` 동안 변하지 않음 (7) | ABORTED |
 | SYNC_CONFIRMED | verify(pre) 통과 → 커넥터 설정·상태·offset 증거 저장 → Source, Sink 삭제 → 대상 앱 쓰기가 아직 닫혀 있는지 확인 → verify(pre) 재실행 (7, 8) | ABORTED |
-| SWITCHING | 대상 `GRANT INSERT` → 워커 `/target {"target":"aws","phase":"aws_live"}` → 접속 DB 이름 확인 → `/resume` (9) | **NEEDS_RECOVERY** |
+| SWITCHING | 대상 `GRANT INSERT` → 워커 `/target {"target":"aws","phase":"aws_live"}` → 접속 DB 이름 확인 → `/resume` → (ingress 절이 있으면) 대상 앱 `/readyz`·`/api/info` 가 맞을 때까지 대기 → 접수 큐 `/target` → `/resume` (9) | **NEEDS_RECOVERY** |
 | VERIFYING | 대상에 `min_rows_after_switch`(100)건 신규 커밋, mismatch 0, 원본 앱 쓰기 여전히 차단, verify(post) 통과 (10) | NEEDS_RECOVERY |
 | COMPLETED | 체크포인트에 승인 ID·마지막 요청·offset·검증 결과 보관 (11) | - |
 
@@ -193,6 +196,11 @@ python -m migration.cutover --config config.yaml --state-dir /var/lib/worker abo
   데이터 토픽의 end offset 은 Connect REST 로 알 수 없어 **H 자체는 계산하지 않고** DB 커밋 결과(마지막 요청 ID 존재·전체 비교)로 판정한다.
   `/offsets` 미지원(Connect < 3.6)이면 체크포인트 `offset_note` 와 로그에 fallback 을 명시한다.
 - 종료 코드: 0 완료, 1 실패, 2 설정 오류, 3 승인 대기.
+- 접수 큐(durable-ingress) 자동 제어: 설정에 `ingress` 절이 있으면 위 표대로 큐를 워커와 같은 순서로 제어한다(`migration/ingress_client.py`).
+  PRECHECK 에서 큐 target 이 원본인지 확인하고, 실패하면 큐는 paused 로 남는다. `abort` 는 큐 target 이 원본일 때만 큐를 resume 한다.
+  대상 앱 확인(`app_checks`)은 쓰기 열기(GitOps writes_paused 해제)가 끝나기를 `stage_timeout_seconds` 까지 기다린다.
+  `ingress` 절이 없으면 예전처럼 큐를 건드리지 않는다(운영자가 port-forward 로 수동 제어).
+  **실제 클러스터에서는 아직 실행하지 않았다.** 로컬 Redis + durable-ingress + sample-app 통합 시험(가짜 워커·CDC·DB)만 통과했다.
 
 ### verify — B/T/S 비교
 
@@ -265,3 +273,20 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 - cutover PRECHECK 가 워커 `/status.known_targets` 로 **원본·대상 target 이 워커 설정에 있는지** 확인한다. 없으면 SWITCHING(자동 원복 없음)에서 `/target` 이 실패해 NEEDS_RECOVERY 가 되므로 미리 막는다. 워커 ConfigMap(gitops `apps/db-insert-worker`)에 귀환 대상 `onprem_return` 이 들어 있어야 한다.
 - COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
 - 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.
+
+
+## Harbor 온프레미스 목적지 준비
+
+별도 Ansible 모듈 `python -m migration.harbor_infra`로 기존 Harbor 조사·신규 설치·접근권한·노드 인증서 신뢰 설정을 준비합니다. 실제 업무 이미지 복사는 수행하지 않습니다. [설치와 플랫폼 호출 안내](docs/harbor-infra/README.md)를 참조하십시오.
+
+# OpenBao 온프레미스 준비
+
+`python -m migration.openbao_infra`로 기존 OpenBao 탐색·점검, 선택한 Ubuntu 노드 한 대의 운영체제 서비스 설치, 인증·접근 권한과 고정 키 인계를 수행합니다. 실제 비밀값 이관과 Keycloak 서버 설치는 포함하지 않습니다. [사용법과 플랫폼 연동](docs/openbao-infra/README.md), [검증 범위](docs/openbao-infra/VALIDATION.md), [예시 설정](config.openbao-infra.example.yaml)을 참고하십시오.
+
+# Wazuh 온프레미스 감사로그 기반 준비
+
+`python -m migration.wazuh_infra`로 기존 환경 조사·점검, 선택한 Ubuntu 노드 한 대의 Wazuh 설치·전체 이벤트 검색 설정·원본 보관공간·용량 정보를 준비합니다. 실제 원본 파일 이관과 AWS 설정 변경은 수행하지 않습니다. [사용법과 플랫폼 연결](docs/wazuh-infra/README.md), [입력 예시](config.wazuh-infra.example.yaml), [검증 범위](docs/wazuh-infra/VALIDATION.md)를 참고하십시오.
+
+## 클라우드↔클라우드 일반 앱
+
+여러 PostgreSQL 테이블·복합키·UPDATE/DELETE를 사용하는 앱은 [일반 앱 전환 가이드](CLOUD_MIGRATION.md)와 [설정 예시](config.cloud.example.yaml)를 사용한다. 명령은 `python -m migration.cloud`이며 기존 데모와 별도 실행 경로다. 지원 범위·앱 제어 API·사전 스키마 준비 조건을 먼저 확인한다.

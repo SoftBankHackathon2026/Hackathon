@@ -92,12 +92,16 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 - 선택: 비용 설정 `{"environments": {"onprem": {"meter": {"name": "이름", "options": {...}}}}}`.
 - 실패: 등록되지 않은 이름, 생성 오류, `read()` 예외는 수집기를 멈추지 않고 "온프렘 측정기: 읽기 실패"로 남는다.
   `None` 을 돌려주면 설정값만 쓴다.
-- 예: 스마트 플러그 API, node-exporter RAPL(CPU 전력만이라 실제보다 낮음)을 Prometheus 에서 읽는 측정기.
+- 기본 제공: `cost-exporter`. 온프렘 노드마다 DaemonSet 이 전력을 구해 ConfigMap `oneport-cost/cost-reading-<노드>` 에 남기고,
+  측정기가 온프렘 읽기 계정으로 그 값을 모아 `power_watts` 로 쓴다. 노드가 VM 이면 CPU 사용률 기반 추정, 물리 서버에서 RAPL 을 읽을 수 있으면 측정.
+  배포 설정 `deploy/aws/cost.json` 이 이 측정기를 고른다. 전기 단가는 같은 파일 `onprem.electricity_usd_per_kwh` 0.132 다. 장비비 `onprem.hardware_usd` 180 은 Intel N100 16GB 미니 PC 시세 추정이다(실제 구매가를 알면 바꾼다)
+  (한전 2026년 7월 평균 판매단가 kWh 당 179.7원 ÷ 2026-11-06 원·달러 1,356.6원. 일반용 요금표 단가로 바꾸려면 이 값만 고친다). 자세한 것은 `infra/install/onprem-k8s/admin/cost-exporter/README.md`.
+- 다른 예: 스마트 플러그 API 를 읽는 측정기.
 - 테스트 예: `tests/test_costs.py` 의 `test_registered_meter_is_created_and_read_by_collector`.
 
 ## 수집과 권한
 
-수집기(`fleet_collector`)가 약 5분마다 환경별 자원 목록을 `cost_inventory` 테이블에 덮어쓴다.
+수집기(`fleet_collector`)가 5분마다(tick 횟수가 아니라 실제 경과 시간 기준) 환경별 자원 목록을 `cost_inventory` 테이블에 덮어쓴다.
 
 - Kubernetes: `nodes`·`persistentvolumeclaims`·`pods` list. `deploy/aws/rbac.yaml`, `deploy/reader/reader.yaml` 에 들어 있다.
   온프렘 읽기 계정이 노드·PVC 를 못 읽으면 그 환경은 "클러스터 자원: 읽지 못함"으로 남는다.

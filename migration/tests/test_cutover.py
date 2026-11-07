@@ -131,7 +131,8 @@ def _build(config, state_dir, fakes, approve=None, clock=None):
         return ticks["t"]
 
     return Cutover(config, CutoverStore(state_dir), ports, connector_docs=docs, approve=approve,
-                   sleep=lambda s: None, clock=clock or fake_clock)
+                   sleep=lambda s: None, clock=clock or fake_clock,
+                   policy_gate=lambda stage, checks: {"plan_digest": "test", "execution_digest": "test"})
 
 
 def _grow_target_commits(fakes):
@@ -181,7 +182,7 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     assert cp_cleanup(cut2)["slot_dropped"] is True
     assert db.terminated == 1
     assert connect.deletes == [config.job.source_connector, config.job.sink_connector]
-    assert [m for m, _ in verify.runs] == ["pre", "pre", "post"]
+    assert [m for m, _ in verify.runs] == ["pre", "pre", "pre", "post"]
     # 순서: REVOKE 는 삭제 전에, GRANT 는 삭제·재검증 후에
     assert connect.connectors == {}
     cp = cut2.job.checkpoint
@@ -300,7 +301,7 @@ def test_fence_failure_aborts_before_target_write(config, state_dir, fakes):
 
 def test_failure_after_target_grant_is_needs_recovery(config, state_dir, fakes):
     _simulate_replication(fakes)
-    fakes["verify"].results = [True, True, False]  # 마지막 post 검증 실패
+    fakes["verify"].results = [True, True, True, False]  # 마지막 post 검증 실패
     _grow_target_commits(fakes)
     cut = _build(config, state_dir, fakes, approve="x")
     with pytest.raises(CutoverError, match=NEEDS_RECOVERY):

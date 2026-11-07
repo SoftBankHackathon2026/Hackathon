@@ -1,5 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import {
+  CLOSE_PANELS_EVENT,
+  nodesHash,
+  replaceHash,
+  resourceHash,
+} from "../../app/routes";
 import type { FleetEnvironment, MigrationSummary } from "../../api/migrations";
 import type { Severity } from "../../api/security";
 import { Segmented } from "../../components/Segmented";
@@ -44,31 +50,25 @@ const TABS: { id: Overlay; label: string }[] = [
 export function ArchitectureCanvas({
   environments,
   migrations,
-  initialSelect,
-  initialNodes,
+  select,
+  nodes,
   height = 860,
 }: {
   environments: FleetEnvironment[];
   migrations: MigrationSummary[];
-  initialSelect?: TileRef;
-  initialNodes?: { envId?: string; node?: string };
+  /** 주소의 구성 요소(#environments/<환경>/<구성 요소>) */
+  select?: TileRef;
+  /** 주소의 노드 보기(#environments/nodes/<환경>/<노드>) */
+  nodes?: { envId?: string; node?: string };
   height?: number;
 }) {
   const [overlay, setOverlay] = useState<Overlay>("infra");
   const [grouping, setGrouping] = useState<Grouping>(
-    initialNodes ? "node" : "boundary",
+    nodes ? "node" : "boundary",
   );
   const [mode, setMode] = useState<ViewMode>("iso");
   const [showPods, setShowPods] = useState(false);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<TileRef | null>(
-    initialSelect ?? null,
-  );
-  const [node, setNode] = useState<NodeRef | null>(
-    initialNodes?.envId
-      ? { envId: initialNodes.envId, node: initialNodes.node ?? null }
-      : null,
-  );
   const [jobId, setJobId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Severity[]>([]);
   const [secGroup, setSecGroup] = useState<OverlayGroup | null>(null);
@@ -80,33 +80,50 @@ export function ArchitectureCanvas({
     enabled: overlay === "path" && job !== null,
   }).data;
 
+  // 주소로 들어왔을 때만 다이어그램으로 내려간다(같은 화면에서 고를 때는 스크롤하지 않는다).
   useEffect(() => {
-    if (initialSelect || initialNodes)
+    if (select || nodes)
       document
         .querySelector(".canvas-block")
         ?.scrollIntoView({ block: "start" });
-  }, [initialSelect, initialNodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 열린 패널은 주소(#environments/<환경>/<구성 요소>, #environments/nodes/<환경>/<노드>)가 정한다.
+  // 상태를 따로 들고 주소와 서로 맞추면 반영이 한 박자 어긋날 때 둘이 서로를 되돌리며 끝없이 바뀐다.
+  // 그래서 패널은 주소에서 읽기만 하고, 고르거나 닫을 때는 주소만 바꾼다.
+  const selected: TileRef | null = select ?? null;
+  const node: NodeRef | null = nodes?.envId
+    ? { envId: nodes.envId, node: nodes.node ?? null }
+    : null;
+  // 보기(그룹 기준)는 화면 상태. 노드 주소로 오면 노드 보기, 아무것도 고르지 않은 주소로 오면 노드 보기를 벗어난다.
+  const nodeRoute = nodes !== undefined;
+  const plainRoute = !select && !nodes;
+  useEffect(() => {
+    if (nodeRoute) setGrouping("node");
+    else if (plainRoute) setGrouping((g) => (g === "node" ? "boundary" : g));
+  }, [nodeRoute, plainRoute]);
+  const baseHash = grouping === "node" ? nodesHash() : "#environments";
+  const clearPanels = () => replaceHash(baseHash);
+  useEffect(() => {
+    const close = () => replaceHash(baseHash);
+    window.addEventListener(CLOSE_PANELS_EVENT, close);
+    return () => window.removeEventListener(CLOSE_PANELS_EVENT, close);
+  }, [baseHash]);
+  // 패널은 하나만: 구성 요소를 고르면 노드 패널이 닫히고, 노드를 고르면 구성 요소 패널이 닫힌다(주소가 하나라서).
+  const selectComponent = (ref: TileRef | null) =>
+    replaceHash(ref ? resourceHash(ref.envId, ref.id) : baseHash);
+  const selectNode = (ref: NodeRef | null) =>
+    replaceHash(ref ? nodesHash(ref.envId, ref.node ?? undefined) : baseHash);
 
   useEffect(() => {
     if (!selected && !node) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelected(null);
-        setNode(null);
-      }
+      if (event.key === "Escape") clearPanels();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selected, node]);
-  // 패널은 하나만: 구성 요소를 고르면 노드 패널을 닫고, 노드를 고르면 구성 요소 패널을 닫는다.
-  const selectComponent = (ref: TileRef | null) => {
-    setNode(null);
-    setSelected(ref);
-  };
-  const selectNode = (ref: NodeRef | null) => {
-    setSelected(null);
-    setNode(ref);
-  };
+  });
   const nodeEnv = node
     ? environments.find((e) => e.id === node.envId)
     : undefined;
@@ -193,7 +210,9 @@ export function ArchitectureCanvas({
               ]}
               onChange={(next) => {
                 setGrouping(next);
-                setNode(null);
+                // 노드 패널은 노드 보기에서만 연다. 구성 요소 패널은 보기를 바꿔도 그대로 둔다.
+                if (!selected)
+                  replaceHash(next === "node" ? nodesHash() : "#environments");
               }}
             />
           </span>
@@ -235,10 +254,7 @@ export function ArchitectureCanvas({
             selectedNode={node}
             onSelectComponent={selectComponent}
             onSelectNode={selectNode}
-            onClear={() => {
-              setSelected(null);
-              setNode(null);
-            }}
+            onClear={clearPanels}
             height={height}
           />
           {nodeEnv && node && (
@@ -251,14 +267,14 @@ export function ArchitectureCanvas({
               onSelectComponent={(id) =>
                 selectComponent({ envId: nodeEnv.id, id })
               }
-              onClose={() => setNode(null)}
+              onClose={clearPanels}
             />
           )}
           {selectedEnv && selectedComponent && (
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
+              onClose={clearPanels}
               onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
@@ -273,14 +289,14 @@ export function ArchitectureCanvas({
           <ResourceTree
             environments={environments}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectComponent}
           />
           {selectedEnv && selectedComponent && (
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
-              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
+              onClose={clearPanels}
+              onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
         </div>
@@ -294,7 +310,7 @@ export function ArchitectureCanvas({
             overlay={overlay}
             query={query}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectComponent}
             markers={markers}
             path={path}
             height={height}
@@ -327,8 +343,8 @@ export function ArchitectureCanvas({
             <ComponentPanel
               env={selectedEnv}
               component={selectedComponent}
-              onClose={() => setSelected(null)}
-              onSelect={(id) => setSelected({ envId: selectedEnv.id, id })}
+              onClose={clearPanels}
+              onSelect={(id) => selectComponent({ envId: selectedEnv.id, id })}
             />
           )}
         </div>

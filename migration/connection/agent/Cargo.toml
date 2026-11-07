@@ -1,0 +1,33 @@
+[package]
+name = "migration-connector"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+foreign-types = "0.3"
+libc = "0.2"
+openssl = "0.10"
+openssl-sys = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.1"
+zeroize = { version = "1", features = ["derive"] }
+ureq = { version = "2.12", default-features = false, features = ["native-tls", "json"] }
+native-tls = "0.2"
+
+[build-dependencies]
+cc = "1"
+
+[[bin]]
+name = "migration-connector"
+path = "src/main.rs"
+
+[[bin]]
+name = "migration-key-broker"
+path = "src/broker.rs"
+
+[[bin]]
+name = "migration-net-helper"
+path = "src/net_helper.rs"

@@ -1,5 +1,5 @@
 # 플랫폼 밖 클러스터(GKE 등)에 두는 읽기 전용 계정. 수집기가 이 토큰으로 만든 kubeconfig 로 읽는다.
-# 권한은 platform/deploy/aws/rbac.yaml 의 oneport-fleet-reader 와 같다. Secret 은 읽지 않는다.
+# 권한은 platform/deploy/aws/rbac.yaml 의 oneport-collector 와 같다. Secret 은 읽지 않는다. 같은 클러스터에 둘 다 적용하므로 이름을 다르게 둔다.
 # 장기 토큰이다. 교체할 때는 Secret oneport-reader-token 을 지웠다가 다시 만든다.
 apiVersion: v1
 kind: Namespace

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent"
+version = "0.1.0"
+description = "온프렘 AI 설정 수정 에이전트. APP-01 거절을 Codex 제안 + 정적 검사 + 재검증으로 복구한다"
+requires-python = ">=3.12"
+# migration 패키지(smoke, policy_client)는 ../migration 에서 함께 설치한다. PyPI 패키지가 아니다.
+dependencies = [
+    "migration",
+    "psycopg[binary]>=3.2,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "opensandbox>=1.2,<2"]
+opensandbox = ["opensandbox>=1.2,<2"]
+
+[tool.setuptools]
+packages = ["agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -ra"
+markers = ["integration: 실제 OPA 가 필요한 테스트 (AGENT_TEST_OPA_URL 설정 시 실행)"]

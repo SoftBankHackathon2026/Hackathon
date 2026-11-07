@@ -13,6 +13,7 @@ import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
 import { clusterRailRows } from "./clusterModel";
 import { envRailRows } from "./model";
+import { RegisteredConnections } from "./RegisteredConnections";
 
 function useViewportHeight() {
   const [height, setHeight] = useState(() => window.innerHeight);
@@ -50,6 +51,7 @@ export function EnvironmentsPage({
         tabs={[{ id: "architecture", label: "아키텍처" }]}
         active="architecture"
       />
+      <RegisteredConnections />
       <ScopeFilterRow>
         <FilterSelect
           label="환경"
@@ -123,17 +125,10 @@ export function EnvironmentsPage({
         </aside>
         <div className="ux-main">
           <ArchitectureCanvas
-            key={
-              select
-                ? `${select.envId}/${select.id}`
-                : nodes
-                  ? `nodes/${nodes.envId ?? ""}/${nodes.node ?? ""}`
-                  : ""
-            }
             environments={environments}
             migrations={fleet.migrations}
-            initialSelect={select}
-            initialNodes={nodes}
+            select={select}
+            nodes={nodes}
             height={Math.max(520, Math.round(viewport * 0.7))}
           />
           <section className="ux-components" aria-label="구성 요소">

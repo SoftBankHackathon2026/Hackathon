@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oneport-cost
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cost-exporter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cost-exporter
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cost-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cost-exporter
+subjects:
+  - kind: ServiceAccount
+    name: cost-exporter
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cost-exporter
+  labels:
+    app.kubernetes.io/name: oneport-cost-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oneport-cost-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oneport-cost-exporter
+    spec:
+      serviceAccountName: cost-exporter
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "/opt/exporter/exporter.py"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - {name: SAMPLE_SECONDS, value: "15"}
+            - {name: PUBLISH_SECONDS, value: "60"}
+            - {name: PUE, value: "1.0"}
+            - {name: HOST_IDLE_WATTS, value: "7"}
+            - {name: HOST_MAX_WATTS, value: "25"}
+            - {name: HOST_THREADS, value: "4"}
+            - {name: HOST_VCPUS, value: "4"}
+          ports:
+            - {name: metrics, containerPort: 9877}
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 5m, memory: 24Mi}
+            limits: {memory: 48Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: script, mountPath: /opt/exporter, readOnly: true}
+      volumes:
+        - name: script
+          configMap: {name: cost-exporter-script}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cost-exporter
+  labels:
+    app.kubernetes.io/name: oneport-cost-exporter
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: oneport-cost-exporter
+  ports:
+    - {name: metrics, port: 9877, targetPort: metrics}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: oneport-cost-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oneport-cost-exporter
+  endpoints:
+    - port: metrics
+      interval: 30s

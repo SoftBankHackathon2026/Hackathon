@@ -1,0 +1,19 @@
+# 비밀값은 Git 에 넣지 않는다. 클러스터 Secret 이나 비밀번호 관리자로 관리한다.
+.env
+.env.*
+!.env.example
+*.secrets.env
+*.pem
+*.key
+*.p12
+*.kubeconfig
+kubeconfig
+credentials.json
+.DS_Store
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+agent/build/

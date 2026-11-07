@@ -21,6 +21,7 @@
 | 클러스터 사실(네임스페이스 라벨, NetworkPolicy, 실행 중 Pod securityContext, Role, argocd-cm, ExternalSecret, ResourceQuota, Argo CD Application) | 수집기가 1분마다 읽기 전용 kube API (`hackathon-user`: `view` + argoproj 읽기) | `fleet_environment_facts` |
 | cutover 단계·체크포인트, OPA 판정, verify 보고서 | 워커 Pod 안의 보고기가 push (`POST /api/v1/ingest/migrations/<job_id>`) | `fleet_cutover`, `fleet_cutover_stages`, `fleet_gate_decisions`, `fleet_verify_reports` |
 | 클라우드 보안 서비스 여부(GuardDuty, Security Hub, 감사 로그, WAF 등) | 설정 파일의 `declared` (Terraform 기준) | 설정 |
+| 전환 명령(시작·승인·중단·재시도) | 화면이 저장(`POST /api/v1/migrations/<job_id>/commands`), 러너 Pod 의 보고기가 pull(`claim`) 후 결과 push | `fleet_cutover_commands` (DB 없으면 메모리) |
 
 cutover 상태는 워커 PVC의 SQLite(`cutover.sqlite3`, `policy.sqlite3`)에 있고 플랫폼의 읽기 전용 권한으로는 읽을 수 없어 push 방식을 씁니다.
 
@@ -43,9 +44,55 @@ uv run --project platform/backend python -m controlplane.execution.fleet_collect
 보고기는 워커 Pod에 sidecar로 붙여 같은 PVC를 읽습니다(표준 라이브러리만 사용).
 
 ```sh
-python ops/fleet_reporter.py --job-id forward_001 --state-dir /var/lib/worker --interval 5
+python deploy/onprem/fleet_reporter.py --job-id forward_001 --state-dir /var/lib/worker --interval 5
 # 환경변수: ONEPORT_PLATFORM_URL, ONEPORT_INGEST_TOKEN
 ```
+
+## 전환 제어 (시작·승인 버튼)
+
+작업 상세 화면(`#migrations/<job_id>`)의 "전환 제어" 패널에서 시작(run)·승인(approve)·재시도(retry)·강제 재개(force_retry)·중단·원복(abort)을 보냅니다. **플랫폼은 클러스터와 DB 에 쓰지 않습니다.** 플랫폼은 명령을 저장만 하고, 온프렘 러너 Pod(gitops `apps/live-db-cutover`, Deployment `live-db-cutover`) 안에서 도는 보고기가 명령을 가져가(pull) `python -m migration.cutover ...` 를 서브프로세스로 실행한 뒤 종료 코드와 로그 끝부분을 올립니다. 플랫폼이 온프렘 클러스터에 닿지 못해도 되고, 온프렘에서 플랫폼으로 나가는 HTTPS 한 방향만 필요합니다.
+
+버튼은 단계에 따라 보입니다: 시작은 READY·ABORTED·NEEDS_RECOVERY·COMPLETED 가 아닐 때, 승인은 READY, 재시도는 ABORTED, 강제 재개는 NEEDS_RECOVERY, 중단·원복은 ABORTED 이면서 실패한 단계가 SWITCHING 앞일 때입니다. 승인은 승인 ID 를 입력하고 "원본 쓰기를 차단하고 대상에 쓰기를 열며 SWITCHING 뒤에는 자동으로 되돌릴 수 없다"는 안내를 확인한 뒤 보냅니다. 한 작업에 대기·실행 중 명령이 있으면 모든 버튼이 잠기고 서버도 새 명령을 409 로 거절합니다(한 번에 한 명령). 응답의 `source` 가 `simulated` 이면 패널에 "시뮬레이션" 배지가 붙고, 실행기가 없어 명령은 대기 상태로 남습니다.
+
+| 메서드·경로 | 인증 | 설명 |
+|---|---|---|
+| `POST /api/v1/migrations/<job_id>/commands` | 화면(다른 쓰기 경로와 같음: operator 토큰 또는 등록된 Origin, login 모드는 배포 권한) | `{action, approval_id?, note?}` → 202, `{id, status: "pending", ...}`. `approve` 는 `approval_id` 필수(422), 활성 명령이 있으면 409 |
+| `GET /api/v1/migrations/<job_id>/commands` | 화면 | 최신순 목록(상태, 종료 코드, 단계, 로그 끝 4000자) |
+| `POST /api/v1/ingest/migrations/<job_id>/commands/claim` | 보고용 토큰 | 가장 오래된 `pending` 하나를 원자적으로 `running` 으로 바꿔 돌려줌, 없으면 204 |
+| `POST /api/v1/ingest/migrations/<job_id>/commands/<id>/result` | 보고용 토큰 | `{exit_code, stage, log_tail}` → 0 `succeeded`, 3 `waiting_approval`, 그 외 `failed` |
+
+명령은 작업 이벤트 목록에도 "명령 요청: 시작 (by …)" / "명령 결과: …" 로 남습니다. 비밀값은 저장하지 않습니다: 보고기는 서브프로세스 출력에서 `password|token` 뒤의 값을 가린 뒤 마지막 4000자만 올리고, 환경변수는 보내지 않습니다.
+
+### 러너 Pod 에서 보고기 실행
+
+러너 Pod 는 cutover 도구와 `MIGRATION_*` 비밀값 env, `MIGRATION_CONFIG=/etc/live-cutover/config.yaml`, PVC `/var/lib/worker` 를 이미 갖고 있으므로 `sleep` 대신(또는 sidecar 로) 보고기를 `--execute-commands` 로 띄웁니다. 보고기는 표준 라이브러리만 씁니다.
+
+```yaml
+# gitops apps/live-db-cutover/runner.yaml (Deployment live-db-cutover) 의 컨테이너
+command: ["python", "/opt/reporter/fleet_reporter.py"]
+args:
+  - --job-id
+  - forward_001
+  - --state-dir
+  - /var/lib/worker
+  - --interval
+  - "5"
+  - --execute-commands
+env:
+  - name: ONEPORT_PLATFORM_URL
+    value: https://<platform-host>          # 온프렘 → 플랫폼 방향 HTTPS
+  - name: ONEPORT_INGEST_TOKEN
+    valueFrom: { secretKeyRef: { name: oneport-ingest, key: token } }
+  - name: MIGRATION_CONFIG
+    value: /etc/live-cutover/config.yaml   # 이미 있는 값 그대로, --config 로 넘겨짐
+  - name: ONEPORT_CUTOVER_ARGV
+    value: python -m migration.cutover     # 기본값. 다른 진입점이면 바꿈
+  # MIGRATION_* 비밀값 env 는 기존 그대로 두면 서브프로세스가 상속한다
+```
+
+`/opt/reporter/fleet_reporter.py` 는 `deploy/onprem/fleet_reporter.py` 를 ConfigMap 으로 올린 것입니다(`reporter-sidecar.patch.yaml` 참고). 동작 흐름은 "상태 보고 → claim → 있으면 `python -m migration.cutover --config $MIGRATION_CONFIG --state-dir /var/lib/worker run|run --approve <id>|run --retry|run --force-retry|abort` 실행 → 결과 push → 상태 보고" 를 `--interval` 초마다 반복합니다. 서브프로세스가 끝날 때까지 다음 명령을 가져가지 않으므로 두 명령이 동시에 돌지 않습니다. 결과 push 가 실패하면 3번까지 다시 시도하고, 그래도 실패하면 명령이 `running` 으로 남으므로 로그를 보고 수동으로 확인합니다.
+
+보고기는 명령 서브프로세스가 도는 동안에도 `--interval` 마다 cutover 단계를 계속 올린다(실행 중 화면이 멈추지 않는다). 명령은 한 번에 하나만 실행한다.
 
 ## 보안 통제
 

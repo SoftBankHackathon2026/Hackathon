@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migration-connection"
+version = "0.1.0"
+description = "On-premises device enrollment and environment connection control"
+requires-python = ">=3.12"
+dependencies = ["psycopg[binary]>=3.2,<4", "redis>=5,<7"]
+
+[tool.setuptools]
+packages = ["migration_connection", "migration_connection.control", "migration_connection.contracts", "migration_connection.platform_bridge", "migration_connection.inventory"]
+package-dir = {migration_connection = "."}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -47,12 +47,23 @@ export function Workspace({
     >
       <PageBoundary resetKeys={[route.view, "id" in route ? route.id : ""]}>
         {route.view === "migrations" && <FleetPage onNavigate={go} />}
-        {route.view === "prepare" && <PreparePage onNavigate={go} />}
+        {route.view === "prepare" && (
+          <PreparePage
+            key={access.user?.team ?? "shared"}
+            onNavigate={go}
+            requestId={route.requestId}
+            team={access.user?.team}
+          />
+        )}
         {route.view === "migration" && (
           <MigrationDetailPage key={route.id} jobId={route.id} />
         )}
         {route.view === "environments" && (
-          <EnvironmentsPage select={route.select} nodes={route.nodes} />
+          <EnvironmentsPage
+            key={access.user?.team ?? "shared"}
+            select={route.select}
+            nodes={route.nodes}
+          />
         )}
         {route.view === "security" && <SecurityPage control={route.control} />}
         {route.view === "costs" && <CostsPage tab={route.tab} />}

@@ -86,7 +86,11 @@ export function usePanZoom(
   };
   const onPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
     pointers.current.delete(event.pointerId);
-    if (!drag.current.moved) onBackground();
+    if (drag.current.moved) return;
+    // 블록, 표식처럼 누를 수 있는 것 위에서 뗀 경우는 바탕 클릭이 아니다(그 요소의 클릭이 처리한다).
+    const target = event.target as Element | null;
+    if (target?.closest('[role="button"], [data-clickable], button, a')) return;
+    onBackground();
   };
 
   return {

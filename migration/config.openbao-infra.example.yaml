@@ -1,0 +1,77 @@
+# Replace documentation addresses and private file references before running.
+schema_version: 1
+request_id: openbao-prepare-001
+timeout_seconds: 1800
+cluster:
+  id: onprem-cluster
+  kubeconfig: /secure/kubeconfig
+  context: onprem
+nodes:
+  - name: worker-01
+    uid: REPLACE-WITH-NODE-UID
+    ssh_host: 192.0.2.10
+    ssh_port: 22
+    ssh_user: ubuntu
+    private_key_file: /secure/ssh-key
+    known_hosts_file: /secure/known_hosts
+    # become_password_ref: /secure/sudo-password
+target:
+  mode: install  # reuse: configure existing OpenBao without service/seal changes
+  installation_id: onprem-secrets
+  node_name: worker-01
+  bind_address: 192.0.2.10
+  port: 8200
+  min_memory_mb: 1024
+  min_disk_mb: 2048
+  allow_control_plane: false
+endpoint:
+  url: https://192.0.2.10:8200
+  # ca_file: /secure/openbao-ca.pem  # inspect or reuse
+  # admin_token_ref: /secure/openbao-admin.token  # reuse / post-finalize
+  product_confirmed: false  # reuse requires explicit operator confirmation
+tls:
+  mode: self_signed  # provided: also supply all three references below
+  validity_days: 365
+  # certificate_ref: /secure/server.crt
+  # private_key_ref: /secure/server.key
+  # ca_ref: /secure/ca-chain.pem
+access:
+  mount: kv
+  prefix: migration
+  token_ttl_seconds: 900
+  secret_id_ttl_seconds: 300
+# Existing Keycloak realm only; server installation belongs to keycloak_infra.
+# keycloak:
+#   issuer: https://login.example.internal/realms/migration
+#   client_id: openbao-operators
+#   client_secret_ref: /secure/openbao-client.secret
+#   ca_ref: /secure/keycloak-ca.pem
+#   groups_claim: groups
+#   allowed_groups: [/migration/operators]
+#   redirect_uris:
+#     - https://192.0.2.10:8200/ui/vault/auth/oi-onprem-secrets-operators/oidc/callback
+#   manage_client: false
+#   # Set true only to manage a dedicated client not owned by another installer.
+#   # admin_url: https://login.example.internal
+#   # admin_token_ref: /secure/keycloak-admin.token
+applications: []
+# - name: orders
+#   namespace: orders
+#   service_account: orders-api
+#   prefix: migration/orders
+#   issuer: https://kubernetes.default.svc.cluster.local
+#   discovery_url: https://kubernetes.default.svc.cluster.local
+#   ca_ref: /secure/kubernetes-ca.pem
+#   audience: openbao
+#   token_ttl_seconds: 300
+#   probe_jwt_ref: /secure/orders-projected.jwt
+handoff:
+  action: prepare  # prepare -> ack -> cleanup
+  directory: /secure/downloads/openbao-prepare-001  # owned by runner, mode 0700
+  receipt_path: /secure/downloads/openbao-prepare-001/receipt.json
+  owner_id: platform-user-id
+  ttl_seconds: 900
+  download_confirmed: false  # true only after explicit user storage confirmation
+verification:
+  restart: false  # true explicitly restarts this installation's OpenBao only
+  # operator_token_ref: /secure/operator-login.token

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Publisher renders this template; an unrendered template refuses execution.
+set +x
+unset _migration_enrollment
+_migration_enrollment=${MIGRATION_ENROLL-}
+unset MIGRATION_ENROLL
+set -euo pipefail
+umask 077
+# Keep a fixed system path, including administrator-installed tools such as
+# K3s kubectl in /usr/local/bin. Do not inherit user-writable PATH entries.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+
+_migration_base='@RELEASE_BASE_URL@'
+_migration_amd64='@AMD64_SHA384@'
+_migration_arm64='@ARM64_SHA384@'
+_migration_work=''
+_migration_keep=0
+_migration_cleanup() {
+  unset _migration_enrollment
+  if [[ -n "$_migration_work" && -d "$_migration_work" ]]; then
+    if [[ "$_migration_keep" == 1 ]]; then
+      rm -f -- "$_migration_work/initial-connector"
+    else
+      rm -rf -- "$_migration_work"
+    fi
+  fi
+}
+trap _migration_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+_migration_fail() { printf '%s\n' "$1" >&2; exit 1; }
+
+[[ "$_migration_base" == https://* && "$_migration_base" != *'@'* ]] || _migration_fail '배포 주소가 설정되지 않았습니다.'
+[[ "$_migration_amd64" =~ ^[0-9a-f]{96}$ && "$_migration_arm64" =~ ^[0-9a-f]{96}$ ]] || _migration_fail '배포 검증값이 설정되지 않았습니다.'
+[[ "$_migration_enrollment" =~ ^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$ ]] || _migration_fail '등록 입력 형식이 올바르지 않습니다.'
+[[ "$(uname -s)" == Linux ]] || _migration_fail 'Ubuntu 24.04 Linux 단말이 필요합니다.'
+[[ -r /etc/os-release ]] || _migration_fail '운영체제를 확인할 수 없습니다.'
+# This is the operating system-owned metadata file, not remote task input.
+. /etc/os-release
+[[ "${ID-}" == ubuntu && "${VERSION_ID-}" == 24.04 ]] || _migration_fail '첫 지원 환경은 Ubuntu 24.04입니다.'
+case "$(uname -m)" in
+  x86_64) _migration_arch=linux-amd64; _migration_hash=$_migration_amd64 ;;
+  aarch64) _migration_arch=linux-arm64; _migration_hash=$_migration_arm64 ;;
+  *) _migration_fail '지원하지 않는 프로세서입니다.' ;;
+esac
+for _migration_command in curl sha384sum mktemp python3 kubectl; do
+  command -v "$_migration_command" >/dev/null 2>&1 || _migration_fail "필수 단말 도구를 찾지 못했습니다: $_migration_command (검색 경로: $PATH)"
+done
+# Network prerequisites are prepared by the signed connector after device proof
+# and web approval. Administrator prompts read /dev/tty, never the seed pipe.
+[[ -n "${HOME-}" && -d "$HOME" ]] || _migration_fail '사용자 상태 디렉터리를 확인할 수 없습니다.'
+_migration_state="$HOME/.local/state/migration-connector"
+[[ ! -L "$_migration_state" ]] || _migration_fail '상태 디렉터리의 심볼릭 링크를 허용하지 않습니다.'
+mkdir -p -- "$_migration_state"
+[[ -O "$_migration_state" && "$(stat -c %a "$_migration_state")" == 700 ]] || _migration_fail '상태 디렉터리는 현재 사용자 소유의 0700 권한이어야 합니다.'
+_migration_work=$(mktemp -d "$_migration_state/release.XXXXXXXX")
+mkdir -- "$_migration_work/bundle"
+_migration_url="${_migration_base%/}/$_migration_arch"
+curl -qfsS --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 20 --max-filesize 67108864 \
+  "$_migration_url/migration-connector" -o "$_migration_work/initial-connector" || _migration_fail '초기 프로그램 다운로드에 실패했습니다.'
+printf '%s  %s\n' "$_migration_hash" "$_migration_work/initial-connector" | sha384sum --check --status || _migration_fail '초기 프로그램 검증에 실패했습니다.'
+chmod 0700 "$_migration_work/initial-connector"
+"$_migration_work/initial-connector" install-release "$_migration_url" "$_migration_work/bundle" || _migration_fail '배포 묶음의 서명 또는 파일 검증에 실패했습니다.'
+chmod 0700 "$_migration_work/bundle/migration-connector"
+_migration_keep=1
+# printf is a Bash builtin: the seed is neither an external argv nor inherited
+# environment. The connector reads the private pipe and erases seed material.
+printf '%s\n' "$_migration_enrollment" | "$_migration_work/bundle/migration-connector" run "$_migration_work/bundle/connector.json"
+unset _migration_enrollment

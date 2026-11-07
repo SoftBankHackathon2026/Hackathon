@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { SeriesPoint, StageInfo } from "../../api/migrations";
-import { nearestIndex } from "../../components/charts/chartMath";
+import { clampIndex, nearestIndex } from "../../components/charts/chartMath";
 import { useElementWidth } from "../../components/charts/useElementWidth";
 import { formatClock, formatDateTime } from "../../lib/format";
 import { stageNotes } from "./stages";
@@ -34,7 +34,7 @@ export function TransitionTimeline({
   stages: StageInfo[];
 }) {
   const { ref, width } = useElementWidth();
-  const [hover, setHover] = useState<number | null>(null);
+  const [pointer, setHover] = useState<number | null>(null);
   const window = lifetimeWindow(allPoints, stages);
   if (!window)
     return (
@@ -43,6 +43,7 @@ export function TransitionTimeline({
       </p>
     );
   const { domain, points } = window;
+  const hover = clampIndex(pointer, points.length);
   const plotW = Math.max(120, width - LABEL_W - RIGHT_PAD);
   const width_ms = domain.to - domain.from;
   const x = (t: number) => LABEL_W + ((t - domain.from) / width_ms) * plotW;

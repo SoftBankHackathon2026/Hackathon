@@ -1,0 +1,12 @@
+{
+  "harbor_version": "2.14.6",
+  "installer_url": "https://github.com/goharbor/harbor/releases/download/v2.14.6/harbor-online-installer-v2.14.6.tgz",
+  "installer_sha256": "64b22fe32364a34345fa9edd30e5acfddcb59a8ff56603fc8ef23293deacbed9",
+  "docker_packages": {
+    "containerd.io": "2.4.2-3~ubuntu.24.04~noble",
+    "docker-ce-cli": "5:29.9.3-1~ubuntu.24.04~noble",
+    "docker-ce": "5:29.9.3-1~ubuntu.24.04~noble",
+    "docker-compose-plugin": "5.7.0-1~ubuntu.24.04~noble"
+  },
+  "docker_key_sha256": "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+}

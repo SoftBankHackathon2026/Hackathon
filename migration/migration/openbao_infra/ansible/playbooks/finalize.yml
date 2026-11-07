@@ -1,0 +1,35 @@
+- name: Read cluster identity
+  hosts: controllers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+- name: Operate only selected node
+  hosts: openbao_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+  - name: Acquire target operation lock
+    openbao_lock:
+      action: acquire
+      owner: '{{ ob_lock_owner }}'
+  - name: Perform owned operation
+    block:
+    - ansible.builtin.import_tasks: ../tasks/preflight.yml
+    - name: Require this owned installation for product changes
+      ansible.builtin.assert:
+        that:
+        - host_check.report.owned
+        quiet: true
+    - name: Apply bounded product operation
+      openbao_manage:
+        action: finalize
+        config: '{{ ob_remote | dict2items | rejectattr(''key'', ''equalto'', ''credentials'') | items2dict }}'
+        state_dir: '{{ ob_state }}'
+        credentials: '{{ ob_credentials }}'
+    always:
+    - name: Release only own operation lock
+      openbao_lock:
+        action: release
+        owner: '{{ ob_lock_owner }}'

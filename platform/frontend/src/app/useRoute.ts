@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { readRoute, type Route } from "./routes";
+import { onRouteChange, readRoute, type Route } from "./routes";
 
 function currentRoute() {
   return readRoute(window.location.hash);
@@ -7,11 +7,7 @@ function currentRoute() {
 
 export function useRoute() {
   const [route, setRoute] = useState<Route>(currentRoute);
-  useEffect(() => {
-    const changed = () => setRoute(currentRoute());
-    window.addEventListener("hashchange", changed);
-    return () => window.removeEventListener("hashchange", changed);
-  }, []);
+  useEffect(() => onRouteChange(window, () => setRoute(currentRoute())), []);
   function go(hash: string) {
     window.location.hash = hash;
     setRoute(currentRoute());

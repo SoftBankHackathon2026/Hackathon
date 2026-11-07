@@ -1,7 +1,7 @@
 export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
-  | { view: "prepare" }
+  | { view: "prepare"; requestId?: string }
   | {
       view: "environments";
       select?: { envId: string; id: string };
@@ -12,40 +12,71 @@ export type Route =
   | { view: "costs"; tab?: string }
   | { view: "team" };
 
+function decode(part: string) {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
 export function readRoute(hash = "#"): Route {
   const [head, id, extra, more] = hash.replace(/^#/, "").split("/");
-  if (head === "prepare") return { view: "prepare" };
-  if (head === "migrations" && id)
-    return { view: "migration", id: decodeURIComponent(id) };
+  if (head === "prepare") {
+    if (!id) return { view: "prepare" };
+    try {
+      return { view: "prepare", requestId: decodeURIComponent(id) };
+    } catch {
+      return { view: "prepare", requestId: "invalid-request" };
+    }
+  }
+  if (head === "migrations" && id) return { view: "migration", id: decode(id) };
   if (head === "environments") {
     if (id === "nodes")
       return {
         view: "environments",
         nodes: {
-          ...(extra ? { envId: decodeURIComponent(extra) } : {}),
-          ...(extra && more ? { node: decodeURIComponent(more) } : {}),
+          ...(extra ? { envId: decode(extra) } : {}),
+          ...(extra && more ? { node: decode(more) } : {}),
         },
       };
     if (id && extra)
       return {
         view: "environments",
         select: {
-          envId: decodeURIComponent(id),
-          id: decodeURIComponent(extra),
+          envId: decode(id),
+          id: decode(extra),
         },
       };
     return { view: "environments" };
   }
   if (head === "security")
     return id
-      ? { view: "security", control: decodeURIComponent(id) }
+      ? { view: "security", control: decode(id) }
       : { view: "security" };
   if (head === "costs")
-    return id
-      ? { view: "costs", tab: decodeURIComponent(id) }
-      : { view: "costs" };
+    return id ? { view: "costs", tab: decode(id) } : { view: "costs" };
   if (head === "team") return { view: "team" };
   return { view: "migrations" };
+}
+
+/** 주소만 바꾸고(새 기록 없음) 화면 라우터에도 알린다. replaceState 는 hashchange 를 내지 않는다. */
+export const ROUTE_EVENT = "oneport:route";
+export function replaceHash(hash: string) {
+  if (window.location.hash === hash) return;
+  window.history.replaceState(null, "", hash);
+  window.dispatchEvent(new Event(ROUTE_EVENT));
+}
+
+export const CLOSE_PANELS_EVENT = "oneport:close-panels";
+
+export function onRouteChange(target: EventTarget, listener: () => void) {
+  target.addEventListener("hashchange", listener);
+  target.addEventListener(ROUTE_EVENT, listener);
+  return () => {
+    target.removeEventListener("hashchange", listener);
+    target.removeEventListener(ROUTE_EVENT, listener);
+  };
 }
 
 export function migrationHash(jobId: string) {
@@ -74,7 +105,7 @@ export function routeTitle(route: Route, teamName: string) {
     case "migration":
       return route.id;
     case "prepare":
-      return "새 이전 준비";
+      return "마이그레이션 준비";
     case "environments":
       return "환경";
     case "security":

@@ -7,8 +7,9 @@ import { PageActions } from "../../components/PageSlots";
 import { FilterSelect, PageHeader } from "../../components/PageKit";
 import { RefreshStatus } from "../../components/RefreshStatus";
 import { StatTiles } from "../../components/StatTiles";
-import { formatCount, formatSeconds } from "../../lib/format";
+import { formatCount, formatRatio, formatSeconds } from "../../lib/format";
 import { CdcPath } from "./CdcPath";
+import { CutoverControls } from "./CutoverControls";
 import { EnvironmentGraphs, EnvironmentTable } from "./EnvironmentWrites";
 import { EventRail } from "./EventRail";
 import { envShortName } from "./fleetView";
@@ -28,6 +29,7 @@ import {
 } from "./stages";
 import { lifetimeMinutes, lifetimeSpan, lifetimeWindow } from "./timeline";
 import { StageLog } from "./StageLog";
+import { failedWrites } from "./summary";
 import { TransitionTimeline } from "./TransitionTimeline";
 import { GatesTable, VerifyTable } from "./VerifyGates";
 
@@ -79,7 +81,7 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
   const targetName = envShortName(environments, summary.target_env);
   const sentence = headline(detail, { source: sourceName, target: targetName });
   const worker = detail.worker;
-  const failedWrites = summary.writes.failed + summary.downtime.failed_requests;
+  const failed = failedWrites(summary);
   const counts = {
     source:
       worker?.committed_by_target[summary.data_source] ??
@@ -156,19 +158,16 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
           {
             id: "target",
             label: `대상 반영: ${targetName}`,
-            value:
-              counts.source > 0
-                ? `${Math.min(100, (counts.target / counts.source) * 100).toFixed(1)}%`
-                : "-",
+            value: formatRatio(counts.target, counts.source),
             note: `${formatCount(counts.target)}건`,
           },
           {
             id: "failed",
             label: "실패한 쓰기",
-            value: formatCount(failedWrites),
+            value: formatCount(failed),
             unit: "건",
-            tone: failedWrites > 0 ? "bad" : "none",
-            dim: failedWrites === 0,
+            tone: failed > 0 ? "bad" : "none",
+            dim: failed === 0,
           },
           {
             id: "pause",
@@ -196,6 +195,20 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
       <div className="detail-layout">
         <EventRail events={events.data} />
         <div className="detail-main">
+          <DashSection
+            title="전환 제어"
+            aside={
+              fleet?.source === "simulated" ? (
+                <span className="tag">시뮬레이션</span>
+              ) : undefined
+            }
+          >
+            <CutoverControls
+              jobId={jobId}
+              detail={detail}
+              simulated={fleet?.source === "simulated"}
+            />
+          </DashSection>
           <DashSection title="전환 타임라인">
             {lifetime.data ? (
               <TransitionTimeline

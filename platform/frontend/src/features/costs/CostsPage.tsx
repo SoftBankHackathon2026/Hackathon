@@ -21,6 +21,7 @@ import {
   dataHealth,
   envTotals,
   mainBreakdown,
+  pickJob,
   sortedChanges,
   topResources,
 } from "./costView";
@@ -793,10 +794,16 @@ const TABS: Tab[] = ["overview", "migration", "environments"];
 
 export function CostsPage({ tab: initial }: { tab?: string } = {}) {
   const { data: overview } = useSuspenseQuery(costsQueryOptions());
-  const [tab, setTab] = useState<Tab>(
-    TABS.includes(initial as Tab) ? (initial as Tab) : "overview",
-  );
-  const [jobId, setJobId] = useState(overview.migrations[0]?.job_id ?? "");
+  // 탭은 주소(#costs/<탭>)가 정한다. 같은 화면에서 주소만 바뀌어도(뒤로 가기, 링크) 따라간다.
+  const tab: Tab = TABS.includes(initial as Tab)
+    ? (initial as Tab)
+    : "overview";
+  const setTab = (next: Tab) => {
+    const hash = next === "overview" ? "#costs" : `#costs/${next}`;
+    if (window.location.hash !== hash) window.location.hash = hash;
+  };
+  const [picked, setJobId] = useState("");
+  const jobId = pickJob(overview.migrations, picked);
   const totals = envTotals(overview);
   return (
     <div className="pk-page">

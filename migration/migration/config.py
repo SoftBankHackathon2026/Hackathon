@@ -156,6 +156,39 @@ class CutoverConfig:
 
 
 @dataclass(frozen=True)
+class AppCheckConfig:
+    """접수 큐를 어떤 대상으로 돌리기 전에 그 대상 앱이 준비됐는지 확인하는 기준."""
+
+    url: str
+    environment: str | None = None   # /api/info 의 environment 기대값 (예: aws)
+    database: str | None = None      # /api/info 의 database.name 기대값 (예: migration_demo)
+    token_env: str | None = None     # Bearer 토큰 환경변수 (HTTPS 대상에만)
+
+
+@dataclass(frozen=True)
+class IngressConfig:
+    """접수 서비스(durable-ingress) 제어. control_url 이 없으면 cutover 는 큐를 건드리지 않는다(수동 운영)."""
+
+    control_url: str | None = None          # 예: http://durable-ingress-control:9092
+    token_env: str | None = None            # 제어 API Bearer 토큰 환경변수 (선택)
+    timeout_seconds: float = 30.0
+    # job 의 target 이름 → 접수 서비스 INGRESS_TARGETS 의 이름. 예: {onprem: onprem, aws: aws_db}
+    targets: Mapping[str, str] = field(default_factory=dict)
+    # job 의 target 이름 → 큐를 돌리기 전 확인할 앱. 없으면 앱 확인 없이 큐만 돌린다.
+    app_checks: Mapping[str, AppCheckConfig] = field(default_factory=dict)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.control_url)
+
+    def ingress_target(self, job_target: str) -> str:
+        try:
+            return self.targets[job_target]
+        except KeyError as exc:
+            raise ConfigError(f"ingress.targets 에 {job_target} 이 없다 (있는 것: {', '.join(self.targets) or '없음'})") from exc
+
+
+@dataclass(frozen=True)
 class Config:
     """설정 파일 전체."""
 
@@ -164,6 +197,7 @@ class Config:
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     cutover: CutoverConfig = field(default_factory=CutoverConfig)
+    ingress: IngressConfig = field(default_factory=IngressConfig)
 
     def target(self, name: str) -> TargetConfig:
         try:
@@ -268,6 +302,43 @@ def _dataclass_from(cls: type, raw: Mapping[str, Any] | None, section: str) -> A
     return cls(**kwargs)
 
 
+def _parse_ingress(raw: Mapping[str, Any] | None, targets: Mapping[str, TargetConfig]) -> IngressConfig:
+    raw = raw or {}
+    allowed = {"control_url", "token_env", "timeout_seconds", "targets", "app_checks"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ConfigError(f"ingress: 알 수 없는 키 {sorted(unknown)}")
+    control_url = raw.get("control_url")
+    control_url = str(control_url) if control_url else None
+    mapping_raw = raw.get("targets") or {}
+    if not isinstance(mapping_raw, Mapping):
+        raise ConfigError("ingress.targets 는 {job target: 접수 서비스 target} 매핑이어야 한다")
+    mapping = {str(k): str(v) for k, v in mapping_raw.items()}
+    for name in mapping:
+        if name not in targets:
+            raise ConfigError(f"ingress.targets 의 {name} 은 targets 에 없다")
+    checks_raw = raw.get("app_checks") or {}
+    if not isinstance(checks_raw, Mapping):
+        raise ConfigError("ingress.app_checks 는 {job target: {url, environment, database, token_env}} 매핑이어야 한다")
+    checks: dict[str, AppCheckConfig] = {}
+    for name, entry in checks_raw.items():
+        if str(name) not in targets:
+            raise ConfigError(f"ingress.app_checks 의 {name} 은 targets 에 없다")
+        if not isinstance(entry, Mapping) or not entry.get("url"):
+            raise ConfigError(f"ingress.app_checks.{name}.url 이 비어 있다")
+        extra = set(entry) - {"url", "environment", "database", "token_env"}
+        if extra:
+            raise ConfigError(f"ingress.app_checks.{name}: 알 수 없는 키 {sorted(extra)}")
+        checks[str(name)] = AppCheckConfig(url=str(entry["url"]),
+                                           environment=str(entry["environment"]) if entry.get("environment") else None,
+                                           database=str(entry["database"]) if entry.get("database") else None,
+                                           token_env=str(entry["token_env"]) if entry.get("token_env") else None)
+    if control_url and not mapping:
+        raise ConfigError("ingress.control_url 이 있으면 ingress.targets 매핑이 필요하다")
+    return IngressConfig(control_url=control_url, token_env=str(raw["token_env"]) if raw.get("token_env") else None,
+                         timeout_seconds=float(raw.get("timeout_seconds", 30.0)), targets=mapping, app_checks=checks)
+
+
 def parse_config(raw: Mapping[str, Any]) -> Config:
     """YAML 로 읽은 매핑을 Config 로 변환한다."""
     targets_raw = raw.get("targets")
@@ -285,6 +356,7 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         kafka=_dataclass_from(KafkaConfig, raw.get("kafka"), "kafka"),
         worker=_dataclass_from(WorkerConfig, raw.get("worker"), "worker"),
         cutover=_dataclass_from(CutoverConfig, raw.get("cutover"), "cutover"),
+        ingress=_parse_ingress(raw.get("ingress"), targets),
     )
 
 

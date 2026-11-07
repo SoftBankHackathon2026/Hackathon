@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from controlplane.domain.migration import Direction, MigrationStatus, StageProgress
 
@@ -258,7 +258,7 @@ class MigrationSeries(BaseModel):
 
 class MigrationEvent(BaseModel):
     at: datetime
-    kind: Literal["stage", "gate", "switch", "verify", "warning"]
+    kind: Literal["stage", "gate", "switch", "verify", "warning", "command"]
     title: str
     detail: str
 
@@ -267,3 +267,46 @@ class MigrationIngest(BaseModel):
     cutover: dict[str, Any] | None = None
     policy_decisions: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     verify: dict[str, Any] | None = None
+
+
+CommandAction = Literal["run", "approve", "abort", "retry", "force_retry"]
+CommandStatus = Literal["pending", "running", "succeeded", "waiting_approval", "failed"]
+ACTIVE_COMMAND_STATUSES: tuple[CommandStatus, ...] = ("pending", "running")
+LOG_TAIL_LIMIT = 4000
+
+
+class CommandCreate(BaseModel):
+    """화면이 보내는 전환 명령 요청. 플랫폼은 저장만 하고 실행은 러너 Pod 의 보고기가 가져간다."""
+
+    action: CommandAction
+    approval_id: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class CutoverCommand(BaseModel):
+    id: str
+    job_id: str
+    action: CommandAction
+    approval_id: str | None = None
+    note: str | None = None
+    requested_by: str | None = None
+    requested_at: datetime
+    status: CommandStatus
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    exit_code: int | None = None
+    stage: str | None = None
+    log_tail: str | None = None
+
+
+class CommandResult(BaseModel):
+    """보고기가 cutover 서브프로세스를 끝낸 뒤 올리는 결과. 환경변수·비밀값은 넣지 않는다."""
+
+    exit_code: int
+    stage: str | None = Field(default=None, max_length=64)
+    log_tail: str = ""
+
+    @field_validator("log_tail")
+    @classmethod
+    def keep_tail(cls, value: str) -> str:
+        return value[-LOG_TAIL_LIMIT:]
