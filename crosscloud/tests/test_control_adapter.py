@@ -1,4 +1,5 @@
 import dataclasses
+import http.client
 import json
 import threading
 
@@ -29,13 +30,16 @@ class _FakeTime:
 
 
 class _Readiness:
+    """대상 앱 신원 대조(app_identity_problems) 가짜. ready 면 문제 없음."""
+
     def __init__(self, ready=True):
         self.ready = ready
         self.checked = []
 
-    def __call__(self, url, timeout):
-        self.checked.append(url)
-        return self.ready if not callable(self.ready) else self.ready()
+    def __call__(self, base_url, *, database, environment, timeout):
+        self.checked.append((base_url, database))
+        ready = self.ready() if callable(self.ready) else self.ready
+        return () if ready else ("database=shop (기대 shop_b)",)
 
 
 @pytest.fixture
@@ -61,8 +65,7 @@ def _adapter(url, readiness=None, fake_time=None, identity=None, config=None):
     return control_adapter.ControlAdapter(
         config or _CONFIG,
         ingress_control.IngressControl(url, token=None),
-        check_ready=readiness or _Readiness(),
-        inspect_app=identity or _Identity(),
+        inspect_app=identity or readiness or _Identity(),
         clock=fake_time.clock,
         sleep=fake_time.sleep,
     )
@@ -281,7 +284,7 @@ def test_healthz_needs_consecutive_target_readiness(ingress):
 
     assert code == 200
     assert body == {"healthy": True, "target": "gcp"}
-    assert set(readiness.checked) == {"http://gcp-app.example/readyz"}
+    assert set(readiness.checked) == {("http://gcp-app.example", "shop_b")}
 
 
 def test_healthz_unhealthy_within_deadline_is_503(ingress):
@@ -511,7 +514,7 @@ def test_healthz_answers_within_migration_http_limit(ingress):
     fake_time = _FakeTime()
 
     def slow_not_ready():
-        fake_time.now += 3  # /readyz 호출 상한만큼 걸린다고 본다
+        fake_time.now += 6  # /readyz·/api/info 호출 상한만큼 걸린다고 본다
         return False
 
     code, _ = _adapter(
@@ -520,3 +523,57 @@ def test_healthz_answers_within_migration_http_limit(ingress):
 
     assert code == 503
     assert fake_time.now <= 25 - ingress_control.CALL_TIMEOUT_SECONDS
+
+
+def test_healthz_unhealthy_when_queue_points_at_source(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="aws")
+
+    code, body = _adapter(url).healthz()
+
+    assert code == 503
+    assert body == {"healthy": False, "target": "aws"}
+
+
+def test_target_checks_pause_before_idempotent_answer(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="gcp", in_flight=1)
+
+    code, _ = _adapter(url).target({"target": "gcp"})
+
+    assert code == 409
+
+
+def test_load_config_refuses_same_database_name(tmp_path):
+    (tmp_path / "config.cloud.yaml").write_text(
+        "targets: {aws: {dbname: shop}, gcp: {dbname: shop}}\n"
+        "job: {job_id: j, source: aws, target: gcp}\n"
+        "application: {control_url: 'http://127.0.0.1:18080'}\n"
+    )
+    (tmp_path / "ingress.env").write_text(
+        'INGRESS_TARGETS={"aws":{"url":"http://a"},"gcp":{"url":"http://g"}}\n'
+    )
+
+    with pytest.raises(ValueError, match="dbname"):
+        control_adapter.load_adapter_config(
+            tmp_path / "config.cloud.yaml", tmp_path / "ingress.env"
+        )
+
+
+def test_server_rejects_malformed_content_length(ingress):
+    _, url = ingress
+    server, thread = _serve(_adapter(url))
+    try:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", server.server_address[1], timeout=5
+        )
+        connection.putrequest("POST", "/drain")
+        connection.putheader("Content-Length", "abc")
+        connection.endheaders()
+        response = connection.getresponse()
+        assert response.status == 400
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

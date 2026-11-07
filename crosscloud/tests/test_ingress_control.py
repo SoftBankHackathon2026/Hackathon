@@ -1,6 +1,7 @@
 import time
 
 import fake_ingress
+import junk_http
 import pytest
 
 from crosscloud import ingress_control
@@ -160,3 +161,9 @@ def test_pause_waits_longer_for_in_flight_delivery():
         state = ingress_control.IngressControl(url, token=None).pause()
 
     assert state.mode == "paused"
+
+
+def test_non_http_reply_is_an_error():
+    with junk_http.serve() as url:
+        with pytest.raises(ingress_control.IngressError):
+            ingress_control.IngressControl(url, token=None).status()

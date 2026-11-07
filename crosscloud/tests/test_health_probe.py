@@ -1,6 +1,7 @@
 import json
 
 import http_fixture
+import junk_http
 
 from crosscloud import health_probe
 
@@ -148,3 +149,8 @@ def test_app_identity_reports_unreadable_info():
         )
 
     assert any("/api/info" in p for p in problems)
+
+
+def test_non_http_reply_is_not_healthy():
+    with junk_http.serve() as url:
+        assert not health_probe.is_healthy(url + "/readyz", timeout=2)

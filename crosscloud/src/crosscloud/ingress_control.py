@@ -14,6 +14,7 @@ IngressError 를 낸다. 오류 메시지에는 응답의 오류 코드만 담�
 """
 
 import dataclasses
+import http.client
 import json
 import re
 import urllib.error
@@ -134,7 +135,11 @@ class IngressControl:
             raise IngressError(
                 f"{method} {path} → HTTP {error.code} ({code})", error.code
             ) from None
-        except (urllib.error.URLError, OSError) as error:
+        except (
+            urllib.error.URLError,
+            OSError,
+            http.client.HTTPException,
+        ) as error:
             raise IngressError(
                 f"{method} {path} 연결 실패: {type(error).__name__}"
             ) from None

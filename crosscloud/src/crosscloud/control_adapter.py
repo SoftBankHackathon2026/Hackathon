@@ -13,7 +13,7 @@ migration/worker_client.py). 어댑터는 플랫폼을 바꾸지 않는다. 쓰�
 | POST /drain        | GET /status 를 paused·in_flight 0 이 될 때까지 되풀이  |
 | POST /target       | 대상 앱 DB 신원 확인 → POST /target (expected_epoch)   |
 | POST /resume       | POST /resume (expected_epoch). 대상 라벨일 때만        |
-| GET /healthz       | 큐 running·오류 없음 + 대상 앱 /readyz, 연속 N 회      |
+| GET /healthz       | 큐 running·오류 없음 + 대상 앱 DB 신원, 연속 N 회      |
 
 대상 앱 DB 신원은 /readyz 와 /api/info 의 database.name(·environment)으로
 본다(원가연 check_app_ready). 접수 큐의 대상 이름은 기본으로 클라우드
@@ -43,14 +43,14 @@ from crosscloud import health_probe, ingress_control, model
 Reply = tuple[int, dict[str, Any]]
 
 _LISTEN_HOST = "127.0.0.1"
-_READYZ_PATH = "/readyz"
-_READYZ_TIMEOUT_SECONDS = 3.0
-# /healthz 표본 하나의 최악 시간(큐 상태 + /readyz)과 응답 직전 재확인 시간.
+_APP_TIMEOUT_SECONDS = 3.0
+# /healthz 표본 하나의 최악 시간(큐 상태 + 앱 /readyz·/api/info)과 응답 직전
+# 재확인 시간.
 _SAMPLE_WORST_SECONDS = (
-    ingress_control.CALL_TIMEOUT_SECONDS + _READYZ_TIMEOUT_SECONDS
+    ingress_control.CALL_TIMEOUT_SECONDS + 2 * _APP_TIMEOUT_SECONDS
 )
 _RECHECK_WORST_SECONDS = ingress_control.CALL_TIMEOUT_SECONDS
-_READYZ_INTERVAL_SECONDS = 1.0
+_SAMPLE_INTERVAL_SECONDS = 1.0
 _DRAIN_POLL_SECONDS = 0.5
 _MAX_BODY_BYTES = 65536
 
@@ -118,9 +118,6 @@ class ControlAdapter:
         config: AdapterConfig,
         ingress: ingress_control.IngressControl,
         *,
-        check_ready: collections.abc.Callable[
-            [str, float], bool
-        ] = health_probe.is_healthy,
         inspect_app: collections.abc.Callable[
             ..., tuple[str, ...]
         ] = health_probe.app_identity_problems,
@@ -130,7 +127,6 @@ class ControlAdapter:
         """설정과 접수 큐 클라이언트를 받는다."""
         self._config = config
         self._ingress = ingress
-        self._check_ready = check_ready
         self._inspect_app = inspect_app
         self._clock = clock
         self._sleep = sleep
@@ -197,15 +193,15 @@ class ControlAdapter:
 
     def _switch(self, label: str) -> Reply:
         state = self._read()
-        if self._label(state) == label:
-            return 200, self._app_status(state)
         if state.mode != "paused" or state.in_flight:
             return 409, {"error": "큐가 paused·in_flight 0 이 아니다"}
+        if self._label(state) == label:
+            return 200, self._app_status(state)
         problems = self._inspect_app(
             self._config.target_app_url,
             database=self._config.target_database,
             environment=self._config.target_environment,
-            timeout=_READYZ_TIMEOUT_SECONDS,
+            timeout=_APP_TIMEOUT_SECONDS,
         )
         if problems:
             return 503, {"error": "대상 앱 확인 실패: " + "; ".join(problems)}
@@ -233,17 +229,22 @@ class ControlAdapter:
         return 200, self._app_status(state)
 
     def _healthz(self) -> Reply:
-        # 표본마다 ① 큐가 그 라벨로 전달 중이고 오류가 없는지 ② 그 라벨 앱이
-        # 준비됐는지 본다. resume 직후 첫 전달 실패로 큐가 스스로 멈춘 경우를
-        # 넘기지 않게, 연속 N 회 뒤 응답 직전에 ① 을 한 번 더 본다. 전체는
-        # readiness_deadline_seconds 안에 끝난다(원가연 HTTP 한도 30초).
+        # 표본마다 ① 큐가 대상 라벨로 전달 중이고 오류가 없는지 ② 대상 앱이
+        # 준비됐고 대상 DB(이름)에 붙었는지 본다. resume 직후 첫 전달 실패로
+        # 큐가 스스로 멈춘 경우를 넘기지 않게, 연속 N 회 뒤 응답 직전에 ① 을
+        # 한 번 더 본다. 전체는 readiness_deadline_seconds 안에 끝난다(원가연
+        # HTTP 한도 30초). 큐가 원본을 가리키면 바로 unhealthy 다.
         started = self._clock()
         label = self._label(self._read())
-        url = self._config.app_url(label) + _READYZ_PATH
+        if label != self._config.target:
+            return 503, {"healthy": False, "target": label}
 
         def sample() -> bool:
-            return self._delivering(label) and self._check_ready(
-                url, _READYZ_TIMEOUT_SECONDS
+            return self._delivering(label) and not self._inspect_app(
+                self._config.target_app_url,
+                database=self._config.target_database,
+                environment=self._config.target_environment,
+                timeout=_APP_TIMEOUT_SECONDS,
             )
 
         sampling_budget = (
@@ -256,7 +257,7 @@ class ControlAdapter:
             sample,
             needed=self._config.readiness_successes,
             deadline_seconds=sampling_budget,
-            interval=_READYZ_INTERVAL_SECONDS,
+            interval=_SAMPLE_INTERVAL_SECONDS,
             clock=self._clock,
             sleep=self._sleep,
         )
@@ -356,6 +357,12 @@ def load_adapter_config(
     )
     if not target_db:
         raise ValueError(f"targets.{job['target']}.dbname 이 없다")
+    source_db = ((document.get("targets") or {}).get(job["source"]) or {}).get(
+        "dbname"
+    )
+    if source_db == target_db:
+        # 같은 이름이면 /api/info 로 대상 앱이 A·B 중 어디 붙었는지 못 가른다.
+        raise ValueError("원본과 대상 dbname 이 같다")
     port = urllib.parse.urlsplit(control_url).port
     if port is None:
         raise ValueError("application.control_url 에 포트가 없다")
@@ -425,7 +432,10 @@ def make_server(
             self._send(*route(body))
 
         def _body(self) -> dict[str, Any] | None:
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None
             if length <= 0:
                 return {}
             if length > _MAX_BODY_BYTES:

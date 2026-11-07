@@ -13,6 +13,7 @@
 """
 
 import collections.abc
+import http.client
 import json
 import time
 import urllib.error
@@ -99,7 +100,7 @@ def _get_json(url: str, timeout: float) -> tuple[int | None, dict]:
             code, raw = response.status, response.read()
     except urllib.error.HTTPError as error:
         code, raw = error.code, error.read()
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
         return None, {}
     try:
         body = json.loads(raw.decode("utf-8"))
