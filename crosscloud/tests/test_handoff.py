@@ -374,3 +374,21 @@ def test_ingress_env_rejects_unsafe_settings(
     with pytest.raises(ValueError, match=match):
         handoff.render_ingress_env(_job(), targets, redis_url, tmp_path)
     assert not (tmp_path / "ingress.env").exists()
+
+
+_CA_PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+
+
+def test_app_tls_env_verifies_db_certificate_with_ca_content():
+    env = handoff.app_tls_env(_CA_PEM)
+
+    assert env == (
+        model.KeyValue("PGSSLMODE", "verify-full"),
+        model.KeyValue("DB_SSL_CA", _CA_PEM),
+    )
+
+
+@pytest.mark.parametrize("pem", ["", "not a certificate", "/etc/ca.pem"])
+def test_app_tls_env_rejects_non_pem_ca(pem):
+    with pytest.raises(ValueError, match="PEM"):
+        handoff.app_tls_env(pem)

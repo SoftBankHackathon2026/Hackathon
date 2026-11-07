@@ -448,3 +448,26 @@ def _check_ingress_url(target: IngressTarget) -> None:
         raise ValueError(f"{target.cloud} ingress 대상 url 이 안전하지 않다")
     if target.token_env and parts.scheme != "https":
         raise ValueError(f"{target.cloud}: 토큰을 쓰는 대상은 https 만 된다")
+
+
+def app_tls_env(db_ca_pem: str) -> tuple[model.KeyValue, ...]:
+    """대상 앱 배포에 넣을 DB TLS env(비밀 아님). 앱–DB 구간도 TLS 를 쓴다.
+
+    sample-app(packages/request-store/config.js)은 PGSSLMODE 가 먼저이고,
+    disable 이 아닌 모든 모드에서 인증서와 호스트 이름을 검증한다
+    (rejectUnauthorized). CA 는 DB_SSL_CA(PEM 내용) 또는 PGSSLROOTCERT(파일
+    경로)로 받는다. 이미지를 바꾸지 않으므로 파일이 아닌 DB_SSL_CA 를 쓴다.
+    DATABASE_URL 에는 sslmode 밖의 ssl* 쿼리를 넣으면 앱이 기동을 거부한다.
+
+    Args:
+        db_ca_pem: 대상 DB 서버 CA 묶음 PEM(RDS 리전 번들·Cloud SQL 서버 CA).
+
+    Raises:
+        ValueError: PEM 인증서가 아닐 때.
+    """
+    if "-----BEGIN CERTIFICATE-----" not in db_ca_pem:
+        raise ValueError("db_ca_pem 은 PEM 인증서여야 한다")
+    return (
+        model.KeyValue("PGSSLMODE", "verify-full"),
+        model.KeyValue("DB_SSL_CA", db_ca_pem),
+    )
