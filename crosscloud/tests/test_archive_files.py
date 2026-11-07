@@ -1,6 +1,5 @@
 import base64
 import dataclasses
-import datetime
 
 import pytest
 
@@ -109,29 +108,35 @@ def test_malformed_manifest_is_rejected():
         )
 
 
-def test_public_keys_from_list_public_keys_response():
-    response = {
+def test_public_keys_from_aws_cli_list_public_keys_output():
+    # `aws cloudtrail list-public-keys` 출력: Value 는 base64, 시각은 문자열.
+    output = {
         "PublicKeyList": [
             {
-                "Value": b"der-bytes",
-                "ValidityStartTime": datetime.datetime(
-                    2026, 11, 1, tzinfo=datetime.UTC
-                ),
-                "ValidityEndTime": datetime.datetime(
-                    2026, 12, 1, tzinfo=datetime.UTC
-                ),
+                "Value": base64.b64encode(b"der-bytes").decode(),
+                "ValidityStartTime": "2026-11-01T00:00:00+00:00",
+                "ValidityEndTime": "2026-12-01T00:00:00+00:00",
                 "Fingerprint": "f" * 32,
             }
         ]
     }
 
-    keys = archive_files.public_keys_from_list_response(response)
+    keys = archive_files.public_keys_from_cli_output(output)
 
     assert keys == (
         archive_files.PublicKey(
             fingerprint="f" * 32,
             value=b"der-bytes",
-            validity_start="2026-11-01T00:00:00Z",
-            validity_end="2026-12-01T00:00:00Z",
+            validity_start="2026-11-01T00:00:00+00:00",
+            validity_end="2026-12-01T00:00:00+00:00",
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "output",
+    [None, {}, {"PublicKeyList": [{"Value": "!!", "Fingerprint": "f"}]}],
+)
+def test_malformed_public_keys_output_is_rejected(output):
+    with pytest.raises(archive_files.InvalidArchiveFileError):
+        archive_files.public_keys_from_cli_output(output)

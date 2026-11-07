@@ -19,7 +19,6 @@ manifest.json 은 GCP 쪽 원본에 공급자 서명이 없음을 그대로 적�
 import base64
 import binascii
 import dataclasses
-import datetime
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -30,7 +29,6 @@ MANIFEST_FORMAT = "crosscloud.audit_copy.manifest/v1"
 GCP_LIMITATION = "공급자 서명 없음 — 이관 중 불변만 증명"
 _SIGNATURE = "signature"
 _SIGNATURE_ALGORITHM = "signature-algorithm"
-_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,26 +61,33 @@ class InvalidArchiveFileError(ValueError):
     """bundle.json·manifest.json 이 이 모듈의 형식이 아니다."""
 
 
-def public_keys_from_list_response(
-    response: Mapping[str, Any],
-) -> tuple[PublicKey, ...]:
-    """boto3 cloudtrail.list_public_keys 응답을 PublicKey 로 바꾼다.
+def public_keys_from_cli_output(document: object) -> tuple[PublicKey, ...]:
+    """`aws cloudtrail list-public-keys` 출력(JSON)을 PublicKey 로 읽는다.
+
+    온라인 단계에서 받아 둔 파일이 입력이다(RC-A21). Value 는 base64 로
+    인코딩된 PKCS#1 DER 이고, 시각은 출력 문자열 그대로 둔다.
 
     Args:
-        response: list_public_keys 응답(PublicKeyList 의 Value 는 bytes).
+        document: 출력 JSON 을 json.loads 로 읽은 값.
 
     Returns:
-        응답 순서 그대로의 공개키들.
+        출력 순서 그대로의 공개키들.
+
+    Raises:
+        InvalidArchiveFileError: PublicKeyList 형식이 아닐 때.
     """
-    return tuple(
-        PublicKey(
-            fingerprint=entry["Fingerprint"],
-            value=entry["Value"],
-            validity_start=_format_time(entry["ValidityStartTime"]),
-            validity_end=_format_time(entry["ValidityEndTime"]),
+    try:
+        return tuple(
+            PublicKey(
+                fingerprint=entry["Fingerprint"],
+                value=base64.b64decode(entry["Value"], validate=True),
+                validity_start=entry["ValidityStartTime"],
+                validity_end=entry["ValidityEndTime"],
+            )
+            for entry in document["PublicKeyList"]
         )
-        for entry in response["PublicKeyList"]
-    )
+    except (KeyError, TypeError, binascii.Error) as e:
+        raise InvalidArchiveFileError(f"PublicKeyList 형식 오류: {e!r}") from e
 
 
 def bundle_to_json(
@@ -202,7 +207,3 @@ def _expect_format(document: object, expected: str) -> dict[str, Any]:
     if not isinstance(document, dict) or document.get("format") != expected:
         raise InvalidArchiveFileError(f"{expected} 형식이 아님")
     return document
-
-
-def _format_time(value: datetime.datetime) -> str:
-    return value.astimezone(datetime.UTC).strftime(_TIME_FORMAT)
