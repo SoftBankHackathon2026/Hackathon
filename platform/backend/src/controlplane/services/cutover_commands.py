@@ -13,6 +13,7 @@ from controlplane.domain.fleet import FleetConfig
 from controlplane.repositories.cutover_commands import COMMAND_IN_PROGRESS, CommandRepository
 from controlplane.schemas.accounts import Identity
 from controlplane.schemas.migrations import (
+    ClaimedCommand,
     CommandCreate,
     CommandResult,
     CommandStatus,
@@ -125,6 +126,21 @@ class CutoverCommandService:
     def claim(self, job_id: str) -> CutoverCommand | None:
         self._check_job(job_id)
         return self._store.claim(job_id, self._now())
+
+    def claim_any(self) -> ClaimedCommand | None:
+        jobs = [task.job_id for task in self._config.migrations]
+        command = self._store.claim_any(jobs, self._now())
+        if command is None:
+            return None
+        task = self._config.migration(command.job_id)
+        return ClaimedCommand(
+            command=command,
+            job_id=task.job_id,
+            source_env=task.source_env,
+            target_env=task.target_env,
+            data_source=task.data_source,
+            data_target=task.data_target,
+        )
 
     def finish(self, job_id: str, command_id: str, result: CommandResult) -> CutoverCommand:
         self._check_job(job_id)

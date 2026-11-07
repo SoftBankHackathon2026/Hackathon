@@ -202,3 +202,150 @@ def test_main_loop_keeps_running_after_platform_502(monkeypatch):
         )
     # 첫 보고가 502 로 실패해도 다음 주기 보고까지 이어진다.
     assert calls == ["report", "sleep", "report", "sleep"]
+
+
+BASE_CONFIG = """
+targets:
+  onprem: {host: postgres}
+  onprem_return: {host: postgres}
+  aws: {host: rds}
+job:
+  job_id: durable_forward_001
+  source: onprem_return
+  target: aws
+  table: public.migration_demo
+kafka: {bootstrap_servers: kafka:9092}
+"""
+
+CLAIMED = {
+    "command": {"id": "cmd_9", "action": "run", "approval_id": None},
+    "job_id": "onprem_to_aws_001",
+    "source_env": "onprem",
+    "target_env": "aws",
+    "data_source": "onprem_return",
+    "data_target": "aws",
+}
+
+
+def test_report_all_reports_every_job_in_the_state_and_skips_unregistered(tmp_path, monkeypatch):
+    make_state(tmp_path)
+    with sqlite3.connect(tmp_path / "cutover.sqlite3") as conn:
+        conn.execute(
+            "INSERT INTO cutover_jobs VALUES ('old_001','forward','onprem','aws','COMPLETED','{}','2026-11-05T01:00:00Z')"
+        )
+    sent = []
+
+    def post(url, token, body):
+        if url.endswith("/old_001"):
+            raise _http_error(404)
+        sent.append(url)
+        return 202
+
+    monkeypatch.setattr(reporter, "post", post)
+    args = Namespace(state_dir=str(tmp_path), report_dir=None, platform_url="http://p")
+    reporter.report_all(args, "token")
+    assert sent[0] == "http://p/api/v1/ingest/migrations/forward_001"
+    assert all("old_001" not in url for url in sent)
+
+
+def test_report_all_still_raises_other_platform_errors(tmp_path, monkeypatch):
+    make_state(tmp_path)
+
+    def post(url, token, body):
+        raise _http_error(502)
+
+    monkeypatch.setattr(reporter, "post", post)
+    args = Namespace(state_dir=str(tmp_path), report_dir=None, platform_url="http://p")
+    with pytest.raises(urllib.error.HTTPError):
+        reporter.report_all(args, "token")
+
+
+def test_job_config_swaps_only_the_job_section(tmp_path):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    path = reporter.job_config(str(base), CLAIMED, tmp_path / "jobs")
+    config = yaml.safe_load(path.read_text())
+    assert path == tmp_path / "jobs" / "onprem_to_aws_001.yaml"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert config["job"] == {
+        "job_id": "onprem_to_aws_001",
+        "source": "onprem_return",
+        "target": "aws",
+        "table": "public.migration_demo",
+        "live_phase_before": "onprem_return_live",
+        "live_phase_after": "aws_live",
+    }
+    assert config["targets"]["aws"] == {"host": "rds"}
+    assert config["kafka"] == {"bootstrap_servers": "kafka:9092"}
+
+
+def test_job_config_rejects_targets_the_runner_does_not_know(tmp_path):
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    unknown = {**CLAIMED, "data_target": "connected-7"}
+    with pytest.raises(ValueError, match="connected-7"):
+        reporter.job_config(str(base), unknown, tmp_path / "jobs")
+
+
+def test_execute_any_runs_the_claimed_task_with_its_own_config(tmp_path, monkeypatch):
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    script = "import sys; print(' '.join(sys.argv[1:])); sys.exit(3)"
+    monkeypatch.setenv("ONEPORT_CUTOVER_ARGV", f"{sys.executable} -c {shlex.quote(script)}")
+    monkeypatch.setenv("MIGRATION_CONFIG", str(base))
+    posted, reported = [], []
+    monkeypatch.setattr(reporter, "claim_any_command", lambda args, token: CLAIMED)
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append((url, body)) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: reported.append(job))
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p/", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    url, body = posted[-1]
+    assert url == "http://p/api/v1/ingest/migrations/onprem_to_aws_001/commands/cmd_9/result"
+    assert body["exit_code"] == 3
+    assert str(tmp_path / "jobs" / "onprem_to_aws_001.yaml") in body["log_tail"]
+    assert reported[-1] == "onprem_to_aws_001"
+
+
+def test_execute_any_reports_a_config_error_for_unknown_targets(tmp_path, monkeypatch):
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    monkeypatch.setenv("MIGRATION_CONFIG", str(base))
+    posted = []
+    monkeypatch.setattr(
+        reporter, "claim_any_command", lambda args, token: {**CLAIMED, "data_source": "nope"}
+    )
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append(body) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: None)
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    assert posted[-1]["exit_code"] == reporter.EXIT_CONFIG and "nope" in posted[-1]["log_tail"]
+
+
+def test_execute_any_returns_false_when_nothing_is_pending(monkeypatch):
+    monkeypatch.setattr(reporter, "post_json", lambda url, token, body: (204, None))
+    args = Namespace(state_dir="/nope", platform_url="http://p")
+    assert reporter.execute_any(args, "token") is False
+
+
+def test_main_all_jobs_reports_every_job_and_runs_any_command(monkeypatch):
+    monkeypatch.setenv("ONEPORT_INGEST_TOKEN", "token")
+    calls = []
+    monkeypatch.setattr(reporter, "report_all", lambda args, token: calls.append("report_all"))
+    monkeypatch.setattr(reporter, "execute_any", lambda args, token: calls.append("execute_any"))
+    monkeypatch.setattr(reporter, "report_once", lambda args, token: calls.append("report_once"))
+    rc = reporter.main(["--all-jobs", "--platform-url", "http://p", "--execute-commands"])
+    assert rc == 0 and calls == ["report_all", "execute_any"]
+
+
+def test_main_needs_exactly_one_of_job_id_or_all_jobs(monkeypatch):
+    monkeypatch.setenv("ONEPORT_INGEST_TOKEN", "token")
+    with pytest.raises(SystemExit):
+        reporter.main(["--platform-url", "http://p"])
+    with pytest.raises(SystemExit):
+        reporter.main(["--job-id", "a", "--all-jobs", "--platform-url", "http://p"])
