@@ -17,7 +17,7 @@ COPY sql ./sql
 COPY connectors ./connectors
 COPY config.example.yaml ./config.example.yaml
 
-RUN pip install --no-cache-dir . \
+RUN pip install --no-cache-dir ".[policy-runtime]" \
     && groupadd --system --gid 10001 migration \
     && useradd --system --uid 10001 --gid migration --home-dir /app --shell /usr/sbin/nologin migration \
     && mkdir -p /var/lib/worker \

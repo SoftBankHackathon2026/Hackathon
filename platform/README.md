@@ -66,7 +66,7 @@ npm run dev
 | 폴더 | 내용 |
 |---|---|
 | [`deploy/aws`](deploy/aws) | EKS용 kustomization. API·수집기·화면, 읽기 RBAC, 환경 설정(`fleet.json`). 내부 ALB Ingress(`ingress.yaml`)는 월 비용이 들어 기본에서 빠져 있어요. 보고기가 플랫폼에 push 해야 할 때 `kustomize edit add resource ingress.yaml`로 더해요 |
-| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 보고기 sidecar patch와 스크립트 ConfigMap. 워커·Connect 상태는 gitops `apps/platform-status-proxy` |
+| [`deploy/onprem`](deploy/onprem) | gitops에 넣을 보고기 sidecar patch와 보고기 스크립트(`fleet_reporter.py`)·ConfigMap. 워커·Connect 상태는 gitops `apps/platform-status-proxy` |
 | [`deploy/reader`](deploy/reader) | 플랫폼 밖 클러스터(GKE, 온프렘)에 두는 읽기 전용 계정과 kubeconfig 생성 스크립트 |
 
 ### 2-1. 환경별로 먼저 준비할 것

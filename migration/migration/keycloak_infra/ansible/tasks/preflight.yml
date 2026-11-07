@@ -1,0 +1,63 @@
+- name: Refresh selected node immediately before host checks
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kc.cluster.kubeconfig }}"
+    context: "{{ kc.cluster.context }}"
+    api_version: v1
+    kind: Node
+    name: "{{ node_name }}"
+    validate_certs: true
+  delegate_to: localhost
+  become: false
+  register: kc_live_node
+  no_log: true
+
+- name: Resolve selected node from fresh Kubernetes metadata
+  ansible.builtin.set_fact:
+    kc_node: "{{ kc_live_node.resources | map('keycloak_node_record') | selectattr('name', 'equalto', node_name) | selectattr('uid', 'equalto', node_uid) | first | default({}) }}"
+
+- name: Require current membership and Ready node
+  tags: [kc_reason_NODE_MEMBERSHIP_CHANGED_OR_NOT_READY]
+  ansible.builtin.assert:
+    that:
+      - kc_node | length > 0
+      - kc_node.ready | default(false)
+    fail_msg: NODE_MEMBERSHIP_CHANGED_OR_NOT_READY
+
+- name: Inspect selected server and installation collisions
+  keycloak_host_info:
+    node: "{{ kc_node }}"
+    install: "{{ kc.install }}"
+    versions: "{{ kc_versions }}"
+  register: kc_host
+  no_log: true
+
+- name: Save selected target checks
+  ansible.builtin.copy:
+    content: "{{ {'checks': kc_host.report.checks, 'node_name': node_name, 'os_id': kc_host.report.os_id, 'os_version': kc_host.report.os_version, 'architecture': kc_host.report.architecture} | to_json }}"
+    dest: "{{ kc_report_dir }}/target.json"
+    mode: '0600'
+  delegate_to: localhost
+  become: false
+
+- name: Require all target checks to pass
+  tags: [kc_reason_HOST_PREFLIGHT_FAILED]
+  ansible.builtin.assert:
+    that: kc_host.report.checks | rejectattr('status', 'equalto', 'pass') | list | length == 0
+    fail_msg: HOST_PREFLIGHT_FAILED
+
+- name: Check signed PostgreSQL package repository availability
+  tags: [kc_reason_POSTGRES_REPOSITORY_UNAVAILABLE]
+  ansible.builtin.uri:
+    url: "https://apt.postgresql.org/pub/repos/apt/dists/{{ kc_host.report.codename }}-pgdg/Release"
+    method: HEAD
+    timeout: 15
+    status_code: 200
+  changed_when: false
+
+- name: Report planned installation changes
+  ansible.builtin.copy:
+    content: "{{ {'planned_changes': ['dedicated_users_and_paths', 'postgresql_18_packages_and_dedicated_service', 'private_java_runtime', 'keycloak_service_and_certificates', 'initial_admin_handoff'], 'manifest': kc_host.report.expected_manifest} | to_json }}"
+    dest: "{{ kc_report_dir }}/plan.json"
+    mode: '0600'
+  delegate_to: localhost
+  become: false

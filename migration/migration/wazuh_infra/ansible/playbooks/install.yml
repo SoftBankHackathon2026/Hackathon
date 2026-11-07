@@ -1,0 +1,49 @@
+- name: Install an owned single-host Wazuh environment
+  hosts: wazuh_nodes
+  any_errors_fatal: true
+  gather_facts: false
+  vars:
+    wi_operation: preflight
+  vars_files:
+  - ../versions.yml
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml
+  - name: Acquire exclusive installation lock
+    ansible.builtin.command:
+      argv:
+      - mkdir
+      - --
+      - /run/lock/oneport-wazuh-install
+    changed_when: true
+  - name: Install and validate within the host lock
+    block:
+    - ansible.builtin.import_tasks: ../tasks/cluster.yml
+    - ansible.builtin.import_role:
+        name: install
+    - name: Verify the dashboard from the platform execution environment
+      wazuh_endpoint:
+        url: '{{ wi_task_report.report.dashboard_url }}'
+        ca_pem: '{{ wi_task_report.report.trusted_ca_pem }}'
+        username: oneport_reader
+        password: '{{ wi_credentials.reader_password_ref }}'
+      register: wi_dashboard
+      delegate_to: localhost
+      become: false
+      no_log: true
+      failed_when: false
+    - name: Store platform endpoint verification
+      wazuh_report:
+        report: '{{ wi_dashboard.report | default({}) }}'
+        enforce: true
+      no_log: true
+    - name: Require confirmed dashboard access
+      ansible.builtin.assert:
+        that: wi_dashboard.report.http_status | default(0) == 200
+        fail_msg: PLATFORM_DASHBOARD_ACCESS_UNCONFIRMED
+    - name: Confirm the cluster still reports the selected node as ready
+      ansible.builtin.import_tasks: ../tasks/cluster.yml
+    always:
+    - name: Release this invocation's installation lock
+      ansible.builtin.file:
+        path: /run/lock/oneport-wazuh-install
+        state: absent

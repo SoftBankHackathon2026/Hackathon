@@ -1,0 +1,64 @@
+- name: Create a dedicated storage guard directory
+  ansible.builtin.file:
+    path: /usr/local/lib/oneport-wazuh
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+- name: Copy the standard-library storage guard
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../templates/guard.py'
+    dest: /usr/local/lib/oneport-wazuh/guard.py
+    mode: '0700'
+- name: Copy guard helper modules
+  ansible.builtin.copy:
+    src: '{{ playbook_dir }}/../module_utils/{{ item }}'
+    dest: /usr/local/lib/oneport-wazuh/{{ item }}
+    mode: '0600'
+  loop:
+  - wazuh_common.py
+  - wazuh_host_helpers.py
+- name: Install a storage guard service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/oneport-wazuh-storage-guard.service
+    mode: '0644'
+    content: '[Unit]
+
+      Description=Pause owned Wazuh AWS input on exhausted storage
+
+      [Service]
+
+      Type=oneshot
+
+      ExecStart=/usr/bin/python3 /usr/local/lib/oneport-wazuh/guard.py
+
+      UMask=0077
+
+      TimeoutStartSec=180
+
+      '
+- name: Install a bounded periodic guard timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/oneport-wazuh-storage-guard.timer
+    mode: '0644'
+    content: '[Unit]
+
+      Description=Check owned Wazuh storage once per minute
+
+      [Timer]
+
+      OnBootSec=60
+
+      OnUnitActiveSec=60
+
+      [Install]
+
+      WantedBy=timers.target
+
+      '
+- name: Enable the storage guard timer
+  ansible.builtin.systemd_service:
+    name: oneport-wazuh-storage-guard.timer
+    enabled: true
+    state: started
+    daemon_reload: true

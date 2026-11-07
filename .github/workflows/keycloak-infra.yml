@@ -1,0 +1,46 @@
+name: keycloak-infra
+on:
+  pull_request:
+    paths: ['migration/**', '.github/workflows/keycloak-infra.yml']
+  push:
+    branches: [main]
+    paths: ['migration/**', '.github/workflows/keycloak-infra.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install controller and test dependencies
+        run: python -m pip install -e './migration[keycloak-infra,dev]' build
+      - name: Install pinned Ansible collections
+        run: ansible-galaxy collection install -r migration/migration/keycloak_infra/ansible/requirements.yml
+      - name: Run migration regression and real Ansible HTTPS tests
+        working-directory: migration
+        run: python -m pytest --tb=short
+      - name: Check every playbook syntax
+        working-directory: migration/migration/keycloak_infra/ansible
+        env:
+          ANSIBLE_CONFIG: ansible.cfg
+        run: |
+          for playbook in playbooks/*.yml; do
+            ansible-playbook "$playbook" --syntax-check -i localhost,
+          done
+      - name: Build distributable package
+        working-directory: migration
+        run: python -m build
+      - name: Verify packaged playbooks and remote modules
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile(next(Path('migration/dist').glob('*.whl'))) as wheel:
+              names = set(wheel.namelist())
+              for suffix in ('playbooks/install.yml', 'roles/install/tasks/main.yml', 'library/keycloak_host_info.py', 'module_utils/keycloak_common.py', 'versions.yml'):
+                  assert 'migration/keycloak_infra/ansible/' + suffix in names, suffix
+              assert not any('__pycache__' in name for name in names)
+          PY

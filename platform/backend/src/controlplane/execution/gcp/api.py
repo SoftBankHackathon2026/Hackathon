@@ -1,11 +1,23 @@
 from dataclasses import dataclass
 from typing import Any
 
-from requests import RequestException
+from requests import ConnectTimeout, RequestException
+from urllib3.exceptions import NewConnectionError
 
 from controlplane.providers.contracts import ProviderUnavailable
 
 JsonObject = dict[str, Any]
+
+
+class RequestNotDelivered(ProviderUnavailable):
+    pass
+
+
+def _never_connected(exc: RequestException) -> bool:
+    cause = exc.args[0] if exc.args else None
+    return isinstance(exc, ConnectTimeout) or isinstance(
+        getattr(cause, "reason", None), NewConnectionError
+    )
 
 
 @dataclass(frozen=True)
@@ -40,12 +52,16 @@ class GcpApiClient:
     def _fetch(self, method: str, url: str, body: JsonObject | None):
         try:
             return self.session.request(method, url, json=body, timeout=self.profile.timeout)
-        except RequestException:
+        except RequestException as exc:
+            if _never_connected(exc):
+                raise RequestNotDelivered(f"{self.profile.label} connection failure") from None
             raise ProviderUnavailable(f"{self.profile.label} transport failure") from None
 
     def _parse(self, response) -> JsonObject:
         profile = self.profile
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code == 429:
+            raise RequestNotDelivered(f"{profile.label} rate limited")
+        if response.status_code >= 500:
             raise ProviderUnavailable(f"{profile.label} temporarily unavailable")
         if not 200 <= response.status_code < 300:
             raise profile.failure(profile.rejected.format(status=response.status_code))

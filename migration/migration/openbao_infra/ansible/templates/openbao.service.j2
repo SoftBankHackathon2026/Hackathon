@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenBao single-node secrets service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=openbao
+Group=openbao
+ExecStart=/opt/openbao/2.7.2/bao server -config=/etc/openbao/openbao.hcl
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+UMask=0077
+LimitNOFILE=65536
+MemoryMax=1G
+MemorySwapMax=0
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openbao /var/log/openbao
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

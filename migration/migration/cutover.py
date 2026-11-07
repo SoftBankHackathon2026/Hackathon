@@ -19,9 +19,11 @@ from psycopg import sql
 from . import db as dbmod
 from . import verify as verifymod
 from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask_config, prepare_source, \
-    drop_slot, sink_kafka_offsets, template_variables
+    sink_kafka_offsets, template_variables
 from .config import Config, ConfigError, load_config
 from .state import CutoverJob, CutoverStore, RequestStore
+from .cutover_policy import CutoverPolicyGate
+from .policy_client import build_check
 from .worker_client import HttpWorkerClient, WorkerClientError
 
 log = logging.getLogger("migration.cutover")
@@ -224,18 +226,10 @@ class PgAdminPort:
                                   owner=self.config.target(target).user_spec("cdc").user)
 
     def drop_source_slot(self, target: str) -> dict[str, Any]:
-        """커넥터 삭제 뒤 원본에 남은 비활성 slot 과 publication 을 지운다. 남겨 두면 WAL 이 계속 쌓인다."""
-        job = self.config.job
-        with self._admin(target) as conn:
-            slot_dropped = drop_slot(conn, job.slot_name)
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM pg_publication WHERE pubname = %s", (job.publication_name,))
-                pub_exists = cur.fetchone() is not None
-                if pub_exists:
-                    cur.execute(sql.SQL("DROP PUBLICATION {}").format(sql.Identifier(job.publication_name)))
-            conn.commit()
-        return {"slot": job.slot_name, "slot_dropped": slot_dropped,
-                "publication": job.publication_name, "publication_dropped": pub_exists}
+        """Use admin for the slot and the configured CDC owner for publication."""
+        from .source_cleanup import cleanup_source
+        return cleanup_source(self.config, target)
+
 
 
 class VerifyAdapter:
@@ -273,6 +267,7 @@ class Cutover:
         *,
         connector_docs: dict[str, dict[str, Any]],
         approve: str | None = None,
+        policy_gate: Callable[..., dict[str, Any]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -281,6 +276,7 @@ class Cutover:
         self.p = ports
         self.docs = connector_docs
         self.approve = approve
+        self.policy_gate = policy_gate or CutoverPolicyGate(config, Path(config.cutover.state_dir))
         self.sleep = sleep
         self.clock = clock
         self.job_id = config.job.job_id
@@ -292,6 +288,14 @@ class Cutover:
             target=self.target, stage=PRECHECK, checkpoint={}, updated_at="")
         if (self.job.source, self.job.target) != (self.source, self.target):
             raise ConfigError(f"저장된 작업 {self.job_id} 의 방향({self.job.direction})이 설정과 다르다")
+
+    def _policy_guard(self, stage: str, checks: dict[str, Any] | None = None) -> None:
+        result = self.policy_gate(stage, checks)
+        saved = self.job.checkpoint.get("policy_binding")
+        binding = {key: result.get(key) for key in ("plan_digest", "execution_digest")}
+        if saved and saved != binding:
+            raise CutoverError("정책 계획 또는 실행 설정이 저장된 작업과 다르다")
+        self._save(policy_binding=binding, last_policy=result)
 
     # ---- 저장 -----
 
@@ -371,6 +375,7 @@ class Cutover:
                                      "connectors": connectors})
 
     def stage_copying(self) -> None:
+        self._policy_guard("pre_start")
         self._step("prepare_source", lambda: self.p.db.prepare_source(self.source))
         for kind in ("source", "sink"):
             doc = self.docs[kind]
@@ -410,6 +415,9 @@ class Cutover:
         self._save(FENCING, approval={"id": self.approve, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
     def stage_fencing(self) -> None:
+        self._policy_guard("pre_cutover")
+        if not self.job.checkpoint.get("fence_started_at"):
+            self._save(fence_started_at=time.time())
         self._step("worker_pause", lambda: {"state": self.p.worker.pause().get("state")})
         drain = self._step("worker_drain", lambda: self.p.worker.drain(timeout=120))
         if not drain.get("settled"):
@@ -480,6 +488,31 @@ class Cutover:
         self._save(SWITCHING, verify_pre=first, verify_post_stop=second)
 
     def stage_switching(self) -> None:
+        self._policy_guard("pre_cutover")
+        if self.p.db.app_can_insert(self.source):
+            raise CutoverError("원본 쓰기 차단이 해제되어 전환을 진행할 수 없다")
+        # A resumed grant may already have allowed new target writes. Do not
+        # compare against a frozen source or pretend it is safe to roll back.
+        if self.store.step_done(self.job_id, "grant_target_app_insert") is None:
+            if self.p.db.app_can_insert(self.target):
+                raise CutoverError("대상 쓰기가 이미 열려 있어 정책 전환을 재개할 수 없다")
+            if any(self.p.connect.exists(name) for name in (
+                    self.config.job.source_connector, self.config.job.sink_connector)):
+                raise CutoverError("최종 정책 판정 전 CDC 커넥터가 남아 있다")
+            compared = self.p.verify.run("pre", "policy-pre-grant")
+            if not compared.get("passed"):
+                raise CutoverError("정책 판정 직전 데이터 비교 실패")
+            checks = {
+                "final_sync": build_check("pass", {
+                    "source_writes_fenced": not self.p.db.app_can_insert(self.source),
+                    "target_applied_through_checkpoint": bool(compared.get("passed")),
+                    "compare_passed": bool(compared.get("passed")),
+                }, source="migration.cutover"),
+                "write_wait": build_check("pass" if self.job.checkpoint.get("fence_started_at") else "unknown", {
+                    "elapsed_seconds": max(0, time.time() - float(self.job.checkpoint.get("fence_started_at", time.time()))),
+                }, source="migration.cutover"),
+            }
+            self._policy_guard("final_verify", checks)
         self._step("grant_target_app_insert", lambda: (self.p.db.grant_app_insert(self.target), {"granted": True})[1])
         phase_after = self.config.job.live_phase_after
 
@@ -528,10 +561,13 @@ class Cutover:
             def _cleanup() -> dict[str, Any]:
                 try:
                     return self.p.db.drop_source_slot(self.source)
-                except Exception as exc:  # noqa: BLE001 - 정리 실패는 전환 결과를 바꾸지 않는다. 경고만 남기고 수동 정리로 넘긴다
-                    log.warning("원본 slot/publication 정리 실패 — 수동으로 `python -m migration.cdc drop-slot` 실행: %s", exc)
-                    return {"error": str(exc)}
+                except Exception:  # noqa: BLE001 - 정리 실패는 전환 결과를 바꾸지 않는다. 경고만 남기고 수동 정리로 넘긴다
+                    log.warning("원본 후처리 실패 — 같은 설정으로 python -m migration.source_cleanup 재실행 필요")
+                    return {"error": "SOURCE_CLEANUP_FAILED"}
             cleanup = self._step("drop_source_slot", _cleanup)
+            if cleanup.get("error"):
+                log.warning("원본 후처리 미완료 (%s) — python -m migration.source_cleanup --config <same-config>",
+                            cleanup["error"])
         self._save(COMPLETED, verify_final=result, post_switch=info, source_cleanup=cleanup)
 
     # ---- 실행 -----
@@ -639,7 +675,8 @@ def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | Non
         verify=VerifyAdapter(config, state_dir, report_dir),
         request_store=RequestStore(state_dir),
     )
-    return Cutover(config, store, ports, connector_docs=docs, approve=approve)
+    return Cutover(config, store, ports, connector_docs=docs, approve=approve,
+                   policy_gate=CutoverPolicyGate(config, state_dir))
 
 
 def main(argv: list[str] | None = None) -> int:

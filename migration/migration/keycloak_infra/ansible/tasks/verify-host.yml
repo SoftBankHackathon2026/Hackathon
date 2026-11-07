@@ -1,0 +1,31 @@
+- name: Wait for Keycloak readiness on host-local management interface
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9000/health/ready
+    return_content: true
+    timeout: 10
+    use_proxy: false
+  register: kc_readiness
+  until: kc_readiness.status | default(0) == 200 and (kc_readiness.json.status | default('DOWN')) == 'UP'
+  retries: 30
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Verify dedicated database through local peer authentication
+  community.postgresql.postgresql_query:
+    db: keycloak
+    login_user: oneport-kc-db
+    login_unix_socket: /run/oneport-keycloak-postgres
+    port: "{{ kc.install.db_port }}"
+    query: SELECT current_database()
+  become_user: oneport-kc-db
+  changed_when: false
+  no_log: true
+
+- name: Save successful host readiness checks
+  ansible.builtin.copy:
+    content: "{{ {'checks': [{'name': 'host_readiness', 'status': 'pass'}, {'name': 'database_connectivity', 'status': 'pass'}]} | to_json }}"
+    dest: "{{ kc_report_dir }}/host-readiness.json"
+    mode: '0600'
+  delegate_to: localhost
+  become: false

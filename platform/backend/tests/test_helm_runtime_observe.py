@@ -4,9 +4,18 @@ from unittest.mock import Mock
 import pytest
 from kubernetes.client.exceptions import ApiException
 from test_helm_worker import settings as settings
+from urllib3.exceptions import ReadTimeoutError
 
 from controlplane.domain.models import Strategy
-from controlplane.providers.contracts import ProviderConflict, ProviderUnavailable, ReleaseKey
+from controlplane.providers.contracts import (
+    ProviderConflict,
+    ProviderUnavailable,
+    ReleaseKey,
+    SubmissionUncertain,
+)
+from controlplane.providers.onprem.helm import runtime as runtime_module
+from controlplane.providers.onprem.helm.delete import _delete
+from controlplane.providers.onprem.helm.kubeapi import read_optional
 from controlplane.providers.onprem.helm.runtime import HelmRuntime
 
 
@@ -191,3 +200,82 @@ def test_blue_green_plan_skips_the_traffic_resource(settings):
     state = runtime.observe(plan)
     assert state.traffic_uid is None
     assert state.canary_weight is None
+
+
+TRANSIENT = [
+    ApiException(status=0),
+    ApiException(status=429),
+    ApiException(status=503),
+    ReadTimeoutError(None, "/apis", "timed out"),
+]
+
+
+@pytest.mark.parametrize("failure", TRANSIENT)
+def test_transient_rollout_read_is_retryable(settings, failure):
+    plan = canary_plan(settings)
+    runtime = runtime_with(settings, plan, rollout_for(plan), None)
+    runtime.clients.custom.get_namespaced_custom_object.side_effect = failure
+    with pytest.raises(ProviderUnavailable):
+        runtime.observe(plan, "rollout-uid")
+
+
+@pytest.mark.parametrize("failure", TRANSIENT)
+def test_transient_canary_traffic_read_is_retryable(settings, failure):
+    plan = canary_plan(settings)
+    rollout = rollout_for(plan)
+
+    def fetch(group, version, namespace, plural, name, **kwargs):
+        if plural == "rollouts":
+            return rollout
+        raise failure
+
+    runtime = runtime_with(settings, plan, rollout, None)
+    runtime.clients.custom.get_namespaced_custom_object.side_effect = fetch
+    with pytest.raises(ProviderUnavailable):
+        runtime.observe(plan, "rollout-uid")
+
+
+@pytest.mark.parametrize("failure", TRANSIENT)
+def test_transient_hostname_checks_are_retryable(settings, failure):
+    runtime = HelmRuntime(settings)
+    runtime.clients = Mock()
+    runtime.clients.networking.list_namespaced_ingress.side_effect = failure
+    with pytest.raises(ProviderUnavailable):
+        runtime.verify_hostname()
+    runtime.clients.networking.list_namespaced_ingress.side_effect = None
+    runtime.clients.networking.list_namespaced_ingress.return_value = NS(items=[])
+    runtime.clients.custom.get_namespaced_custom_object.side_effect = failure
+    with pytest.raises(ProviderUnavailable):
+        runtime.verify_hostname()
+
+
+def test_rejected_hostname_check_is_not_retried(settings):
+    runtime = HelmRuntime(settings)
+    runtime.clients = Mock()
+    runtime.clients.networking.list_namespaced_ingress.side_effect = ApiException(status=403)
+    with pytest.raises(ApiException):
+        runtime.verify_hostname()
+
+
+@pytest.mark.parametrize("status", [0, 429])
+def test_kubernetes_reads_and_deletes_treat_throttling_as_unavailable(status):
+    with pytest.raises(ProviderUnavailable):
+        read_optional(Mock(side_effect=ApiException(status=status)), "name", "namespace")
+    with pytest.raises(SubmissionUncertain):
+        _delete(Mock(side_effect=ApiException(status=status)), "name", "namespace")
+
+
+def test_failed_connect_is_retried_on_next_tick(settings, monkeypatch):
+    clients = Mock()
+    monkeypatch.setattr(runtime_module, "connect", Mock(return_value=clients))
+    monkeypatch.setattr(runtime_module, "build_health_client", Mock(return_value="http"))
+    chart = Mock()
+    chart.load_package.side_effect = [RuntimeError("chart unavailable"), None, None]
+    runtime = HelmRuntime(settings)
+    monkeypatch.setattr(runtime, "_client_for", lambda artifact: chart)
+    with pytest.raises(RuntimeError):
+        runtime.connect()
+    assert runtime.clients is None and runtime.http is None
+    clients.close.assert_called_once()
+    runtime.connect()
+    assert runtime.clients is clients and runtime.http == "http"

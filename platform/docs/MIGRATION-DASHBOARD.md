@@ -43,7 +43,7 @@ uv run --project platform/backend python -m controlplane.execution.fleet_collect
 보고기는 워커 Pod에 sidecar로 붙여 같은 PVC를 읽습니다(표준 라이브러리만 사용).
 
 ```sh
-python ops/fleet_reporter.py --job-id forward_001 --state-dir /var/lib/worker --interval 5
+python deploy/onprem/fleet_reporter.py --job-id forward_001 --state-dir /var/lib/worker --interval 5
 # 환경변수: ONEPORT_PLATFORM_URL, ONEPORT_INGEST_TOKEN
 ```
 

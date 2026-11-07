@@ -1,0 +1,39 @@
+name: cloud-migration
+on:
+  pull_request:
+    paths:
+      - 'migration/migration/cloud/**'
+      - 'migration/tests/test_cloud*.py'
+      - 'migration/tests/cloud-compose.yaml'
+      - 'migration/connect/**'
+      - '.github/workflows/cloud-migration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-cdc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: migration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Start disposable PostgreSQL, Kafka and Debezium
+        run: docker compose -p cloud-ci -f tests/cloud-compose.yaml up -d --build --wait --wait-timeout 240
+      - name: Run contract, real PostgreSQL and real CDC tests
+        run: |
+          export CLOUD_TEST_PORT=$(docker compose -p cloud-ci -f tests/cloud-compose.yaml port cloud-pg 5432 | cut -d: -f2)
+          export CLOUD_CONNECT_URL=http://$(docker compose -p cloud-ci -f tests/cloud-compose.yaml port connect 8083)
+          python -m pytest tests/test_cloud.py tests/test_cloud_pg.py tests/test_cloud_cdc.py
+      - name: Test service logs on failure
+        if: failure()
+        run: docker compose -p cloud-ci -f tests/cloud-compose.yaml logs --tail 500
+      - name: Remove disposable test resources
+        if: always()
+        run: docker compose -p cloud-ci -f tests/cloud-compose.yaml down -v

@@ -1,0 +1,33 @@
+name: source-cleanup
+on:
+  pull_request:
+    paths: ['migration/**', '.github/workflows/source-cleanup.yml']
+  push:
+    branches: [main]
+    paths: ['migration/**', '.github/workflows/source-cleanup.yml']
+permissions:
+  contents: read
+jobs:
+  postgres-owner-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install './migration[dev]'
+      - name: Start isolated logical PostgreSQL
+        run: |
+          docker run -d --name cleanup-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:55432:5432 postgres:16-alpine -c wal_level=logical
+          for i in $(seq 1 30); do
+            docker exec cleanup-pg pg_isready -U postgres && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Verify non-superuser owner cleanup and cutover regressions
+        env:
+          MIGRATION_CLEANUP_TEST_DSN: host=127.0.0.1 port=55432 user=postgres dbname=postgres sslmode=disable
+          PYTHONPATH: migration
+        run: python -m pytest migration/tests/test_source_cleanup.py migration/tests/test_cutover.py migration/tests/test_return_cutover.py
+      - if: always()
+        run: docker rm -f cleanup-pg

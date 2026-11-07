@@ -1,5 +1,5 @@
-# migration/ 아래 이미지 2개(migration-tools, migration-connect)와 agent/ 의 ghost-agent 를 빌드해 GHCR에 올린다.
-# 정책 이미지(policies/, migration-policy)는 정책 PR에서 이 워크플로에 추가한다.
+# migration/ 아래 이미지 2개(migration-tools, migration-connect)와 agent/ 의 ghost-agent 이미지를 빌드해 GHCR에 올린다.
+# 정책 이미지(policies/, migration-policy)는 policies.yml 이 맡는다.
 #
 # - push to main (migration/** 변경)     : 빌드 + push (태그: <full sha>, main)
 # - pull_request (migration/** 변경)     : 빌드만 수행, push 없음
@@ -37,27 +37,31 @@ env:
   IMAGE_NAMESPACE: softbankhackathon2026
 
 jobs:
-  agent-test:
-    name: agent pytest
+  # 에이전트 테스트. opa 가 있으므로 실제 Rego 로 remediation 흐름까지 돈다. codex 는 가짜 스크립트로 대체한다.
+  test-agent:
+    name: pytest agent
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Set up Python
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: 1.22.0
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Run tests
+      - name: pytest
         working-directory: agent
         run: |
-          pip install ../migration '.[dev]'
-          pytest
+          pip install -q ../migration ".[dev]"
+          python -m pytest -q
 
   build:
     name: build ${{ matrix.image }}
     runs-on: ubuntu-latest
+    needs: [test-agent]
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +72,6 @@ jobs:
           - image: migration-connect
             context: migration/connect
             file: migration/connect/Dockerfile
-          # 저장소 루트가 컨텍스트다. migration 패키지를 함께 넣는다.
           - image: ghost-agent
             context: .
             file: agent/Dockerfile

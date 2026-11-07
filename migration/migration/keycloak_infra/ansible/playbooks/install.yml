@@ -1,0 +1,38 @@
+- name: Recheck prerequisites immediately before installation
+  ansible.builtin.import_playbook: preflight.yml
+
+- name: Install services only on the selected verified node
+  hosts: keycloak_nodes
+  any_errors_fatal: true
+  gather_facts: false
+  vars_files:
+    - ../versions.yml
+  tasks:
+    - name: Acquire exclusive host installation lock
+      tags: [kc_reason_INSTALLATION_LOCKED]
+      ansible.builtin.command:
+        argv: [mkdir, --, /run/lock/oneport-keycloak-install]
+      changed_when: true
+
+    - name: Install and verify managed host services
+      block:
+        - name: Repeat target checks after acquiring the host lock
+          ansible.builtin.import_tasks: ../tasks/preflight.yml
+        - name: Install dedicated Keycloak environment
+          ansible.builtin.import_role:
+            name: install
+        - name: Verify host services
+          ansible.builtin.import_tasks: ../tasks/verify-host.yml
+      always:
+        - name: Release acquired host installation lock
+          ansible.builtin.file:
+            path: /run/lock/oneport-keycloak-install
+            state: absent
+
+- name: Verify the published service from the platform execution environment
+  hosts: localhost
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - name: Verify platform endpoint
+      ansible.builtin.import_tasks: ../tasks/verify-endpoint.yml

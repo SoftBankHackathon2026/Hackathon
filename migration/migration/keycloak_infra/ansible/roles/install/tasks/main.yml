@@ -1,0 +1,302 @@
+- name: Check for existing protected runtime credentials
+  ansible.builtin.stat:
+    path: /etc/oneport-keycloak/runtime.env
+  register: kc_runtime_file
+
+- name: Read owned runtime credentials for drift detection
+  ansible.builtin.slurp:
+    src: /etc/oneport-keycloak/runtime.env
+  register: kc_runtime
+  when: kc_runtime_file.stat.exists
+  no_log: true
+
+- name: Refuse implicit database or initial admin credential changes
+  tags: [kc_reason_CREDENTIAL_ROTATION_REQUIRES_SEPARATE_WORKFLOW]
+  ansible.builtin.assert:
+    that:
+      - "('KC_DB_PASSWORD=\"' ~ kc.secrets.db_password ~ '\"') in (kc_runtime.content | b64decode).splitlines()"
+      - "('KC_BOOTSTRAP_ADMIN_PASSWORD=\"' ~ kc.secrets.bootstrap_password ~ '\"') in (kc_runtime.content | b64decode).splitlines()"
+    fail_msg: CREDENTIAL_ROTATION_REQUIRES_SEPARATE_WORKFLOW
+  when: kc_runtime_file.stat.exists
+  no_log: true
+
+- name: Create dedicated service accounts
+  ansible.builtin.user:
+    name: "{{ item }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+  loop:
+    - oneport-keycloak
+    - oneport-kc-db
+
+- name: Create protected owned directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /opt/oneport-keycloak, owner: root, mode: '0755'}
+    - {path: /etc/oneport-keycloak, owner: root, mode: '0755'}
+    - {path: /var/lib/oneport-keycloak, owner: root, mode: '0755'}
+    - {path: /var/lib/oneport-keycloak/data, owner: oneport-keycloak, mode: '0700'}
+    - {path: /var/lib/oneport-keycloak-postgres, owner: oneport-kc-db, mode: '0700'}
+    - {path: /etc/postgresql/18/oneport-keycloak, owner: oneport-kc-db, mode: '0750'}
+
+- name: Persist installation ownership before resumable changes
+  ansible.builtin.copy:
+    content: "{{ kc_host.report.expected_manifest | to_json }}"
+    dest: /var/lib/oneport-keycloak/install.json
+    force: false
+    owner: root
+    group: root
+    mode: '0600'
+
+# Register only this cluster before installing server binaries: Debian's server
+# maintainer script then sees an existing 18 config and does not create 'main'.
+- name: Write dedicated PostgreSQL configuration
+  ansible.builtin.template:
+    src: postgres.conf.j2
+    dest: /etc/postgresql/18/oneport-keycloak/postgresql.conf
+    owner: oneport-kc-db
+    group: oneport-kc-db
+    mode: '0600'
+  notify: Restart dedicated PostgreSQL
+
+- name: Prevent distribution aggregate service from managing this cluster
+  ansible.builtin.copy:
+    content: "manual\n"
+    dest: /etc/postgresql/18/oneport-keycloak/start.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Write dedicated PostgreSQL authentication policy
+  ansible.builtin.copy:
+    content: |
+      local all all peer
+      host keycloak keycloak 127.0.0.1/32 scram-sha-256
+      host all all 0.0.0.0/0 reject
+      host all all ::/0 reject
+    dest: /etc/postgresql/18/oneport-keycloak/pg_hba.conf
+    owner: oneport-kc-db
+    group: oneport-kc-db
+    mode: '0600'
+  notify: Restart dedicated PostgreSQL
+
+- name: Install host prerequisites without starting package services
+  ansible.builtin.apt:
+    name: [ca-certificates, gnupg, acl, python3-psycopg2, tar]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    policy_rc_d: 101
+
+- name: Download PostgreSQL repository signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/oneport-keycloak/postgresql-repository.asc
+    mode: '0644'
+  when: not kc_host.report.pgdg_repository_present
+
+- name: Verify PostgreSQL repository signing fingerprint
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, --fingerprint, /etc/oneport-keycloak/postgresql-repository.asc]
+  register: kc_pgdg_key
+  changed_when: false
+  failed_when: "kc_pgdg_key.rc != 0 or 'fpr:::::::::B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8:' not in kc_pgdg_key.stdout"
+  when: not kc_host.report.pgdg_repository_present
+
+- name: Configure signed PostgreSQL repository
+  ansible.builtin.copy:
+    content: "deb [signed-by=/etc/oneport-keycloak/postgresql-repository.asc] https://apt.postgresql.org/pub/repos/apt {{ kc_host.report.codename }}-pgdg main\n"
+    dest: /etc/apt/sources.list.d/oneport-keycloak-pgdg.list
+    mode: '0644'
+  when: not kc_host.report.pgdg_repository_present
+
+- name: Install PostgreSQL binaries without starting existing clusters
+  ansible.builtin.apt:
+    name: [postgresql-18, postgresql-client-18]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    policy_rc_d: 101
+
+- name: Initialize only the dedicated empty data directory
+  ansible.builtin.command:
+    argv:
+      - /usr/lib/postgresql/18/bin/initdb
+      - -D
+      - /var/lib/oneport-keycloak-postgres
+      - --encoding=UTF8
+      - --locale=C.UTF-8
+      - --auth-local=peer
+      - --auth-host=scram-sha-256
+    creates: /var/lib/oneport-keycloak-postgres/PG_VERSION
+  become_user: oneport-kc-db
+
+- name: Install dedicated PostgreSQL systemd unit
+  ansible.builtin.template:
+    src: postgres.service.j2
+    dest: /etc/systemd/system/oneport-keycloak-postgres.service
+    mode: '0644'
+  notify: Restart dedicated PostgreSQL
+
+- name: Start dedicated PostgreSQL
+  ansible.builtin.systemd_service:
+    name: oneport-keycloak-postgres
+    daemon_reload: true
+    enabled: true
+    state: started
+
+- name: Apply PostgreSQL configuration before database creation
+  ansible.builtin.meta: flush_handlers
+
+- name: Create Keycloak database owner without automatic password rotation
+  community.postgresql.postgresql_user:
+    name: keycloak
+    password: "{{ kc.secrets.db_password }}"
+    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOREPLICATION
+    login_user: oneport-kc-db
+    login_unix_socket: /run/oneport-keycloak-postgres
+    port: "{{ kc.install.db_port }}"
+    db: postgres
+    update_password: on_create
+  become_user: oneport-kc-db
+  no_log: true
+
+- name: Create dedicated Keycloak database
+  community.postgresql.postgresql_db:
+    name: keycloak
+    owner: keycloak
+    encoding: UTF8
+    login_user: oneport-kc-db
+    login_unix_socket: /run/oneport-keycloak-postgres
+    port: "{{ kc.install.db_port }}"
+  become_user: oneport-kc-db
+
+- name: Verify supplied database credential before writing service configuration
+  community.postgresql.postgresql_query:
+    db: keycloak
+    login_host: 127.0.0.1
+    port: "{{ kc.install.db_port }}"
+    login_user: keycloak
+    login_password: "{{ kc.secrets.db_password }}"
+    query: SELECT current_database(), current_user
+  no_log: true
+  changed_when: false
+
+- name: Download checksum-pinned release archives
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    checksum: "{{ item.checksum }}"
+    dest: "/opt/oneport-keycloak/{{ item.name }}.tar.gz"
+    mode: '0644'
+  loop:
+    - "{{ kc_keycloak | combine({'name': 'keycloak'}) }}"
+    - "{{ kc_java[kc_host.report.architecture] | combine({'name': 'java'}) }}"
+
+- name: Create private Java runtime directory
+  ansible.builtin.file:
+    path: /opt/oneport-keycloak/java
+    state: directory
+    mode: '0755'
+
+- name: Extract private Java runtime without changing system Java
+  ansible.builtin.unarchive:
+    src: /opt/oneport-keycloak/java.tar.gz
+    dest: /opt/oneport-keycloak/java
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: /opt/oneport-keycloak/java/bin/java
+
+- name: Extract Keycloak release
+  ansible.builtin.unarchive:
+    src: /opt/oneport-keycloak/keycloak.tar.gz
+    dest: /opt/oneport-keycloak
+    remote_src: true
+    creates: "/opt/oneport-keycloak/keycloak-{{ kc_versions.keycloak_version }}/bin/kc.sh"
+
+- name: Remove only empty release data directory before linking persistent data
+  ansible.builtin.command:
+    argv: [rmdir, "/opt/oneport-keycloak/keycloak-{{ kc_versions.keycloak_version }}/data"]
+  register: kc_data_directory
+  changed_when: kc_data_directory.rc == 0
+  failed_when: false
+
+- name: Link dedicated persistent Keycloak data
+  ansible.builtin.file:
+    src: /var/lib/oneport-keycloak/data
+    dest: "/opt/oneport-keycloak/keycloak-{{ kc_versions.keycloak_version }}/data"
+    state: link
+
+- name: Install certificate and protected private key
+  ansible.builtin.copy:
+    src: "{{ item.source }}"
+    dest: "/etc/oneport-keycloak/{{ item.name }}"
+    owner: oneport-keycloak
+    group: oneport-keycloak
+    mode: '0600'
+  loop:
+    - {source: "{{ kc.install.certificate_file }}", name: tls.crt}
+    - {source: "{{ kc.install.private_key_file }}", name: tls.key}
+    - {source: "{{ kc.install.ca_file }}", name: ca.crt}
+  no_log: true
+  notify: Restart dedicated Keycloak
+
+- name: Write Keycloak production settings
+  ansible.builtin.template:
+    src: keycloak.conf.j2
+    dest: /etc/oneport-keycloak/keycloak.conf
+    owner: root
+    group: oneport-keycloak
+    mode: '0640'
+  notify: Restart dedicated Keycloak
+
+- name: Write protected runtime secret environment
+  ansible.builtin.template:
+    src: runtime.env.j2
+    dest: /etc/oneport-keycloak/runtime.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: Restart dedicated Keycloak
+
+- name: Build optimized production server once
+  ansible.builtin.command:
+    argv:
+      - "/opt/oneport-keycloak/keycloak-{{ kc_versions.keycloak_version }}/bin/kc.sh"
+      - build
+      - --db=postgres
+      - --health-enabled=true
+      - --metrics-enabled=true
+    creates: /var/lib/oneport-keycloak/build-complete
+  environment:
+    JAVA_HOME: /opt/oneport-keycloak/java
+
+- name: Record successful optimized build
+  ansible.builtin.copy:
+    content: "{{ kc_versions.keycloak_version }}\n"
+    dest: /var/lib/oneport-keycloak/build-complete
+    force: false
+    mode: '0600'
+
+- name: Install Keycloak systemd unit
+  ansible.builtin.template:
+    src: keycloak.service.j2
+    dest: /etc/systemd/system/oneport-keycloak.service
+    mode: '0644'
+  notify: Restart dedicated Keycloak
+
+- name: Start dedicated Keycloak
+  ansible.builtin.systemd_service:
+    name: oneport-keycloak
+    daemon_reload: true
+    enabled: true
+    state: started
+
+- name: Apply pending Keycloak configuration
+  ansible.builtin.meta: flush_handlers

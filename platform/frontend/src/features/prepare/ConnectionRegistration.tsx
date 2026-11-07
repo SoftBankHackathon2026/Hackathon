@@ -34,7 +34,7 @@ export function CollectionSource({
               name="collection-source"
               checked={selected === source.id}
               onChange={() => setSelected(source.id)}
-              disabled={busy}
+              disabled={busy || s.collectionPending}
             />
             <span>
               <strong>{source.name}</strong>
@@ -53,12 +53,18 @@ export function CollectionSource({
       <div className="connection-actions">
         <button
           className="primary"
-          disabled={busy || !selected}
+          disabled={busy || s.collectionPending || !selected}
           onClick={() => onCollect(selected)}
         >
-          선택한 환경정보 수집
+          {s.collectionPending ? "환경정보 수집 중…" : "선택한 환경정보 수집"}
         </button>
       </div>
+      {s.collectionPending && (
+        <p role="status" className="connection-note">
+          단말에서 선택한 환경을 조회하고 있어요. 결과가 도착하면 등록 단계로
+          이어져요.
+        </p>
+      )}
     </section>
   );
 }
@@ -125,7 +131,7 @@ export function RegisteredEnvironment({
         <p>
           {onNext
             ? "이 환경에서 읽은 워크로드 중 옮길 앱을 고르고, 같이 가야 하는 데이터와 비밀값을 확인해요."
-            : "앱 선택은 준비 중이에요. 마이그레이션 범위, 데이터 접근, 설치 및 실행 계획은 이 단계에서 이어서 검토하게 돼요."}
+            : "실제 연결에서는 환경 등록까지 지원해요. 앱을 선택하거나 이관하려면 배포 대상 연동이 필요해요."}
         </p>
       </div>
     </section>
@@ -140,7 +146,11 @@ export function CleanupResult({
   return (
     <section>
       <header className="connection-title">
-        <h2>연결을 해제했어요</h2>
+        <h2>
+          {s.cleanup.server && s.cleanup.gateway && s.cleanup.local
+            ? "연결을 해제했어요"
+            : "연결 해제를 확인하고 있어요"}
+        </h2>
         <p>서버 차단과 단말 정리 결과를 구분해요.</p>
       </header>
       <dl className="connection-facts">

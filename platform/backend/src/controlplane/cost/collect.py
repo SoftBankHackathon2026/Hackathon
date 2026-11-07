@@ -5,6 +5,7 @@
   읽기 권한이 없으면 빈 목록과 함께 gaps 에 이유를 남긴다.
 """
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -15,7 +16,14 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
 from pydantic import BaseModel, Field
+from urllib3.exceptions import HTTPError as Urllib3Error
 
+from controlplane.cost.meters.cost_exporter import DATA_KEY as EXPORTER_DATA_KEY
+from controlplane.cost.meters.cost_exporter import (
+    DEFAULT_MAX_AGE_SECONDS as EXPORTER_MAX_AGE_SECONDS,
+)
+from controlplane.cost.meters.cost_exporter import DEFAULT_NAMESPACE as EXPORTER_NAMESPACE
+from controlplane.cost.meters.cost_exporter import LABEL_SELECTOR as EXPORTER_LABEL_SELECTOR
 from controlplane.cost.models import (
     HOURS_PER_MONTH,
     CostInventory,
@@ -169,13 +177,52 @@ def summarize(
     return node_list, volumes, demands
 
 
+def exporter_nodes(core: Any, now: datetime | None = None) -> list[dict[str, Any]]:
+    items = core.list_namespaced_config_map(
+        EXPORTER_NAMESPACE, label_selector=EXPORTER_LABEL_SELECTOR
+    ).items
+    cutoff = (now or datetime.now(UTC)) - timedelta(seconds=EXPORTER_MAX_AGE_SECONDS)
+    latest: dict[str, tuple[datetime, dict[str, Any]]] = {}
+    for item in items:
+        try:
+            reading = json.loads((item.data or {})[EXPORTER_DATA_KEY])
+            updated_at = datetime.fromisoformat(reading["updated_at"])
+            if updated_at.tzinfo is None:
+                continue
+            name = str(reading["node"])
+            capacity = {"cpu": str(reading["vcpus"]), "memory": str(reading["memory_bytes"])}
+        except (KeyError, TypeError, ValueError):
+            continue
+        if updated_at < cutoff or (name in latest and latest[name][0] >= updated_at):
+            continue
+        latest[name] = (
+            updated_at,
+            {"metadata": {"name": name}, "status": {"allocatable": capacity}},
+        )
+    return [node for _, node in (latest[name] for name in sorted(latest))]
+
+
+def list_nodes(
+    core: Any, serialize: Callable[[Any], Any], now: datetime | None = None
+) -> list[dict[str, Any]]:
+    try:
+        return [serialize(n) for n in core.list_node().items]
+    except ApiException as exc:
+        if exc.status != 403:
+            raise
+        nodes = exporter_nodes(core, now)
+        if not nodes:
+            raise
+        return nodes
+
+
 def read_kubernetes(
     env: EnvironmentConfig,
 ) -> tuple[list[Node], list[Volume], list[WorkloadDemand]]:
     api = api_client(env)
     core = client.CoreV1Api(api)
     serialize = api.sanitize_for_serialization
-    nodes = [serialize(n) for n in core.list_node().items]
+    nodes = list_nodes(core, serialize)
     pods = [
         serialize(p)
         for p in core.list_pod_for_all_namespaces(field_selector="status.phase=Running").items
@@ -548,14 +595,17 @@ def collect_inventory(
     meter: OnPremMeter | None = None,
     project: str | None = None,
 ) -> CostInventory:
+    observed_at = datetime.now(UTC)
+    kubernetes_observed_at = None
     sources, gaps = [], []
     nodes: list[Node] = []
     volumes: list[Volume] = []
     workloads: list[WorkloadDemand] = []
     try:
         nodes, volumes, workloads = kube(env)
+        kubernetes_observed_at = observed_at
         sources.append("kubernetes")
-    except (ApiException, ConfigException, OSError) as exc:
+    except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
         gaps.append(f"클러스터 자원: 읽지 못함 ({type(exc).__name__})")
     scan = ManagedScan()
     if env.provider == "aws":
@@ -590,7 +640,8 @@ def collect_inventory(
         env_id=env.id,
         provider=env.provider,
         region=env.region,
-        observed_at=datetime.now(UTC),
+        observed_at=observed_at,
+        kubernetes_observed_at=kubernetes_observed_at,
         nodes=nodes,
         volumes=volumes,
         workloads=workloads,
@@ -601,4 +652,30 @@ def collect_inventory(
         sources=sources,
         gaps=gaps,
         onprem_reading=reading,
+    )
+
+
+KUBERNETES_CARRY_OVER = timedelta(hours=6)
+
+
+def carry_over_kubernetes(current: CostInventory, previous: CostInventory | None) -> CostInventory:
+    if current.kubernetes_observed_at is not None or previous is None:
+        return current
+    last = previous.kubernetes_observed_at or (
+        previous.observed_at if "kubernetes" in previous.sources else None
+    )
+    if last is None or current.observed_at - last > KUBERNETES_CARRY_OVER:
+        return current
+    return current.model_copy(
+        update={
+            "kubernetes_observed_at": last,
+            "nodes": previous.nodes,
+            "volumes": previous.volumes,
+            "workloads": previous.workloads,
+            "kubernetes_control_plane": current.provider in ("aws", "gcp") and bool(previous.nodes),
+            "sources": [
+                *current.sources,
+                f"kubernetes 마지막으로 읽은 값 ({last.astimezone(UTC):%m-%d %H:%M} UTC)",
+            ],
+        }
     )

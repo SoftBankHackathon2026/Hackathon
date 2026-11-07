@@ -1,0 +1,24 @@
+- name: Read Kubernetes resources without changing the cluster
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kc.cluster.kubeconfig }}"
+    context: "{{ kc.cluster.context }}"
+    api_version: "{{ item.api_version }}"
+    kind: "{{ item.kind }}"
+    namespace: "{{ item.namespace | default(omit) }}"
+    validate_certs: true
+  loop: "{{ kc_queries }}"
+  register: kc_resources
+  ignore_errors: true
+  no_log: true
+
+- name: Build secret-free cluster discovery
+  ansible.builtin.set_fact:
+    kc_cluster: "{{ kc_resources.results | keycloak_cluster_report(kc.cluster.id) }}"
+  no_log: true
+
+- name: Save cluster report
+  ansible.builtin.copy:
+    content: "{{ kc_cluster | to_json }}"
+    dest: "{{ kc_report_dir }}/cluster.json"
+    mode: '0600'
+  no_log: true

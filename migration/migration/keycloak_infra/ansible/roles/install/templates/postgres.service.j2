@@ -1,0 +1,25 @@
+[Unit]
+Description=Oneport dedicated Keycloak PostgreSQL
+After=network.target
+
+[Service]
+Type=simple
+User=oneport-kc-db
+Group=oneport-kc-db
+RuntimeDirectory=oneport-keycloak-postgres
+RuntimeDirectoryMode=0700
+ExecStart=/usr/lib/postgresql/18/bin/postgres -D /var/lib/oneport-keycloak-postgres -c config_file=/etc/postgresql/18/oneport-keycloak/postgresql.conf
+Restart=on-failure
+TimeoutStopSec=120
+KillSignal=SIGINT
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oneport-keycloak-postgres /run/oneport-keycloak-postgres
+MemoryMax=1G
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

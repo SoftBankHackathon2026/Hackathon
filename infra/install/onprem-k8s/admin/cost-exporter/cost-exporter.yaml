@@ -65,6 +65,10 @@ spec:
             - {name: SAMPLE_SECONDS, value: "15"}
             - {name: PUBLISH_SECONDS, value: "60"}
             - {name: PUE, value: "1.0"}
+            - {name: HOST_IDLE_WATTS, value: "7"}
+            - {name: HOST_MAX_WATTS, value: "25"}
+            - {name: HOST_THREADS, value: "4"}
+            - {name: HOST_VCPUS, value: "4"}
           ports:
             - {name: metrics, containerPort: 9877}
           readinessProbe:
