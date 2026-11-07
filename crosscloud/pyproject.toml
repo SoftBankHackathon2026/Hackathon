@@ -8,8 +8,6 @@ version = "0.1.0"
 description = "AWS↔GCP 클라우드 간 이전 도구 (파악·판정·적응·샌드박스 검증)"
 requires-python = ">=3.12"
 dependencies = [
-    "boto3>=1.35,<2",
-    "google-cloud-run>=0.10,<1",
     "jsonschema>=4.23,<5",
     "PyYAML>=6.0,<7",
 ]
