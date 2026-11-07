@@ -98,4 +98,5 @@ scripts/restore-fault.sh    # 에이전트가 복구하지 못했을 때
 - 스모크는 `--target-only` 다. 온프렘에 CDC 커넥터가 없어 대상 앱 DB 조회만 보며 복제·쓰기는 검증하지 않는다. 보고에 그렇게 적힌다.
 - SEC-01·SEC-02 증거(`target_db_exposure`, `target_location`)는 수집기가 없어 설정에 선언한 값이다. OPA 입력의 `source: agent.declared-config` 로 드러난다.
 - 재시작 대기는 Rollout API 를 가짜로 시험했다. 실제 클러스터의 restart·abort 동작은 시연 전에 확인한다.
-- 사이드카 구성은 제한된 컨테이너 2개와 가짜 codex 로 시험했다. 실제 Codex 는 사이드카 구성에서 아직 돌리지 않았다.
+- 사이드카 구성은 파드와 같은 제약의 로컬 컨테이너 2개와 실제 Codex(`gpt-5.5`)로 확인했다 (`dev/sidecar_check.sh`, 피크 304MiB). 실제 파드에서는 아직 돌리지 않았다.
+- 사이드카는 `codex.model` 이 필수다. 지정하지 않으면 Codex 내장 기본 모델로 가는데, 그때 요청의 도구 목록이 비어 파일을 읽지 못하고 빈 제안만 낸다 (codex-cli 0.154, 흉내 API 로 확인).

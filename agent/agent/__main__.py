@@ -19,7 +19,7 @@ from .config import AgentConfig, ConfigError, load_config
 from .kv import OpenBaoKv
 from .notify import build_notifier
 from .probe import PostgresProber
-from .proposer import build_proposer
+from .proposer import ProposerError, build_proposer
 from .remediation import Deps, Remediator
 from .restart import InClusterKubeApi, RolloutRestarter
 from .runs import OK_STATES, Run, RunStore
@@ -97,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_OK
         try:
             remediator = build_remediator(cfg, runs, decisions)
+        except ProposerError as exc:
+            logging.getLogger("agent").error("초기화 실패: %s", exc)
+            return EXIT_CONFIG
         except (OSError, SmokeConfigError) as exc:
             logging.getLogger("agent").error("초기화 실패: %s", type(exc).__name__)
             return EXIT_CONFIG
