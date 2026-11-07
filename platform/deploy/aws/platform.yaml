@@ -51,6 +51,8 @@ spec:
             - {name: ONEPORT_INGEST_TOKEN_FILE, value: /etc/oneport/secrets/ingest-token}
             - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
             - {name: ONEPORT_COST_CONFIG, value: /etc/oneport/fleet/cost.json}
+            - {name: ONEPORT_ONPREM_WORKER_URL, valueFrom: {secretKeyRef: {name: oneport-secrets, key: ONEPORT_ONPREM_WORKER_URL, optional: true}}}
+            - {name: ONEPORT_ONPREM_CONNECT_URL, valueFrom: {secretKeyRef: {name: oneport-secrets, key: ONEPORT_ONPREM_CONNECT_URL, optional: true}}}
           volumeMounts:
             - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
             - {name: fleet, mountPath: /etc/oneport/fleet, readOnly: true}
@@ -119,6 +121,8 @@ spec:
             - {name: ONEPORT_DATABASE_URL_FILE, value: /etc/oneport/secrets/database-url}
             - {name: ONEPORT_FLEET_CONFIG, value: /etc/oneport/fleet/fleet.json}
             - {name: ONEPORT_COST_CONFIG, value: /etc/oneport/fleet/cost.json}
+            - {name: ONEPORT_ONPREM_WORKER_URL, valueFrom: {secretKeyRef: {name: oneport-secrets, key: ONEPORT_ONPREM_WORKER_URL, optional: true}}}
+            - {name: ONEPORT_ONPREM_CONNECT_URL, valueFrom: {secretKeyRef: {name: oneport-secrets, key: ONEPORT_ONPREM_CONNECT_URL, optional: true}}}
           volumeMounts:
             - {name: secrets, mountPath: /etc/oneport/secrets, readOnly: true}
             - {name: kube, mountPath: /etc/oneport/kube, readOnly: true}
