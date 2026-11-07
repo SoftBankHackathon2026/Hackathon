@@ -66,6 +66,19 @@ bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 
 명령은 `python -m crosscloud.audit_copy.cli --help` 로 본다. 버킷은
 `terraform/audit/` 가 만들고, 잠그지 않는다.
 
+## Secret 값 이관
+
+`secret_transfer` 는 원본 Secret 의 현재 값을 메모리로만 읽어 대상 Secret 에
+새 버전으로 쓰고 SHA-256 으로 대조한다. 하나라도 실패하면 이 실행이 쓴 버전을
+되돌린다.
+
+*   **재시도:** 응답을 잃었거나 중간에 끊겼으면(되돌리기 전) 같은 `run_id` 로
+    다시 돌린다. 이미 쓴 버전을 다시 만들지 않는다. 실패해서 되돌린 뒤에는 새
+    `run_id` 로 돌린다 — AWS 는 같은 토큰으로 되돌린 버전을 `token_reused` 로
+    거부한다.
+*   **GCP 권한:** 현재 값을 버전 목록에서 고르므로, crosscloud 를 실행하는 GCP
+    신원에 `secretmanager.versions.list` 가 필요하다(secretAccessor 에는 없다).
+
 ## 사용법
 
 Python 3.12 이상이 필요하다. 이 디렉토리에서 실행한다.

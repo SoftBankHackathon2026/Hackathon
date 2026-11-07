@@ -139,3 +139,30 @@ def test_prepare_refuses_sdk_debug_logging_before_touching_secrets():
         logger.setLevel(previous)
 
     assert secrets.reads == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        ("TABLE", "public", "orders", "SELECT; DROP TABLE x"),
+        ("TABLE", "public", "orders", "TRUNCATE"),
+        ("FUNCTION", "public", "f", "EXECUTE"),
+        ("SEQUENCE", "public", "orders_id_seq", "INSERT"),
+        ("SCHEMA", "shop", None, "CREATE"),
+    ],
+)
+def test_mirrored_grant_rejects_unexpected_kind_or_privilege(row):
+    with pytest.raises(datapath.PrincipalError, match="미러"):
+        datapath.MirroredGrant.from_row(row)
+
+
+def test_mirrored_grant_quotes_server_names_as_identifiers():
+    grant = datapath.MirroredGrant.from_row(
+        ("SEQUENCE", "public", 'odd"; DROP TABLE x; --', "USAGE")
+    )
+
+    statement = grant.statement("tapp").as_string(None)
+
+    assert statement == (
+        'GRANT USAGE ON SEQUENCE "public"."odd""; DROP TABLE x; --" TO "tapp"'
+    )

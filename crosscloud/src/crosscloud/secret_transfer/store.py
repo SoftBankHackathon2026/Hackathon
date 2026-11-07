@@ -93,7 +93,11 @@ class SecretStore(Protocol):
     """Secret 서비스 하나(한 계정·한 프로젝트)."""
 
     def read_current(self, secret_id: str) -> bytes | None:
-        """현재 값(AWSCURRENT·latest). 버전이 하나도 없으면 None."""
+        """현재 값. 없으면 None.
+
+        AWS 는 AWSCURRENT 다. GCP 는 `latest` 별칭이 아니라 활성(ENABLED)
+        버전 중 가장 최근 것이다 — `latest` 는 파기된 버전도 가리킨다.
+        """
         ...
 
     def read_version(self, secret_id: str, version_id: str) -> bytes:

@@ -143,6 +143,63 @@ class PrincipalError(Exception):
     """준비를 이어 갈 수 없는 DB 상태(표가 일부만 있음 등)."""
 
 
+MirrorKind = Literal["TABLE", "SEQUENCE", "SCHEMA"]
+_MIRROR_PRIVILEGES: dict[str, tuple[str, ...]] = {
+    "TABLE": _TABLE_MIRROR,
+    "SEQUENCE": _SEQUENCE_MIRROR,
+    "SCHEMA": ("USAGE",),
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class MirroredGrant:
+    """원본 app 의 실효 권한 하나 — 대상 app 에 그대로 GRANT 한다.
+
+    원본 서버가 돌려준 값이라 믿지 않는다. 종류·권한은 허용 목록으로 거르고,
+    이름은 SQL 에 식별자로만 넣는다.
+
+    Attributes:
+        kind: 객체 종류.
+        schema: 스키마 이름.
+        name: 표·시퀀스 이름. 스키마 권한이면 None.
+        privilege: 권한 이름.
+    """
+
+    kind: MirrorKind
+    schema: str
+    name: str | None
+    privilege: str
+
+    @classmethod
+    def from_row(cls, row: tuple[str, str, str | None, str]) -> "MirroredGrant":
+        """질의 행(종류, 스키마, 이름, 권한)을 검사해 만든다.
+
+        Raises:
+            PrincipalError: 종류나 권한이 허용 목록 밖일 때.
+        """
+        kind, schema, name, privilege = row
+        if privilege not in _MIRROR_PRIVILEGES.get(kind, ()):
+            raise PrincipalError(f"미러할 수 없는 권한: {kind} {privilege}")
+        if (name is None) != (kind == "SCHEMA"):
+            raise PrincipalError(f"미러할 수 없는 객체: {kind} {schema}")
+        return cls(kind, schema, name, privilege)  # type: ignore[arg-type]
+
+    def statement(self, grantee: str) -> sql.Composed:
+        """이 권한을 grantee 에게 주는 GRANT 문."""
+        target = (
+            sql.Identifier(self.schema)
+            if self.name is None
+            else sql.Identifier(self.schema, self.name)
+        )
+        # kind·privilege 는 from_row 가 허용 목록으로 거른 상수다.
+        return sql.SQL("GRANT {} ON {} {} TO {}").format(
+            sql.SQL(self.privilege),
+            sql.SQL(self.kind),
+            target,
+            sql.Identifier(grantee),
+        )
+
+
 def prepare_db_principals(
     plan: PrincipalPlan,
     bootstrap: pg_client.PgLogin,
@@ -255,6 +312,7 @@ def _prepare_source(
     master = dataclasses.replace(bootstrap, endpoint=plan.endpoint)
     with pg_client.connect(master) as conn:
         _refuse_reserved_names(conn, plan, (plan.source_app_user,))
+        _refuse_app_owned_tables(conn, plan)
     passwords, prepared = _ensure_passwords(plan, secret_store)
     with pg_client.connect(master) as conn:
         _bootstrap_source(conn, plan, passwords)
@@ -283,6 +341,30 @@ def _refuse_reserved_names(
     if clashes:
         raise PrincipalError(
             "로그인 이름이 관리 사용자·원본 앱과 겹친다: " + ", ".join(clashes)
+        )
+
+
+def _refuse_app_owned_tables(
+    conn: psycopg.Connection, plan: PrincipalPlan
+) -> None:
+    # 원본 app 이 소유하거나 그 소유 역할의 구성원이면 소유자를 admin 으로
+    # 넘기는 순간 app 이 소유자 권한을 잃는다. 그런 원본은 사람이 정리한다.
+    app = plan.source_app_user
+    if not pg_client.scalar(
+        conn, "SELECT 1 FROM pg_roles WHERE rolname = %s", (app,)
+    ):
+        raise PrincipalError(f"원본 앱 로그인이 없다: {app}")
+    owned = []
+    for table in plan.tables:
+        found = pg_client.find_table(conn, table)
+        if found and pg_client.scalar(
+            conn, "SELECT pg_has_role(%s, %s, 'MEMBER')", (app, found[1])
+        ):
+            owned.append(table)
+    if owned:
+        raise PrincipalError(
+            f"원본 앱({app})이 소유한 표: {', '.join(owned)}"
+            " — 소유자를 먼저 정리한다"
         )
 
 
@@ -490,8 +572,8 @@ def _restore_schema(
 
 def _app_grants(
     source: psycopg.Connection, app_user: str, tables: tuple[str, ...]
-) -> tuple[tuple[str, str, str], ...]:
-    """원본 app 의 실효 권한(종류, 인용된 객체 이름, 권한).
+) -> tuple["MirroredGrant", ...]:
+    """원본 app 의 실효 권한.
 
     직접 받은 것뿐 아니라 그룹 역할·PUBLIC 에서 상속한 권한도 has_*_privilege
     로 계산한다. 대상에는 이것을 app 에 직접 GRANT 한다.
@@ -505,14 +587,11 @@ def _app_grants(
             JOIN unnest(%(schemas)s::text[], %(names)s::text[]) AS w(s, t)
               ON n.nspname = w.s AND c.relname = w.t
             WHERE c.relkind IN ('r', 'p'))
-        SELECT 'TABLE', quote_ident(w.nspname) || '.' || quote_ident(w.relname),
-               p.priv
+        SELECT 'TABLE', w.nspname::text, w.relname::text, p.priv
         FROM wanted w CROSS JOIN unnest(%(table_privs)s::text[]) AS p(priv)
         WHERE has_table_privilege(%(app)s, w.oid, p.priv)
         UNION ALL
-        SELECT 'SEQUENCE',
-               quote_ident(sn.nspname) || '.' || quote_ident(s.relname),
-               p.priv
+        SELECT 'SEQUENCE', sn.nspname::text, s.relname::text, p.priv
         FROM wanted w
         JOIN pg_depend d ON d.refobjid = w.oid
          AND d.classid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
@@ -522,11 +601,11 @@ def _app_grants(
         WHERE CASE WHEN s.relkind = 'S'
                    THEN has_sequence_privilege(%(app)s, s.oid, p.priv) END
         UNION ALL
-        SELECT 'SCHEMA', quote_ident(n.nspname), 'USAGE'
+        SELECT 'SCHEMA', n.nspname::text, NULL::text, 'USAGE'
         FROM pg_namespace n
         WHERE n.nspname = ANY(%(schemas)s::text[])
           AND has_schema_privilege(%(app)s, n.oid, 'USAGE')
-        ORDER BY 1, 2, 3
+        ORDER BY 1, 2, 3, 4
         """,
         {
             "app": app_user,
@@ -537,13 +616,13 @@ def _app_grants(
         },
     ).fetchall()
     # 같은 스키마의 표가 여럿이면 SCHEMA 행이 겹친다.
-    return tuple(dict.fromkeys(rows))
+    return tuple(MirroredGrant.from_row(row) for row in dict.fromkeys(rows))
 
 
 def _grant_target(
     conn: psycopg.Connection,
     plan: PrincipalPlan,
-    mirrored: tuple[tuple[str, str, str], ...],
+    mirrored: tuple["MirroredGrant", ...],
 ) -> None:
     for schema in _schemas(plan.tables) - {"public"}:
         conn.execute(
@@ -566,19 +645,11 @@ def _grant_target(
                 _table_ident(table), _ident(plan, "verify")
             )
         )
-    for kind, quoted_name, privilege in mirrored:
-        if kind == "SCHEMA" and quoted_name == "public":
+    for grant in mirrored:
+        if grant.kind == "SCHEMA" and grant.schema == "public":
             # public USAGE 는 PUBLIC 이 이미 가진다(admin 은 소유자도 아니다).
             continue
-        # quoted_name 은 원본 서버가 quote_ident 로 만든 식별자다.
-        conn.execute(
-            sql.SQL("GRANT {} ON {} {} TO {}").format(
-                sql.SQL(privilege),
-                sql.SQL(kind),
-                sql.SQL(quoted_name),
-                _ident(plan, "app"),
-            )
-        )
+        conn.execute(grant.statement(plan.login("app").name))
 
 
 def _write_profile(

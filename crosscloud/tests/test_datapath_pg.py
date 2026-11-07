@@ -305,6 +305,50 @@ def test_source_app_keeps_its_grants_after_owner_change(cluster):
         assert not _has(conn, cluster.source_app, "public.orders", "UPDATE")
 
 
+@pytest.mark.parametrize("via_group", [False, True])
+def test_source_tables_owned_by_source_app_are_refused(cluster, via_group):
+    owner = cluster.source_app
+    if via_group:
+        owner = cluster.name("sowner")
+        _source_sql(
+            cluster,
+            sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(owner)),
+        )
+        _source_sql(
+            cluster,
+            sql.SQL("GRANT {} TO {}").format(
+                sql.Identifier(owner), sql.Identifier(cluster.source_app)
+            ),
+        )
+    _source_sql(
+        cluster,
+        sql.SQL("ALTER TABLE shop.items OWNER TO {}").format(
+            sql.Identifier(owner)
+        ),
+    )
+    store = MemorySecretStore()
+
+    with pytest.raises(datapath.PrincipalError, match="shop.items"):
+        _prepare_source(cluster, store)
+
+    assert store.versions == {}
+
+
+def test_odd_sequence_name_is_mirrored_to_target_app(cluster):
+    _source_sql(
+        cluster, 'ALTER SEQUENCE public.orders_id_seq RENAME TO "Odd Seq"'
+    )
+
+    _prepare_target(cluster, MemorySecretStore())
+
+    with cluster.superuser(cluster.target.database) as conn:
+        usage = conn.execute(
+            "SELECT has_sequence_privilege(%s, 'public.\"Odd Seq\"', 'USAGE')",
+            (cluster.name("tapp"),),
+        ).fetchone()
+    assert usage == (True,)
+
+
 def test_source_login_named_like_master_is_refused(cluster):
     store = MemorySecretStore()
     plan = _source_plan(cluster, verify=cluster.master)
