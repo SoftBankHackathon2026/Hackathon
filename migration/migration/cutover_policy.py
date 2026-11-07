@@ -29,17 +29,24 @@ def execution_digest(config: Config) -> str:
 
 class CutoverPolicyGate:
     def __init__(self, config: Config, state_dir: Path, *, evidence_file: str | None = None,
-                 evaluator: pc.Evaluator | None = None) -> None:
+                 evaluator: pc.Evaluator | None = None, collector_settings: str | None = None) -> None:
         self.config = config
         self.state_dir = state_dir
         self.evidence_file = evidence_file or os.environ.get("CUTOVER_POLICY_EVIDENCE")
         url = os.environ.get("POLICY_OPA_URL")
         self.evaluator = evaluator or (pc.OpaHttpEvaluator(url) if url else None)
         self.plan_digest: str | None = None
+        self.collector_settings = collector_settings or os.environ.get("CUTOVER_POLICY_COLLECTOR_SETTINGS")
 
     def __call__(self, stage: str, local_checks: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.evidence_file or self.evaluator is None:
             raise CutoverPolicyError("CUTOVER_POLICY_NOT_CONFIGURED")
+        if self.collector_settings:
+            from .cutover_refresh import refresh
+            try:
+                refresh(self.config, Path(self.collector_settings), Path(self.evidence_file))
+            except Exception:
+                raise CutoverPolicyError("CUTOVER_POLICY_REFRESH_FAILED") from None
         try:
             with Path(self.evidence_file).open('rb') as stream:
                 raw = stream.read(1024 * 1024 + 1)

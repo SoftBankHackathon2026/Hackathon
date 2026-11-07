@@ -79,3 +79,55 @@ GitOps runner 배포·증거 공급 자동화와 실제 DB 전환 시험은 이 
 완료되지 않는다. Mac에서 실제 AWS API·온프렘 standby 앱·운영 OPA에 읽기전용
 검사를 수행해 올바른 라벨 allow/다른 기대 라벨 deny를 확인했다. 시험용 TTL60초와
 대기300초는 운영 제한 확정이 아니며 DB 전환을 실행하지 않았다.
+
+## 실행 경계마다 동기 수집하는 운영 연결
+
+`CUTOVER_POLICY_COLLECTOR_SETTINGS`를 설정하면 gate가 OPA를 호출하기 직전에
+실제 RDS·앱을 다시 조회하고 `CUTOVER_POLICY_EVIDENCE`를 원자적으로 갱신한다.
+기존 cutover 생성 경로에서 환경변수만으로 동작하며 별도 background 갱신 루프나
+AWS CLI를 필요로 하지 않는다. 수집·파일 기록에 실패하면 현재 호출을 차단하므로,
+디스크 오류로 이전 증거 파일이 남아 있어도 그 호출에서 재사용하지 않는다.
+설정이 없으면 기존 외부 증거 파일 모드를 유지한다. 운영 배포는 모드를 명시해야 한다.
+
+설정 파일은 아래 키만 허용한다(값은 실제 환경/승인 계획으로 제공하며 기본 운영값은 없다).
+
+```text
+identifier: RDS DBInstanceIdentifier
+region: 실제 AWS 리전
+approved_locations: 승인 위치 문자열 목록
+app_url: 대상 앱 URL (아래 설명 참조)
+app_environment: 앱이 실제 반환하는 environment
+evidence_ttl_seconds: 승인된 증거 유효시간(초)
+write_wait_max_seconds: 승인된 쓰기 대기 상한(초)
+aws_profile: 선택; 맥북 검증용 profile 이름
+```
+
+JSON 객체로 제공한다.
+`POLICY_OPA_URL`, `CUTOVER_POLICY_EVIDENCE`, `CUTOVER_POLICY_COLLECTOR_SETTINGS`
+세 환경변수를 설정한다. 증거 경로는 runner만 쓰는 job별 writable 볼륨을 사용하며,
+서로 다른 계획/프로세스가 같은 경로를 공유하지 않는다. 설정 파일은 읽기 전용
+ConfigMap으로, 비밀값은 이 파일에 넣지 않는다. 앱 URL에는 사용자정보·query·fragment를
+넣을 수 없다.
+
+수집기는 이미지에 포함된 boto3의 기본 자격증명 체인을 쓴다. workload identity나
+기존 Secret 환경 참조 등 실행 환경의 자격증명 공급과 `rds:DescribeDBInstances`
+권한이 필요하다. 맥북 SSO profile을 이미지에 복사하지 않는다. AWS 서비스 endpoint
+환경변수 override는 사용하지 않고 SDK의 정상 리전 endpoint를 사용한다.
+RDS 호출은 연결5초·읽기10초, 최대2회 시도로 제한한다(자격증명 공급 전체의 wall-clock
+상한을 보장하는 것은 아니다). 앱 조회는 기존10초 제한이다.
+
+설정 변경으로 계획이 바뀌면 동일 실행에서는 차단한다. 각 단계의 최신 수집 결과로
+판정하므로 복제가 오래 걸려도 시작 때의 관측을 계속 신뢰하지 않는다. 현 방식은
+RDS 대상으로 한정되며 온프렘 귀환은 별도 네트워크 증거 공급이 필요하다.
+현재 자동제어/플랫폼을 작업 중인 세션은 cutover.py를 바꾸지 않고 위 환경·볼륨·AWS
+읽기 권한 계약을 연결할 수 있다. 설정값과 자격증명이 준비되기 전 runner를 운영
+전환에 사용하지 않는다.
+
+SDK 근거: [자격증명 공급](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html),
+[DescribeDBInstances](https://docs.aws.amazon.com/boto3/latest/reference/services/rds/client/describe_db_instances.html).
+
+실환경 읽기전용 연결 시험(2026-11-07): Mac의 기존 AWS profile로 실제 RDS 조회,
+온프렘 standby 앱과 운영 OPA를 호출했다. pre_start/pre_cutover 각각 새 allow 판정,
+수집 설정 삭제 시 REFRESH_FAILED, 잘못된 앱 environment 시 실제 deny를 확인했다.
+DB 전환은 실행하지 않았다. 테스트 중 SDK client 종료 방식 오류를 발견해 `closing()`으로
+수정하고 실제 botocore Stubber client 회귀를 추가했다.
