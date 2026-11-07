@@ -137,17 +137,19 @@ export function CollectionSource({
 
 export function RegisteredEnvironment({
   snapshot: s,
-  onNext,
+  onReturn,
 }: {
   snapshot: ConnectionSnapshot;
-  onNext?: () => void;
+  onReturn: () => void;
 }) {
   const source = s.collected.find((c) => c.id === s.selectedEnvironmentId);
   return (
     <section>
       <header className="connection-title">
         <h2>환경을 등록했어요</h2>
-        <p>수집한 환경정보를 저장했어요. 이어서 옮길 앱을 선택할 수 있어요.</p>
+        <p>
+          저장한 환경은 작업 등록에서 출발 또는 도착 환경으로 선택할 수 있어요.
+        </p>
       </header>
       <dl className="connection-facts">
         <div>
@@ -184,14 +186,9 @@ export function RegisteredEnvironment({
         </div>
       </dl>
       <div className="connection-next">
-        <button className="primary" disabled={!onNext} onClick={onNext}>
-          다음: 앱 선택
+        <button className="primary" onClick={onReturn}>
+          작업 등록으로 돌아가기
         </button>
-        <p>
-          {onNext
-            ? "이 환경에서 읽은 워크로드 중 옮길 앱을 고르고, 같이 가야 하는 데이터와 비밀값을 확인해요."
-            : "등록 정보를 확인한 뒤 앱 선택으로 진행할 수 있어요."}
-        </p>
       </div>
     </section>
   );

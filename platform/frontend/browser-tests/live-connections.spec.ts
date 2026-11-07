@@ -28,6 +28,7 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   let collectionReadyAt = 0;
   let retries = 0;
   const mutations: { action: string; body: any }[] = [];
+  let jobRequests = 0;
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -97,9 +98,13 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
       },
     }),
   );
-  await page.route("**/api/v1/migrations", (route) =>
-    route.fulfill({ status: 201, json: { job_id: "test-job", label: "Test" } }),
-  );
+  await page.route("**/api/v1/migrations", (route) => {
+    jobRequests++;
+    return route.fulfill({
+      status: 201,
+      json: { job_id: "test-job", label: "Test" },
+    });
+  });
   await page.route("**/api/v1/connections**", async (route) => {
     const request = route.request(),
       path = new URL(request.url()).pathname;
@@ -224,6 +229,17 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
     return route.fulfill({ json: state });
   });
   await page.goto("/#prepare");
+  await expect(
+    page.getByRole("heading", { name: "마이그레이션 작업 등록" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "작업 등록 단계" })
+      .locator("[aria-current]"),
+  ).toContainText("출발·도착 환경 선택");
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
   if (cloud)
     await page.getByRole("radio", { name: "AWS", exact: true }).check();
   await page
@@ -285,9 +301,17 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "작업 등록으로 돌아가기", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "출발 환경" })
+    .selectOption("registered-environment");
+  const destination = page.getByRole("combobox", { name: "도착 환경" });
   await expect(
-    page.getByRole("button", { name: "다음: 앱 선택" }),
-  ).toBeEnabled();
+    destination.locator("option[value='registered-environment']"),
+  ).toHaveCount(0);
+  await destination.selectOption("destination");
   await page.getByRole("button", { name: "다음: 앱 선택" }).click();
   await expect(
     page.getByRole("heading", { name: "옮길 앱 고르기" }),
@@ -377,21 +401,41 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   await expect(migration).toHaveAttribute("aria-expanded", "true");
   await expect(tool).not.toBeChecked();
   await tool.check();
-  await expect(page.getByRole("combobox", { name: "출발 환경" })).toHaveCount(
-    0,
-  );
-  await page.getByRole("button", { name: "다음: 작업 만들기" }).click();
-  await expect(
-    page.getByRole("heading", { name: "마이그레이션 작업 만들기" }),
-  ).toBeVisible();
   await page
-    .getByRole("combobox", { name: "출발 환경" })
-    .selectOption("registered-environment");
-  const destination = page.getByRole("combobox", { name: "도착 환경" });
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
   await expect(
-    destination.locator("option[value='registered-environment']"),
-  ).toHaveCount(0);
+    page.getByRole("heading", { name: "새 환경 연결" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    picker.getByText("선택한 앱 1개", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "이전: 환경 선택" }).click();
+  const departure = page.getByRole("combobox", { name: "출발 환경" });
+  await departure.selectOption("destination");
+  await expect(destination).toHaveValue("");
+  await destination.selectOption("registered-environment");
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
+  await expect(
+    page.getByText("이 출발 환경에서 확인한 앱이 없어요."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "다음: 작업 등록" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "이전: 환경 선택" }).click();
+  await departure.selectOption("registered-environment");
   await destination.selectOption("destination");
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
+  await expect(
+    picker.getByText("선택한 앱 0개", { exact: true }),
+  ).toBeVisible();
+  await picker.getByRole("button", { name: /^이전 도구 / }).click();
+  await tool.check();
+  await page.getByRole("button", { name: "다음: 작업 등록" }).click();
+  await expect(
+    page.getByRole("heading", { name: "작업 등록", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "작업 만들기 (앱 1개)" }),
   ).toBeEnabled();
@@ -399,19 +443,18 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   await expect(
     picker.getByText("선택한 앱 1개", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "다음: 작업 만들기" }).click();
-  await page
-    .getByRole("combobox", { name: "출발 환경" })
-    .selectOption("registered-environment");
-  await page
-    .getByRole("combobox", { name: "도착 환경" })
-    .selectOption("destination");
+  await page.getByRole("button", { name: "다음: 작업 등록" }).click();
   const created = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
       new URL(request.url()).pathname === "/api/v1/migrations",
   );
-  await page.getByRole("button", { name: "작업 만들기 (앱 1개)" }).click();
+  await page
+    .getByRole("button", { name: "작업 만들기 (앱 1개)" })
+    .evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+    });
   expect((await created).postDataJSON()).toEqual({
     source_env: "registered-environment",
     source_provider: cloud ? "aws" : "onprem",
@@ -420,6 +463,7 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
     apps: ["hackathon/Deployment/db-insert-worker"],
   });
   await expect(page).toHaveURL(/#migrations\/test-job$/);
+  expect(jobRequests).toBe(1);
   await page.goto(`/#prepare/${id}`);
   expect(mutations.find((item) => item.action === "approve")?.body.code).toBe(
     "ABCD2345",

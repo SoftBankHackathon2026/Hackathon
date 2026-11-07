@@ -36,8 +36,10 @@ export function ConnectionTargetForm({
       }}
     >
       <header className="connection-title">
-        <h2>수집한 환경을 등록하세요</h2>
-        <p>수집한 환경의 이름과 프로젝트를 입력하세요.</p>
+        <h2>연결을 완료했어요</h2>
+        <p>
+          작업에서 사용하려면 환경 이름과 프로젝트를 입력해 목록에 저장하세요.
+        </p>
       </header>
       {s.collected.length > 1 && (
         <label>

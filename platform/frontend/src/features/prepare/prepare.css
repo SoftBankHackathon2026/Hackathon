@@ -88,9 +88,6 @@
   border-color: var(--accent);
   color: var(--text-knockout);
 }
-.connection-phases small {
-  font-size: var(--fs-tag);
-}
 /* 왼쪽 연결 환경, 오른쪽 작업: 흰 카드 두 장(디자인 시스템 표면) */
 .connection-layout {
   display: grid;
@@ -712,10 +709,6 @@
 .connection-next {
   margin: 24px 0;
 }
-.connection-next p {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-}
 .connection-preview-tools {
   border: 1px dashed var(--border-strong);
   padding: 16px;
@@ -828,10 +821,13 @@
     margin: 0 0 4px;
   }
   .connection-page .connection-phases {
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
   }
-  .connection-phases small {
-    display: none;
+  .connection-phases li {
+    gap: 6px;
+    font-size: var(--fs-xs);
+    white-space: nowrap;
   }
   .connection-history li {
     gap: 12px;
@@ -856,10 +852,6 @@
 .connection-discovery-warning p {
   margin: 6px 0 0;
 }
-.connection-task-form {
-  max-width: 44rem;
-  padding: 20px;
-}
 .connection-task-form .connection-fields {
   margin-block: 16px;
 }
@@ -867,4 +859,148 @@
   display: grid;
   gap: 8px;
   margin-block: 16px;
+}
+
+.prepare-panel {
+  min-width: 0;
+  view-transition-name: prepare-panel;
+}
+
+.prepare-panel-enter {
+  animation: prepare-panel-in 250ms ease both;
+  transform-origin: top center;
+}
+
+.prepare-state-enter {
+  animation: prepare-fade-in 160ms ease both;
+}
+
+@keyframes prepare-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes prepare-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes prepare-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+:root:active-view-transition::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-old(root) {
+  display: none;
+}
+
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-group(prepare-panel) {
+  animation: none;
+}
+
+::view-transition-old(prepare-panel),
+::view-transition-new(prepare-panel) {
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(prepare-panel) {
+  animation: prepare-fade-out 250ms ease both;
+}
+
+::view-transition-new(prepare-panel) {
+  animation: prepare-panel-in 250ms ease both;
+  transform-origin: top center;
+}
+
+:root:active-view-transition .prepare-panel-enter {
+  animation: none;
+}
+
+.connection-phases li,
+.connection-phases li > span,
+.connection-sidebar button,
+.connection-progress li {
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.connection-page .connection-add[aria-current] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.connection-page .connection-return {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.connection-task-review {
+  margin: 16px 0 0;
+  padding-inline-start: 24px;
+  overflow-wrap: anywhere;
+}
+
+.connection-task-form > .connection-actions {
+  margin-top: 24px;
+}
+
+@supports (transition-behavior: allow-discrete) {
+  .prepare-reveal {
+    transition:
+      opacity 160ms ease,
+      display 160ms allow-discrete;
+  }
+
+  .prepare-reveal[hidden] {
+    opacity: 0;
+    display: none;
+  }
+
+  @starting-style {
+    .prepare-reveal:not([hidden]) {
+      opacity: 0;
+    }
+  }
+}
+
+@supports (transition-behavior: allow-discrete) {
+  .connection-page .connection-revoke {
+    opacity: 0;
+    transition:
+      opacity 160ms ease,
+      display 160ms allow-discrete,
+      overlay 160ms allow-discrete;
+  }
+
+  .connection-page .connection-revoke[open] {
+    opacity: 1;
+  }
+
+  @starting-style {
+    .connection-page .connection-revoke[open] {
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prepare-panel-enter,
+  ::view-transition-new(prepare-panel) {
+    animation-name: prepare-fade-in;
+  }
 }

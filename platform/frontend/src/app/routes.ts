@@ -2,7 +2,7 @@ export type Route =
   | { view: "migrations" }
   | { view: "migration"; id: string }
   | { view: "agent"; runId?: string }
-  | { view: "prepare"; requestId?: string }
+  | { view: "prepare"; requestId?: string; newConnection?: true }
   | {
       view: "environments";
       select?: { envId: string; id: string };
@@ -25,6 +25,7 @@ export function readRoute(hash = "#"): Route {
   const [head, id, extra, more] = hash.replace(/^#/, "").split("/");
   if (head === "prepare") {
     if (!id) return { view: "prepare" };
+    if (id === "new") return { view: "prepare", newConnection: true };
     try {
       return { view: "prepare", requestId: decodeURIComponent(id) };
     } catch {

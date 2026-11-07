@@ -43,7 +43,7 @@
   place-items: center;
   width: 52px;
   height: 52px;
-  margin-bottom: 20px;
+  margin: 0 auto 20px;
   border-radius: 16px;
   background: var(--accent-soft);
   color: var(--accent);
@@ -231,16 +231,6 @@
   color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
-.connection-page.is-live-apps .appsel-bar {
-  position: static;
-  margin: 0;
-  border-radius: var(--radius-panel);
-  flex-wrap: wrap;
-  padding: 16px 24px;
-}
-.connection-page.is-live-apps .appsel-bar-status {
-  overflow-wrap: anywhere;
-}
 @media (max-width: 640px) {
   .live-apps-head {
     align-items: stretch;
@@ -292,22 +282,4 @@
   .live-apps .pk-table th:nth-child(3) {
     width: 104px;
   }
-  .connection-page.is-live-apps .appsel-bar-status {
-    flex-basis: 100%;
-  }
-  .connection-page.is-live-apps .appsel-bar {
-    padding: 16px;
-  }
-}
-.connection-page.is-live-apps {
-  align-content: start;
-}
-.connection-page.is-live-apps {
-  grid-auto-rows: max-content;
-  align-items: start;
-}
-.connection-page.is-live-apps .appsel-bar {
-  height: fit-content;
-  min-height: 0;
-  align-self: start;
 }
