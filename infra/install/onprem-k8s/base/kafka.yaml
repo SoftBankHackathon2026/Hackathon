@@ -252,10 +252,11 @@ spec:
             failureThreshold: 60
             periodSeconds: 3
           readinessProbe:
-            exec:
-              command: [/bin/bash, -ec, "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 >/dev/null"]
-            periodSeconds: 15
-            timeoutSeconds: 10
+            tcpSocket:
+              port: broker
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             requests:
               cpu: 200m
