@@ -280,3 +280,7 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 ## 클라우드↔클라우드 일반 앱
 
 여러 PostgreSQL 테이블·복합키·UPDATE/DELETE를 사용하는 앱은 [일반 앱 전환 가이드](CLOUD_MIGRATION.md)와 [설정 예시](config.cloud.example.yaml)를 사용한다. 명령은 `python -m migration.cloud`이며 기존 데모와 별도 실행 경로다. 지원 범위·앱 제어 API·사전 스키마 준비 조건을 먼저 확인한다.
+
+# AWS 보안로그 원본 이관
+
+`python -m migration.security_logs`는 Wazuh 준비 도구가 제공한 보관공간에 S3 원본 파일과 CloudWatch Logs 조회 결과를 저장합니다. 기존 Wazuh 검색 저장소를 읽어 보관한 이벤트와 대조합니다. [실행 및 검증 안내](docs/wazuh-infra/security-logs.md)와 [설정 예시](config.security-logs.example.yaml)를 참고하십시오.
