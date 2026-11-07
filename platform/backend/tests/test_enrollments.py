@@ -12,12 +12,12 @@ def report(token_kind: str = "kubernetes") -> dict:
     return {
         "kind": token_kind,
         "context": "hackathon",
-        "server": "https://172.30.1.10:6443",
+        "server": "https://192.0.2.10:6443",
         "version_json": json.dumps({"serverVersion": {"gitVersion": "v1.35.4+k3s1"}}),
         "nodes_tsv": "\n".join(
             [
-                "k3s-master|2|4005684Ki|2|4005684Ki|v1.35.4+k3s1|Ubuntu 22.04.5 LTS|5.15.0|containerd://2.2.3|amd64|172.30.1.10",
-                "k3s-worker|2|8128300Ki|2|8128300Ki|v1.35.4+k3s1|Ubuntu 22.04.5 LTS|5.15.0|containerd://2.2.3|amd64|172.30.1.7",
+                "k3s-master|2|4005684Ki|2|4005684Ki|v1.35.4+k3s1|Ubuntu 22.04.5 LTS|5.15.0|containerd://2.2.3|amd64|192.0.2.10",
+                "k3s-worker|2|8128300Ki|2|8128300Ki|v1.35.4+k3s1|Ubuntu 22.04.5 LTS|5.15.0|containerd://2.2.3|amd64|192.0.2.11",
             ]
         ),
         "control_plane_nodes": "node/k3s-master",

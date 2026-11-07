@@ -1,0 +1,48 @@
+name: image-migration
+
+on:
+  pull_request:
+    paths:
+      - 'migration/migration/image_migration/**'
+      - 'migration/tests/image_migration/**'
+      - 'migration/config.image-migration.example.yaml'
+      - 'migration/pyproject.toml'
+      - '.github/workflows/image-migration.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'migration/migration/image_migration/**'
+      - 'migration/tests/image_migration/**'
+      - 'migration/config.image-migration.example.yaml'
+      - 'migration/pyproject.toml'
+      - '.github/workflows/image-migration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  image-migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: migration
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install migration and local registry tools
+        run: |
+          python -m pip install '.[image-migration,dev]' ruff
+          sudo apt-get update
+          sudo apt-get install -y skopeo docker-registry
+      - name: Check code and exercise registry transfer over HTTPS
+        env:
+          ONEPORT_IMAGE_TEST_REGISTRY: '1'
+        run: |
+          ruff check --select E4,E7,E9,F,I migration/image_migration tests/image_migration
+          ruff format --check migration/image_migration tests/image_migration
+          python -m pytest tests/image_migration
+          cd /tmp
+          python -m migration.image_migration --help
