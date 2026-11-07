@@ -89,8 +89,16 @@ def test_skips_dependency_directories_and_non_source_files(tmp_path):
     _write(tmp_path, "node_modules/x/index.js", marker)
     _write(tmp_path, ".git/hooks/a.js", marker)
     _write(tmp_path, "README.md", marker)
+    _write(tmp_path, "index.js", "console.log('ok');\n")
 
     assert code_scan.scan_couplings("app", tmp_path) == ()
+
+
+def test_repo_without_source_files_is_not_scanned(tmp_path):
+    _write(tmp_path, "README.md", "require('@aws-sdk/rds-signer');\n")
+
+    with pytest.raises(code_scan.NoSourceFilesError):
+        code_scan.scan_couplings("app", tmp_path)
 
 
 def test_scans_dependency_manifest(tmp_path):

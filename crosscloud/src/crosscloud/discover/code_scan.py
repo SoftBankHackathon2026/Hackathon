@@ -14,6 +14,13 @@ import re
 from crosscloud import model
 
 
+class NoSourceFilesError(ValueError):
+    """소스 디렉토리에 검사할 소스 파일이 하나도 없다.
+
+    검사하지 못한 것을 결합 0건으로 보고하지 않기 위해 올린다.
+    """
+
+
 @dataclasses.dataclass(frozen=True)
 class _Rule:
     rule_id: str
@@ -99,12 +106,16 @@ def scan_couplings(
     Raises:
         FileNotFoundError: repo_dir 가 디렉토리가 아닐 때. 소스를 못 본 것을
             결합 0건으로 보고하지 않기 위해서다.
+        NoSourceFilesError: 검사할 소스 파일이 하나도 없을 때. 같은 이유다.
     """
     if not repo_dir.is_dir():
         raise FileNotFoundError(f"소스 디렉토리가 없다: {repo_dir}")
+    files = _source_files(repo_dir)
+    if not files:
+        raise NoSourceFilesError(f"{workload}: 소스 파일이 없다: {repo_dir}")
     return tuple(
         coupling
-        for path in _source_files(repo_dir)
+        for path in files
         for coupling in _scan_file(workload, repo_dir, path)
     )
 

@@ -10,7 +10,7 @@ from crosscloud.discover import env
 _CANARY = "canary-cli-pw-4e1d"
 
 
-def _inventory(cloud="aws"):
+def _inventory(cloud="aws", env_entries=None):
     return model.Inventory(
         cloud=cloud,
         collected_at=datetime.datetime(2026, 11, 7, tzinfo=datetime.UTC),
@@ -27,7 +27,11 @@ def _inventory(cloud="aws"):
                 entries=(
                     model.Entry(kind="http", source_id="tg", attributes=()),
                 ),
-                env=(env.classify_env("DB_PASSWORD", _CANARY),),
+                env=(
+                    (env.classify_env("DB_PASSWORD", _CANARY),)
+                    if env_entries is None
+                    else env_entries
+                ),
                 secret_refs=(),
                 db_user=None,
                 depends_on=(),
@@ -73,7 +77,7 @@ def test_discover_prints_inventory_and_report(capsys):
         ["discover", "--direction", "aws_to_gcp", "--region", "r"], capsys
     )
 
-    assert code == 0
+    assert code == cli.EXIT_DECISIONS_PENDING
     document = json.loads(captured.out)
     assert document["inventory"]["cloud"] == "aws"
     assert document["report"]["direction"] == "aws_to_gcp"
@@ -100,7 +104,7 @@ def test_discover_output_never_contains_env_secret(capsys, tmp_path):
         capsys,
     )
 
-    assert code == 0
+    assert code == cli.EXIT_DECISIONS_PENDING
     assert _CANARY not in captured.out + captured.err
     assert _CANARY not in output.read_text(encoding="utf-8")
 
@@ -123,7 +127,7 @@ def test_repo_scan_adds_couplings(capsys, tmp_path):
         capsys,
     )
 
-    assert code == 0
+    assert code == cli.EXIT_DECISIONS_PENDING
     inventory = json.loads(captured.out)["inventory"]
     assert [c["rule_id"] for c in inventory["couplings"]] == [
         "aws-rds-signer-import"
@@ -177,7 +181,7 @@ def test_schema_sql_feeds_support_limits(capsys, tmp_path):
         inventory=inventory,
     )
 
-    assert code == 0
+    assert code == cli.EXIT_DECISIONS_PENDING
     decisions = json.loads(captured.out)["report"]["decisions"]
     assert {"subject": "db-1", "signal": "missing_primary_key: public.t"} in [
         {"subject": d["subject"], "signal": d["signal"]} for d in decisions
@@ -221,3 +225,68 @@ def test_default_reader_follows_direction(
     )
 
     assert type(cli.make_default_reader(args)).__name__ == reader_type
+
+
+def test_exit_zero_when_no_human_decision_remains(capsys, tmp_path):
+    (tmp_path / "index.js").write_text("console.log(1);\n", encoding="utf-8")
+
+    code, _, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == 0
+
+
+def test_repo_without_source_files_stays_unscanned(capsys, tmp_path):
+    (tmp_path / "README.md").write_text("docs\n", encoding="utf-8")
+
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--repo",
+            f"request-api={tmp_path}",
+        ],
+        capsys,
+        inventory=_inventory(env_entries=()),
+    )
+
+    assert code == cli.EXIT_DECISIONS_PENDING
+    document = json.loads(captured.out)
+    assert document["inventory"]["workloads"][0]["code_repo"] is None
+    assert [d["reason"] for d in document["report"]["decisions"]] == [
+        "source_not_scanned"
+    ]
+    assert "request-api" in captured.err
+
+
+def test_output_write_failure_is_one_line_error(capsys, tmp_path):
+    code, captured, _ = _run(
+        [
+            "discover",
+            "--direction",
+            "aws_to_gcp",
+            "--region",
+            "r",
+            "--output",
+            str(tmp_path / "missing-dir" / "out.json"),
+        ],
+        capsys,
+    )
+
+    assert code == 1
+    assert captured.err.count("\n") == 1
+    assert captured.out == ""
