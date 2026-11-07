@@ -8,7 +8,7 @@
 # 인스턴스에만 있는 파일 (Git 에 넣지 않는다, README 참고)
 #   /opt/oneport/.env                  : ONEPORT_REGISTRY, ONEPORT_TAG
 #   /opt/oneport/settings.env          : ONEPORT_DOMAIN, ONEPORT_AUTH_MODE, ONEPORT_ALLOWED_HOSTS, ONEPORT_ALLOWED_ORIGINS
-#   /opt/oneport/secrets/              : postgres-password, database-url, ingest-token, access.env(있으면 접속 PIN)
+#   /opt/oneport/secrets/              : postgres-password, database-url, ingest-token
 #   /opt/oneport/kube/                 : onprem.kubeconfig, aws.kubeconfig, gcp.kubeconfig
 #
 # 메모리 상한(mem_limit)은 t3.small(2GiB)에 맞춘다. 합계 약 1.3GiB 이고 나머지는 OS·dockerd·tailscaled·SSM 에이전트 몫이다.
@@ -45,10 +45,7 @@ services:
 
   oneport-api:
     <<: *api
-    env_file:
-      - settings.env
-      - path: secrets/access.env
-        required: false
+    env_file: [settings.env]
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_INGEST_TOKEN_FILE: /etc/oneport/secrets/ingest-token
