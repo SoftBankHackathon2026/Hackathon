@@ -147,9 +147,12 @@ class FakeCore:
         return SimpleNamespace(items=[SimpleNamespace(data=d) for d in self.readings])
 
 
-def exporter_reading(node, vcpus, memory_bytes):
+def exporter_reading(node, vcpus, memory_bytes, *, age=30):
+    updated_at = (NOW - timedelta(seconds=age)).isoformat()
     return {
-        "reading.json": json.dumps({"node": node, "vcpus": vcpus, "memory_bytes": memory_bytes})
+        "reading.json": json.dumps(
+            {"node": node, "vcpus": vcpus, "memory_bytes": memory_bytes, "updated_at": updated_at}
+        )
     }
 
 
@@ -165,7 +168,7 @@ def test_forbidden_node_list_falls_back_to_exporter_specs():
         nodes_status=403,
         readings=[exporter_reading("k3s-master", 2, 4 * gib), {}, {"reading.json": "{"}],
     )
-    nodes = list_nodes(core, lambda n: n)
+    nodes = list_nodes(core, lambda n: n, NOW)
     assert core.asked == [("oneport-cost", "oneport.io/cost-reading=node")]
     assert nodes == [
         {
@@ -177,6 +180,31 @@ def test_forbidden_node_list_falls_back_to_exporter_specs():
     assert priced[0].name == "k3s-master"
     assert priced[0].vcpu == 2
     assert priced[0].memory_gib == 4
+
+
+def test_exporter_fallback_drops_stale_readings_and_keeps_newest_per_node():
+    core = FakeCore(
+        nodes_status=403,
+        readings=[
+            exporter_reading("worker", 4, 8, age=600),
+            exporter_reading("gone", 2, 2, age=601),
+            exporter_reading("master", 2, 4, age=200),
+            exporter_reading("master", 8, 16, age=10),
+            exporter_reading("master", 1, 1, age=10),
+            {"reading.json": json.dumps({"node": "x", "vcpus": 1, "memory_bytes": 1})},
+        ],
+    )
+    nodes = list_nodes(core, lambda n: n, NOW)
+    assert [(n["metadata"]["name"], n["status"]["allocatable"]["cpu"]) for n in nodes] == [
+        ("master", "8"),
+        ("worker", "4"),
+    ]
+
+
+def test_forbidden_node_list_with_only_stale_exporter_readings_still_fails():
+    core = FakeCore(nodes_status=403, readings=[exporter_reading("a", 2, 1, age=3600)])
+    with pytest.raises(ApiException):
+        list_nodes(core, lambda n: n, NOW)
 
 
 def test_forbidden_node_list_without_exporter_still_fails():
