@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -8,7 +9,7 @@ import {
 import { PageHeader } from "../../components/PageKit";
 import { StatusDot } from "../../components/StatusDot";
 import { Icon } from "../../components/Icon";
-import { unavailableConnections } from "../../api/connections";
+import { createLiveConnections } from "../../api/liveConnections";
 import type {
   CollectionContext,
   ConnectionGateway,
@@ -48,7 +49,7 @@ export function PreparePage({
   onNavigate,
   requestId,
   team = "",
-  gateway = unavailableConnections,
+  gateway: providedGateway,
   previewTools,
 }: {
   onNavigate: (hash: string) => void;
@@ -60,6 +61,8 @@ export function PreparePage({
     context: CollectionContext,
   ) => ReactNode;
 }) {
+  const liveGateway = useMemo(() => createLiveConnections(), [team]);
+  const gateway = providedGateway ?? liveGateway;
   const snapshots = useSyncExternalStore(gateway.subscribe, gateway.list);
   const snapshot = snapshots.find((s) => s.id === requestId) ?? null;
   const [acknowledged, setAcknowledged] = useState(false),
@@ -157,7 +160,9 @@ export function PreparePage({
         copiedId.current = s.id;
         onNavigate("#prepare/" + encodeURIComponent(s.id));
         setMessage(
-          "미리보기 안내를 복사했어요. 실제 실행 명령은 복사하지 않았어요.",
+          gateway.mode === "preview"
+            ? "미리보기 안내를 복사했어요. 실제 실행 명령은 복사하지 않았어요."
+            : "명령을 복사했어요. 준비한 단말에서 기한 안에 실행하세요.",
         );
       })
       .catch((e) => {
@@ -260,7 +265,7 @@ export function PreparePage({
                         onNavigate("#prepare/" + encodeURIComponent(s.id))
                       }
                     >
-                      <strong>{s.target?.name ?? "수집 중인 환경"}</strong>
+                      <strong>{s.target?.name ?? "환경 연결 요청"}</strong>
                       <span>
                         {s.target
                           ? s.target.role === "source"
@@ -365,7 +370,11 @@ export function PreparePage({
                   ) : snapshot?.environmentId ? (
                     <RegisteredEnvironment
                       snapshot={snapshot}
-                      onNext={registered ? () => setPhase("apps") : undefined}
+                      onNext={
+                        registered && gateway.mode === "preview"
+                          ? () => setPhase("apps")
+                          : undefined
+                      }
                     />
                   ) : step === 1 && snapshot ? (
                     <ConnectionTargetForm
@@ -404,7 +413,7 @@ export function PreparePage({
                       onCollect={(sourceId) =>
                         run(
                           () => gateway.collect(snapshot.id, sourceId),
-                          "환경정보를 수집했어요.",
+                          "환경정보 수집을 요청했어요. 단말의 결과를 기다려 주세요.",
                         )
                       }
                     />
@@ -468,7 +477,7 @@ export function PreparePage({
                             onClick={() =>
                               run(
                                 () => gateway.revoke(snapshot.id),
-                                "연결을 해제했어요.",
+                                "서버 권한을 철회했어요. 터널과 단말 정리 결과를 확인해요.",
                               )
                             }
                           >

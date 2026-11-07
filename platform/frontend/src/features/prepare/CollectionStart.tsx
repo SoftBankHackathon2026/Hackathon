@@ -42,11 +42,17 @@ export function CollectionStart({
           </div>
           <div>
             <dt>도구</dt>
-            <dd>Bash, curl, systemd, 환경에 맞는 kubectl/aws/gcloud</dd>
+            <dd>
+              {preview
+                ? "Bash, curl, 환경에 맞는 kubectl/aws/gcloud"
+                : "Bash, curl, Python 3, kubectl — Kubernetes 환경 조회"}
+            </dd>
           </div>
           <div>
             <dt>관리 권한</dt>
-            <dd>사전 설치된 보조 프로그램 또는 비대화형 관리자 권한</dd>
+            <dd>
+              사전 설치된 네트워크 보조 프로그램과 해당 프로그램의 실행 권한
+            </dd>
           </div>
           <div>
             <dt>외부 통신</dt>

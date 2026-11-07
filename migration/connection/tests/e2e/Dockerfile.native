@@ -1,0 +1,61 @@
+# Local integration-test image. No customer credentials or release signing keys enter layers.
+FROM rust:1.93-slim-trixie AS rust-toolchain
+FROM ubuntu:24.04 AS build-base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential perl pkg-config curl ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:$PATH RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+# OpenSSL official source page links this GitHub artifact and checksum.
+ARG OPENSSL_VERSION=3.5.9
+ARG OPENSSL_SHA256=603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+RUN curl -fSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o /tmp/openssl.tar.gz \
+    && echo "${OPENSSL_SHA256}  /tmp/openssl.tar.gz" | sha256sum -c - \
+    && mkdir /tmp/openssl-src && tar -xzf /tmp/openssl.tar.gz --strip-components=1 -C /tmp/openssl-src \
+    && cd /tmp/openssl-src && ./Configure --prefix=/opt/openssl --openssldir=/usr/lib/ssl no-shared no-tests \
+    && make -j4 && make install_sw \
+    && /opt/openssl/bin/openssl version \
+    && rm -rf /tmp/openssl-src /tmp/openssl.tar.gz
+ENV OPENSSL_DIR=/opt/openssl OPENSSL_STATIC=1
+RUN rustc --version && cargo --version
+
+FROM build-base AS native-build
+WORKDIR /build/agent
+COPY agent/Cargo.toml agent/Cargo.lock ./
+COPY agent/src ./src
+COPY agent/tests ./tests
+COPY agent/examples ./examples
+ARG MIGRATION_RELEASE_MLDSA_PUBLIC_KEY
+ARG MIGRATION_RELEASE_ED25519_PUBLIC_KEY
+ARG MIGRATION_MIN_RELEASE_SEQUENCE=1
+ENV MIGRATION_RELEASE_MLDSA_PUBLIC_KEY=$MIGRATION_RELEASE_MLDSA_PUBLIC_KEY \
+    MIGRATION_RELEASE_ED25519_PUBLIC_KEY=$MIGRATION_RELEASE_ED25519_PUBLIC_KEY \
+    MIGRATION_MIN_RELEASE_SEQUENCE=$MIGRATION_MIN_RELEASE_SEQUENCE
+RUN test -n "$MIGRATION_RELEASE_MLDSA_PUBLIC_KEY" && test -n "$MIGRATION_RELEASE_ED25519_PUBLIC_KEY" \
+    && cargo build --locked --release && cargo test --locked --all-targets \
+    && mkdir /out && cp target/release/migration-connector target/release/migration-key-broker target/release/migration-net-helper /out/ \
+    && rm -rf target /usr/local/cargo/registry
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      arm64) kubectl_hash=fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509 ;; \
+      amd64) kubectl_hash=c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4 ;; \
+      *) exit 1 ;; \
+    esac \
+    && curl -fSL "https://dl.k8s.io/release/v1.37.2/bin/linux/$TARGETARCH/kubectl" -o /out/kubectl \
+    && echo "$kubectl_hash  /out/kubectl" | sha256sum -c - \
+    && chmod 0755 /out/kubectl
+
+FROM ubuntu:24.04 AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iproute2 wireguard-tools nftables python3 ca-certificates sudo curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1001 --shell /bin/bash connector \
+    && install -d -m 0755 /etc/migration-connector /usr/local/libexec \
+    && printf 'connector ALL=(root) NOPASSWD: /usr/local/libexec/migration-net-helper ""\n' > /etc/sudoers.d/migration-connector \
+    && chmod 0440 /etc/sudoers.d/migration-connector
+COPY --from=native-build /out/migration-connector /out/migration-key-broker /out/migration-net-helper /usr/local/libexec/
+COPY --from=native-build /out/kubectl /usr/bin/kubectl
+COPY --from=build-base /opt/openssl/bin/openssl /opt/openssl/bin/openssl
+ENV PATH=/opt/openssl/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+CMD ["sleep", "infinity"]
