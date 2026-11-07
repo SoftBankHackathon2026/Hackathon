@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import "./live-app-select.css";
 import type { ConnectionSnapshot } from "./connectionTypes";
 import {
@@ -42,22 +42,16 @@ export function LiveAppSelect({
   busy,
   onRefresh,
   onSelect,
-  initialSelection = [],
+  selected,
+  canRefresh,
 }: {
   snapshot: ConnectionSnapshot;
   busy: boolean;
   onRefresh: () => void;
-  onSelect?: (apps: string[]) => void;
-  initialSelection?: string[];
+  onSelect: (apps: string[]) => void;
+  selected: string[];
+  canRefresh: boolean;
 }) {
-  const [selection, setSelection] = useState<{
-    inventoryDigest?: string;
-    ids: string[];
-  }>({ inventoryDigest: snapshot.inventoryDigest, ids: initialSelection });
-  if (selection.inventoryDigest !== snapshot.inventoryDigest) {
-    setSelection({ inventoryDigest: snapshot.inventoryDigest, ids: [] });
-  }
-  const selected = selection.ids;
   const [query, setQuery] = useState("");
   const [namespace, setNamespace] = useState("");
   const [open, setOpen] = useState<Record<WorkloadGroup, boolean>>({
@@ -67,7 +61,6 @@ export function LiveAppSelect({
     infrastructure: false,
   });
   const panelId = useId();
-  useEffect(() => onSelect?.(selected), [selected, onSelect]);
   const inventory = snapshot.workloads;
   const pending = busy || snapshot.collectionPending;
   const ready = inventory?.coverage === "complete";
@@ -143,10 +136,12 @@ export function LiveAppSelect({
           </p>
         </div>
         <button
+          type="button"
           className="secondary"
           onClick={onRefresh}
           disabled={
             pending ||
+            !canRefresh ||
             snapshot.tunnel !== "READY" ||
             !snapshot.permissions.registerEnvironment
           }
@@ -155,31 +150,40 @@ export function LiveAppSelect({
         </button>
       </header>
       {pending || !ready || inventory.items.length === 0 ? (
-        <div className="live-apps-empty" role="status" aria-live="polite">
-          <span className="live-apps-symbol" aria-hidden="true">
-            ▦
-          </span>
-          <h3>
-            {pending
-              ? "앱 목록을 수집하고 있어요"
-              : !inventory
-                ? "앱 목록을 먼저 수집해 주세요"
-                : !ready
-                  ? "앱 목록을 가져오지 못했어요"
-                  : "아직 표시할 앱이 없어요"}
-          </h3>
-          <p>
-            {pending
-              ? "연결 단말에서 앱 정보를 읽고 있어요. 결과가 도착하면 목록이 표시됩니다."
-              : !inventory
-                ? "이전 수집 결과에는 앱 목록이 없어요. 연결 도구를 업데이트한 뒤 ‘앱 목록 다시 수집’을 눌러 주세요."
-                : !ready
-                  ? "연결 단말의 워크로드 조회 권한을 확인한 뒤 다시 시도해 주세요."
-                  : "이 환경의 수집 범위에서 앱을 찾지 못했어요. 연결한 클러스터와 조회 권한을 확인해 주세요."}
-          </p>
+        <div
+          className="live-apps-empty prepare-state-enter"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            key={pending ? "pending" : (inventory?.coverage ?? "missing")}
+            className="prepare-state-enter"
+          >
+            <span className="live-apps-symbol" aria-hidden="true">
+              ▦
+            </span>
+            <h3>
+              {pending
+                ? "앱 목록을 수집하고 있어요"
+                : !inventory
+                  ? "앱 목록을 먼저 수집해 주세요"
+                  : !ready
+                    ? "앱 목록을 가져오지 못했어요"
+                    : "아직 표시할 앱이 없어요"}
+            </h3>
+            <p>
+              {pending
+                ? "연결 단말에서 앱 정보를 읽고 있어요. 결과가 도착하면 목록이 표시됩니다."
+                : !inventory
+                  ? "이전 수집 결과에는 앱 목록이 없어요. 연결 도구를 업데이트한 뒤 ‘앱 목록 다시 수집’을 눌러 주세요."
+                  : !ready
+                    ? "연결 단말의 워크로드 조회 권한을 확인한 뒤 다시 시도해 주세요."
+                    : "이 환경의 수집 범위에서 앱을 찾지 못했어요. 연결한 클러스터와 조회 권한을 확인해 주세요."}
+            </p>
+          </div>
         </div>
       ) : (
-        <>
+        <div className="prepare-state-enter">
           <div className="live-apps-filters">
             <label>
               <span>앱 검색</span>
@@ -187,6 +191,9 @@ export function LiveAppSelect({
                 type="search"
                 placeholder="이름, 네임스페이스, 이미지"
                 value={query}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.preventDefault();
+                }}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
@@ -257,36 +264,38 @@ export function LiveAppSelect({
                   </span>
                 </button>
               </h3>
-              <div id={`${panelId}-${group.id}`} hidden={!open[group.id]}>
-                {open[group.id] &&
-                  (group.matches.length ? (
-                    <WorkloadTable
-                      label={group.label}
-                      items={group.matches}
-                      selected={selected}
-                      namespacesByName={namespacesByName}
-                      warnOnSelection={
-                        group.id === "migration" ||
-                        group.id === "infrastructure"
-                      }
-                      onSelect={(id, checked) =>
-                        setSelection((current) => ({
-                          ...current,
-                          ids: checked
-                            ? [...current.ids, id]
-                            : current.ids.filter((value) => value !== id),
-                        }))
-                      }
-                    />
-                  ) : (
-                    <p className="live-apps-group-empty">
-                      이 그룹에 표시할 항목이 없어요.
-                    </p>
-                  ))}
+              <div
+                id={`${panelId}-${group.id}`}
+                className="prepare-reveal"
+                hidden={!open[group.id]}
+                inert={!open[group.id]}
+              >
+                {group.matches.length ? (
+                  <WorkloadTable
+                    label={group.label}
+                    items={group.matches}
+                    selected={selected}
+                    namespacesByName={namespacesByName}
+                    warnOnSelection={
+                      group.id === "migration" || group.id === "infrastructure"
+                    }
+                    onSelect={(id, checked) =>
+                      onSelect(
+                        checked
+                          ? [...selected, id]
+                          : selected.filter((value) => value !== id),
+                      )
+                    }
+                  />
+                ) : (
+                  <p className="live-apps-group-empty">
+                    이 그룹에 표시할 항목이 없어요.
+                  </p>
+                )}
               </div>
             </section>
           ))}
-        </>
+        </div>
       )}
       {ready && !pending && inventory.items.length > 0 && (
         <footer className="live-apps-footer">

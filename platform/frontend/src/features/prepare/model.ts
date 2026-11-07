@@ -17,7 +17,7 @@ export const PROVIDERS = [
     icon: "cloud",
   },
 ] as const;
-export const STEPS = ["환경정보 수집", "환경등록"];
+export const STEPS = ["환경정보 수집", "목록에 저장"];
 export const TUNNEL_CHECKS = [
   "상대 신원 확인",
   "양자내성 하이브리드 키 설정",
@@ -99,7 +99,7 @@ export function connectionStatus(s: ConnectionSnapshot): {
   if (s.device === "PENDING_APPROVAL")
     return { label: "단말 확인 필요", tone: "running" };
   if (s.collection === "COLLECTED")
-    return { label: "환경등록 필요", tone: "running" };
+    return { label: "연결 완료 · 저장 필요", tone: "ok" };
   if (s.registration === "ISSUED")
     return { label: "명령 실행 대기", tone: "running" };
   if (s.collectionPending)

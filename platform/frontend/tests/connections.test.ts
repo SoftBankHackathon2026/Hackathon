@@ -39,7 +39,7 @@ function metadata(
   };
 }
 test("two stages collect before any environment metadata is registered", async () => {
-  assert.deepEqual(STEPS, ["환경정보 수집", "환경등록"]);
+  assert.deepEqual(STEPS, ["환경정보 수집", "목록에 저장"]);
   const { gateway, id } = await request();
   assert.equal(gateway.list()[0].target, null);
   assert.equal(stepFor(gateway.list()[0]), 0);

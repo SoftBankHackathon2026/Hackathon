@@ -1,3 +1,5 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createQueryClient } from "../../app/queryClient";
 import { useEffect, useState } from "react";
 import { AppShell } from "../../components/AppShell";
 import { useRoute } from "../../app/useRoute";
@@ -11,42 +13,46 @@ import {
 import type { CollectionContext, ConnectionSnapshot } from "./connectionTypes";
 
 export function ConnectionPreviewApp() {
+  const [client] = useState(createQueryClient);
   const [gateway] = useState(() => createPreviewGateway(sessionStorage));
   const { route, go } = useRoute();
   useEffect(() => {
     document.title = "환경 연결 미리보기 - Oneport";
   }, []);
   return (
-    <AppShell
-      view="migrations"
-      title="마이그레이션 준비"
-      hideTitle
-      account={
-        <span className="connection-preview-account">로컬 미리보기</span>
-      }
-      onNavigate={(v) => {
-        window.location.href = "/#" + v;
-      }}
-    >
-      <PreparePage
-        gateway={gateway}
-        team="해커톤 팀"
-        requestId={route.view === "prepare" ? route.requestId : undefined}
-        onNavigate={(hash) => {
-          if (hash === "#migrations") window.location.href = "/#migrations";
-          else go(hash);
+    <QueryClientProvider client={client}>
+      <AppShell
+        view="migrations"
+        title="마이그레이션 준비"
+        hideTitle
+        account={
+          <span className="connection-preview-account">로컬 미리보기</span>
+        }
+        onNavigate={(v) => {
+          window.location.href = "/#" + v;
         }}
-        previewTools={(snapshot, target) => (
-          <PreviewControls
-            key={snapshot?.id ?? "new"}
-            gateway={gateway}
-            snapshot={snapshot}
-            target={target}
-            onCreated={(id) => go("#prepare/" + id)}
-          />
-        )}
-      />
-    </AppShell>
+      >
+        <PreparePage
+          gateway={gateway}
+          team="해커톤 팀"
+          requestId={route.view === "prepare" ? route.requestId : undefined}
+          newConnection={route.view === "prepare" && route.newConnection}
+          onNavigate={(hash) => {
+            if (hash === "#migrations") window.location.href = "/#migrations";
+            else go(hash);
+          }}
+          previewTools={(snapshot, target) => (
+            <PreviewControls
+              key={snapshot?.id ?? "new"}
+              gateway={gateway}
+              snapshot={snapshot}
+              target={target}
+              onCreated={(id) => go("#prepare/" + id)}
+            />
+          )}
+        />
+      </AppShell>
+    </QueryClientProvider>
   );
 }
 
