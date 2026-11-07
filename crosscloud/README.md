@@ -20,7 +20,6 @@
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/provision/residue_aws.py` | AWS 잔여 검사(태그·접두사 질의) |
 | `terraform/aws/` | AWS 쪽 자원 한 벌. `direction` 으로 원본 고정물 또는 대상 기반·앱 |
-| `terraform/dns/route53_private_weighted/` | 비공개 호스팅 영역 + 가중치 레코드 2개 |
 | `tests/` | 단위 시험 |
 
 `Inventory` 스키마는 비밀로 의심되거나 분류가 불명인 env 값을 받지 않는다
@@ -50,16 +49,16 @@ Terraform 구성은 자격 증명 없이 검사한다. `terraform test` 는 가�
 
 ```shell
 terraform -chdir=terraform fmt -check -recursive
-for dir in aws aws/modules/base aws/modules/app dns/route53_private_weighted; do
+for dir in aws aws/modules/base aws/modules/app; do
   terraform -chdir="terraform/${dir}" init -backend=false
   terraform -chdir="terraform/${dir}" validate
   terraform -chdir="terraform/${dir}" test
 done
 ```
 
-모든 자원 이름은 `ccx-<run_id>` 로 시작하고 태그 `crosscloud-run=<run_id>` 를
-단다. IAM 역할은 경로 `/ccx-<run_id>/` 아래에 둔다. 잔여 검사가 이 셋으로
-남은 자원을 찾는다.
+모든 자원 이름은 실행 접두사 `ccx-<run>` 이거나 `ccx-<run>-` 로 시작하고, 태그
+`crosscloud-run=ccx-<run>` 을 단다. 잔여 검사는 리전 자원을 태그로, 태그
+질의에 안 나오는 IAM 역할과 삭제 예약 Secret 을 이름 접두사로 찾는다.
 
 ## 스타일 적용 기준
 
