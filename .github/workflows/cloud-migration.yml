@@ -33,7 +33,7 @@ jobs:
           python -m pytest tests/test_cloud.py tests/test_cloud_pg.py tests/test_cloud_cdc.py
       - name: Test service logs on failure
         if: failure()
-        run: docker compose -p cloud-ci -f tests/cloud-compose.yaml logs --tail 80
+        run: docker compose -p cloud-ci -f tests/cloud-compose.yaml logs --tail 500
       - name: Remove disposable test resources
         if: always()
         run: docker compose -p cloud-ci -f tests/cloud-compose.yaml down -v
