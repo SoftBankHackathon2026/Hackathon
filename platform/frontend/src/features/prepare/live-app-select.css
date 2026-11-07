@@ -75,24 +75,150 @@
 .live-apps-help p {
   margin: 12px 0 0;
 }
+.live-apps-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 16px;
+  padding: 16px 32px 20px;
+}
+.connection-page .live-apps-filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.live-apps-filters label:first-child {
+  flex: 0 1 304px;
+}
+.connection-page .live-apps-filters :is(input[type="search"], select) {
+  width: 100%;
+  margin: 0;
+  color: var(--text);
+  background: var(--surface);
+}
+.connection-page .live-apps-filters select {
+  min-width: 144px;
+  max-width: 216px;
+}
+.connection-page .live-apps-filters .live-apps-infra-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  font-weight: 400;
+}
+.live-apps-scroll-hint {
+  display: none;
+}
+.live-apps-results:not(:empty),
+.live-apps-group-empty {
+  margin: 0;
+  padding: 12px 32px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.live-apps-group {
+  border-top: 1px solid var(--border);
+}
+.connection-page .live-apps-group h3 {
+  margin: 0;
+}
+.connection-page .live-apps-group-toggle {
+  display: grid;
+  grid-template-columns: 12px auto auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  gap: 4px 10px;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 12px 32px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+.connection-page .live-apps-group-toggle:is(:hover, [aria-expanded="true"]) {
+  background: var(--surface-subtle);
+}
+.connection-page .live-apps-group-toggle:focus-visible {
+  outline-offset: -3px;
+}
+.live-apps-chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.live-apps-group-toggle[aria-expanded="true"] .live-apps-chevron {
+  transform: translateY(-2px) rotate(45deg);
+}
+.live-apps-group-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.live-apps-group-count,
+.live-apps-group-description {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+.live-apps-group-count {
+  font-variant-numeric: tabular-nums;
+}
+.live-apps-workload-name,
+.live-apps-stopped {
+  display: block;
+}
+.live-apps-stopped {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+}
+.live-apps-warning {
+  margin: 4px 0 0;
+  color: var(--warning-contrast);
+  font-size: var(--fs-xs);
+}
+.live-apps-references summary {
+  cursor: pointer;
+}
+.live-apps-references dl {
+  margin: 8px 0 0;
+  font-size: var(--fs-xs);
+}
+.live-apps-references dt {
+  color: var(--text-secondary);
+}
+.live-apps-references dd {
+  margin: 0 0 4px;
+}
 .live-apps-table-wrap {
   overflow-x: auto;
-  padding: 8px 24px;
+  padding: 0 20px 8px;
 }
 .live-apps .pk-table {
-  min-width: 760px;
+  min-width: 720px;
   table-layout: fixed;
   width: 100%;
 }
 .live-apps .pk-table th:first-child {
   width: 52px;
 }
+.live-apps .pk-table th:nth-child(2) {
+  width: 28%;
+}
+.live-apps .pk-table th:nth-child(3) {
+  width: 132px;
+}
 .live-apps .pk-table td {
   white-space: normal;
   overflow-wrap: anywhere;
   vertical-align: top;
-  padding-top: 16px;
-  padding-bottom: 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 .live-apps-footer {
   display: flex;
@@ -133,8 +259,38 @@
   .live-apps-footer {
     padding: 20px;
   }
+  .live-apps-filters {
+    align-items: end;
+    padding: 16px 20px;
+  }
+  .live-apps-filters label:first-child {
+    flex-basis: 100%;
+  }
+  .connection-page .live-apps-group-toggle,
+  .live-apps-results:not(:empty),
+  .live-apps-group-empty {
+    padding-inline: 20px;
+  }
+  .live-apps-group-description {
+    grid-column: 2 / -1;
+  }
+  .live-apps-scroll-hint {
+    display: block;
+    margin: 0 20px 12px;
+    color: var(--text-secondary);
+    font-size: var(--fs-xs);
+  }
   .live-apps-table-wrap {
     padding: 0 12px;
+  }
+  .live-apps .pk-table th:first-child {
+    width: 40px;
+  }
+  .live-apps .pk-table th:nth-child(2) {
+    width: 132px;
+  }
+  .live-apps .pk-table th:nth-child(3) {
+    width: 104px;
   }
   .connection-page.is-live-apps .appsel-bar-status {
     flex-basis: 100%;

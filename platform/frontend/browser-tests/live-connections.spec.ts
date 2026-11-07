@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { ConnectionSnapshot } from "../src/features/prepare/connectionTypes";
+import { appWorkloads } from "../tests/fixtures/appWorkloads";
 
 // Mocked API contract regression: route.fulfill supplies API responses and the
 // clipboard is replaced with a test double. This is not evidence of a real
@@ -7,6 +8,7 @@ import type { ConnectionSnapshot } from "../src/features/prepare/connectionTypes
 test("mocked API contract copies a command, confirms, collects, registers and restores", async ({
   page,
 }) => {
+  test.setTimeout(45000);
   const id = "a".repeat(22);
   const source = {
     id: "cluster-one",
@@ -221,27 +223,84 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await expect(page.getByText("sample-app", { exact: true })).toHaveCount(0);
   state!.workloads = {
     coverage: "complete",
-    items: [
-      {
-        namespace: "customer",
-        kind: "Deployment",
-        name: "real-orders",
-        replicas: 2,
-        images: ["registry/orders:v1"],
-        secrets: ["orders-db"],
-        configMaps: [],
-        pvcs: [],
-      },
-    ],
+    items: appWorkloads,
   };
   state!.inventoryDigest = "updated-inventory";
+  const picker = page.getByRole("region", { name: "옮길 앱 고르기" });
+  const apps = picker.getByRole("button", { name: "앱 6개", exact: true });
+  const data = picker.getByRole("button", { name: /^데이터·미들웨어 / });
+  const migration = picker.getByRole("button", { name: /^이전 도구 / });
+  const infrastructure = picker.getByRole("button", {
+    name: /^인프라·시스템 /,
+  });
+  const choices = picker.getByRole("checkbox", { name: / 선택$/ });
+  const search = picker.getByRole("searchbox", { name: "앱 검색" });
+
+  await expect(apps).toBeVisible({ timeout: 10000 });
+  await expect(apps).toHaveAttribute("aria-expanded", "true");
+  await expect(data).toHaveAttribute("aria-expanded", "false");
+  await expect(migration).toHaveAttribute("aria-expanded", "false");
+  await expect(infrastructure).toHaveAttribute("aria-expanded", "false");
+  await expect(choices).toHaveCount(6);
+  await expect(choices.last()).toHaveAccessibleName(
+    "hackathon/Deployment/ai-agent 선택",
+  );
+  await expect(picker.getByText("정지됨", { exact: true })).toBeVisible();
+
+  const review = picker.getByRole("checkbox", {
+    name: "hackathon/Deployment/review-api 선택",
+  });
+  await review.check();
+  await search.fill("APACHE/KAFKA");
   await expect(
-    page.getByText("customer / real-orders", { exact: true }),
+    picker.getByText("접힌 그룹에 2개 있어요.", { exact: false }),
   ).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "customer/Deployment/real-orders 선택" })
-    .check();
-  await expect(page.getByText("선택한 앱 1개", { exact: true })).toBeVisible();
+  await expect(
+    picker.getByText("선택한 앱 1개", { exact: true }),
+  ).toBeVisible();
+  await data.click();
+  await expect(choices).toHaveCount(2);
+  await search.fill("");
+  await expect(review).toBeChecked();
+
+  const namespace = picker.getByRole("combobox", { name: "네임스페이스" });
+  await namespace.selectOption("harbor");
+  await expect(
+    picker.getByText("접힌 그룹에 7개 있어요.", { exact: false }),
+  ).toBeVisible();
+  await picker.getByRole("checkbox", { name: "인프라도 보기" }).check();
+  await expect(choices).toHaveCount(7);
+  await search.fill("없는-워크로드");
+  await expect(
+    picker.getByText("검색·필터에 맞는 항목이 없어요.", { exact: true }),
+  ).toBeVisible();
+  await search.fill("");
+  await namespace.selectOption("");
+
+  await migration.click();
+  await expect(choices).toHaveCount(51);
+  const tool = picker.getByRole("checkbox", {
+    name: "hackathon/Deployment/db-insert-worker 선택",
+  });
+  await tool.check();
+  await expect(tool).toBeChecked();
+  await expect(
+    picker.getByText("이 항목은 옮기는 대상이 아닐 수 있어요.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    picker.getByText("선택한 앱 2개", { exact: true }),
+  ).toBeVisible();
+  await search.fill("db-insert");
+  state!.inventoryDigest = "recollected-inventory";
+  state!.revision++;
+  await expect(picker.getByText("선택한 앱 0개", { exact: true })).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(search).toHaveValue("db-insert");
+  await expect(migration).toHaveAttribute("aria-expanded", "true");
+  await expect(tool).not.toBeChecked();
   expect(mutations.find((item) => item.action === "approve")?.body.code).toBe(
     "ABCD2345",
   );
