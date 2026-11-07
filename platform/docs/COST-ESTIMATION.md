@@ -101,7 +101,7 @@ fleet.json 과 따로 둔다. 비우면 기본값(온프렘 환산 기준 AWS �
 
 ## 수집과 권한
 
-수집기(`fleet_collector`)가 약 5분마다 환경별 자원 목록을 `cost_inventory` 테이블에 덮어쓴다.
+수집기(`fleet_collector`)가 5분마다(tick 횟수가 아니라 실제 경과 시간 기준) 환경별 자원 목록을 `cost_inventory` 테이블에 덮어쓴다.
 
 - Kubernetes: `nodes`·`persistentvolumeclaims`·`pods` list. `deploy/aws/rbac.yaml`, `deploy/reader/reader.yaml` 에 들어 있다.
   온프렘 읽기 계정이 노드·PVC 를 못 읽으면 그 환경은 "클러스터 자원: 읽지 못함"으로 남는다.
