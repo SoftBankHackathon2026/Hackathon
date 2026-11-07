@@ -24,8 +24,8 @@ jobs:
         run: python -m pytest --tb=short tests/identity $(ls tests/test_*.py | grep -v test_keycloak_ansible.py)
       - name: Check identity source and tests
         run: |
-          ruff check migration/migration/identity migration/tests/identity
-          ruff format --check migration/migration/identity migration/tests/identity
+          ruff check migration/migration/identity migration/tests/identity migration/migration/identity_export migration/tests/test_identity_export.py
+          ruff format --check migration/migration/identity migration/tests/identity migration/migration/identity_export migration/tests/test_identity_export.py
       - name: Exercise offline review flow
         run: |
           python -m migration.identity plan --config migration/identity-examples/config.example.json --inventory migration/identity-examples/inventory.example.json --mapping migration/identity-examples/mapping.example.json --out /tmp/identity-plan.json
@@ -42,5 +42,6 @@ jobs:
               assert 'migration/identity/__main__.py' in files
               assert 'migration/identity/collect.py' in files
               assert 'migration/identity/adapters.py' in files
+              assert 'migration/identity_export/__main__.py' in files
               assert not any('__pycache__' in file for file in files)
           PY
