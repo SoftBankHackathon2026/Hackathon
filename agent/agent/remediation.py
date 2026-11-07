@@ -14,13 +14,14 @@ from migration.policy_client import DecisionStore, Decision, Evaluator, build_ch
 from migration.smoke import CHECK_NAME, TARGET_ONLY_MODE
 
 from . import runs as R
+from .hypotheses import build_hypotheses
 from .kv import CasConflict, KvError, KvStore
 from .notify import Notifier
 from .probe import Prober
 from .proposer import ProposalInvalid, Proposer, ProposerError, visible_config
 from .restart import Restarter, RestartError
 from .runs import Run, RunStore
-from .scope import Proposal, check_proposal
+from .scope import Proposal, check_proposal, planned_values
 
 log = logging.getLogger("agent.remediation")
 
@@ -163,6 +164,9 @@ class Remediator:
             return
         diagnosis = self._diagnose(snapshot.data)
         run.detail["diagnosis"] = {"ok": diagnosis.ok, "step": diagnosis.step, "detail": diagnosis.detail}
+        run.detail["hypotheses"] = build_hypotheses(
+            diagnosis, visible_config(snapshot.data), planned_values(self.target_db),
+        )
         if diagnosis.ok:
             self._finish(run, R.HANDED_OFF, "지금 설정으로 DB 에 접속된다. 설정 문제가 아닐 수 있어 사람에게 넘긴다")
             return
@@ -176,6 +180,7 @@ class Remediator:
             )
         except (ProposalInvalid, ProposerError) as exc:
             code = "S-SCHEMA" if isinstance(exc, ProposalInvalid) else "CODEX-FAILED"
+            self._record_sandbox(run, with_file=False)
             self._finish(run, R.REJECTED, f"제안을 받지 못했다 ({code}): {exc}", rejections=[code])
             return
 
@@ -183,8 +188,10 @@ class Remediator:
         if rejections:
             codes = [r.code for r in rejections]
             # 거절된 제안은 값을 저장·보고하지 않는다. 허용 키 밖의 값은 비밀값일 수 있다.
+            self._record_sandbox(run, with_file=False)
             self._finish(run, R.REJECTED, "정적 검사 거절: " + "; ".join(r.message for r in rejections), rejections=codes)
             return
+        self._record_sandbox(run, with_file=True)
 
         recorded = proposal.as_dict()
         visible = visible_config(snapshot.data)
@@ -277,6 +284,12 @@ class Remediator:
                 log.info("[%s] 같은 사유 %d번째. 알림은 생략한다: %s", run.run_id, streak + 1, message)
                 return
         self._notify(run, f"{TITLES.get(state, state)}  `{run.run_id}`\n{message}")
+
+    def _record_sandbox(self, run: Run, *, with_file: bool) -> None:
+        trace = getattr(self.d.proposer, "last_trace", None)
+        if not isinstance(trace, dict):
+            return
+        run.detail["sandbox"] = trace if with_file else {k: v for k, v in trace.items() if k != "file"}
 
     def _approve_hint(self, run_id: str) -> str:
         command = f"`{self.approve_command} {run_id}`"
