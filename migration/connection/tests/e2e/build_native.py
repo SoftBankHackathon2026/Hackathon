@@ -10,13 +10,19 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--private-dir", type=Path, required=True)
-    parser.add_argument("--image", default="mc-live-e2e-native:local")
+    parser.add_argument("--image")
+    parser.add_argument("--arch", choices=("arm64", "amd64"), default="arm64")
     args = parser.parse_args()
+    args.image = args.image or (
+        "mc-live-e2e-native:local"
+        if args.arch == "arm64"
+        else "mc-live-e2e-native:amd64"
+    )
     root = args.private_dir.resolve()
     if root.stat().st_mode & 0o077:
         raise SystemExit("private directory must be 0700")
-    output = root / "bin"
-    output.mkdir(mode=0o700, exist_ok=True)
+    output = root / "bin" if args.arch == "arm64" else root / "bin/linux-amd64"
+    output.mkdir(mode=0o700, parents=True, exist_ok=True)
     incomplete = output / ".build-incomplete"
     incomplete.write_text(
         "Latest requested source build has not completed. Do not publish these binaries.\n"
@@ -38,11 +44,20 @@ def main():
         env[key] = value.strip("'\"")
     if not required.issubset(env):
         raise SystemExit("release public anchors missing")
-    command = ["docker", "build", "-f", "tests/e2e/Dockerfile.native", "-t", args.image]
+    command = [
+        "docker",
+        "build",
+        "--platform",
+        f"linux/{args.arch}",
+        "-f",
+        "tests/e2e/Dockerfile.native",
+        "-t",
+        args.image,
+    ]
     for key in sorted(required):
         command += ["--build-arg", key]
     command += ["."]
-    with (root / "native-build.log").open("wb") as log:
+    with (root / f"native-build-{args.arch}.log").open("wb") as log:
         subprocess.run(
             command,
             cwd=context,
@@ -56,6 +71,8 @@ def main():
         [
             "docker",
             "create",
+            "--platform",
+            f"linux/{args.arch}",
             "--name",
             name,
             "--label",

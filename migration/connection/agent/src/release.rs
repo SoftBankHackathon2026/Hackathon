@@ -240,7 +240,9 @@ fn record_sequence_at(state: &Path, manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
-pub fn verify_bundle(bundle: &Path) -> Result<Manifest> {
+/// Verify a private, locally owned snapshot without changing the user's
+/// release sequence. Privileged installers keep a separate root-owned floor.
+pub fn verify_bundle_artifacts(bundle: &Path) -> Result<Manifest> {
     private_directory(bundle)?;
     let manifest = check_manifest(
         &read_owned(&bundle.join("manifest.json"), MAX_MANIFEST)?,
@@ -253,6 +255,11 @@ pub fn verify_bundle(bundle: &Path) -> Result<Manifest> {
             return Err("release artifact integrity rejected".into());
         }
     }
+    Ok(manifest)
+}
+
+pub fn verify_bundle(bundle: &Path) -> Result<Manifest> {
+    let manifest = verify_bundle_artifacts(bundle)?;
     record_sequence(&manifest)?;
     Ok(manifest)
 }

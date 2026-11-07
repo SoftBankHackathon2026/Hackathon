@@ -21,7 +21,18 @@ def main():
     root = args.private_dir.resolve()
     if root.stat().st_mode & 0o077:
         raise SystemExit("private directory must be 0700")
-    bootstrap = root / "release/releases/live-e2e-1/bootstrap.sh"
+    metadata = json.loads((root / "public/release-metadata.json").read_text())
+    version = metadata["release_version"]
+    if (
+        not isinstance(version, str)
+        or not version
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for c in version
+        )
+    ):
+        raise ValueError("invalid release version")
+    bootstrap = root / "release/releases" / version / "bootstrap.sh"
     digest = hashlib.sha384(bootstrap.read_bytes()).hexdigest()
     config_dir = root / "native-config"
     config_dir.mkdir(mode=0o700, exist_ok=True)
@@ -53,7 +64,7 @@ def main():
         "tenant_id": "live-e2e-team",
         "gateway_id": "live-e2e-gateway",
         "helper_path": "/usr/local/libexec/migration-net-helper",
-        "release_version": "live-e2e-1",
+        "release_version": version,
         "bootstrap_sha384": digest,
     }
     path = config_dir / "broker.json"

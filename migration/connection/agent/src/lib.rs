@@ -12,3 +12,5 @@ pub fn now_ms() -> u64 {
 }
 
 pub mod api;
+
+pub mod host_install;

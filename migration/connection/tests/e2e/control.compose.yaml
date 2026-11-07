@@ -47,8 +47,8 @@ services:
       ONEPORT_CONNECTION_OPENSSL: /usr/bin/openssl
       ONEPORT_CONNECTION_JOB_SIGNING_KEY: /run/secrets/job-signing-key.pem
       ONEPORT_CONNECTION_RUNTIME_TOKEN_FILE: /run/secrets/runtime-token
-      ONEPORT_CONNECTION_BOOTSTRAP_URL: https://control.test/releases/live-e2e-1/bootstrap.sh
-      ONEPORT_CONNECTION_RELEASE_VERSION: live-e2e-1
+      ONEPORT_CONNECTION_BOOTSTRAP_URL: ${LIVE_E2E_BOOTSTRAP_URL:-https://control.test/releases/live-e2e-1/bootstrap.sh}
+      ONEPORT_CONNECTION_RELEASE_VERSION: ${LIVE_E2E_RELEASE_VERSION:-live-e2e-1}
       ONEPORT_CONNECTION_BOOTSTRAP_SHA384: ${BOOTSTRAP_SHA384:-}
       ONEPORT_CONNECTION_RUNTIME_TENANT_ID: live-e2e-team
       ONEPORT_CONNECTION_RUNTIME_GATEWAY_ID: live-e2e-gateway

@@ -426,13 +426,6 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
     if state.request_id != request {
         return Err("state request mismatch".into());
     }
-    let policy: Policy = serde_json::from_value(
-        network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
-    )?;
-    policy.validate()?;
-    if state.connection_id.is_some() {
-        let _ = network::helper(Path::new(&c.helper_path), &net_req("remove", &state));
-    }
     if state.device_id.is_none() {
         let response = (|| -> Result<Value> {
             let challenge = api::post(
@@ -497,6 +490,41 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
                 return Err("device approval rejected or expired".into());
             }
         }
+    }
+    // Prove the short-lived invitation and obtain web approval before apt or
+    // administrator input can take minutes. No network privilege is used yet.
+    migration_connector::host_install::ensure(base, Path::new(&c.helper_path)).map_err(
+        |error| {
+            eprintln!("단말 설치 중단: {error}");
+            eprintln!(
+                "같은 요청을 이어가려면 실행하세요: {} resume {} {}",
+                base.join("migration-connector").display(),
+                config_path.display(),
+                request
+            );
+            error
+        },
+    )?;
+    let policy: Policy = serde_json::from_value(
+        network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
+    )?;
+    policy.validate()?;
+    // A web revocation during administrator approval/package installation must
+    // stop the flow before any tunnel is configured.
+    let status = api::device(
+        &c.public_api_url,
+        &request,
+        &state.candidate_id,
+        &key,
+        "status",
+        json!({}),
+    )?;
+    if status["snapshot"]["device"] != "APPROVED" {
+        cleanup(&c, &dir, &state, &key)?;
+        return Err("device approval revoked during host preparation".into());
+    }
+    if state.connection_id.is_some() {
+        network::helper(Path::new(&c.helper_path), &net_req("remove", &state))?;
     }
     loop {
         let binding = match establish(&c, base, &dir, &mut state, &key, &policy) {
@@ -627,9 +655,29 @@ fn main() {
         Some("install-release") if args.len() == 4 => {
             migration_connector::release::install_release(&args[2], Path::new(&args[3])).map(|_| ())
         }
+        Some("prepare-host") if args.len() == 3 => {
+            let bundle = Path::new(&args[2]);
+            migration_connector::release::verify_bundle(bundle).and_then(|_| {
+                migration_connector::host_install::ensure(
+                    bundle,
+                    Path::new("/usr/local/libexec/migration-net-helper"),
+                )
+            })
+        }
+        Some("install-host") if args.len() == 5 => {
+            args[3].parse::<u32>().map_err(Into::into).and_then(|uid| {
+                migration_connector::host_install::install(Path::new(&args[2]), uid, &args[4])
+            })
+        }
         _ => Err("usage: migration-connector run CONFIG".into()),
     };
-    if result.is_err() {
+    if let Err(error) = result {
+        if matches!(
+            args.get(1).map(String::as_str),
+            Some("prepare-host" | "install-host")
+        ) {
+            eprintln!("단말 설치 중단: {error}");
+        }
         eprintln!("CONNECTOR_FAILED: inspect the web connection state; no secret details logged");
         std::process::exit(1)
     }

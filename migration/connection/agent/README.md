@@ -9,6 +9,7 @@
 ```sh
 /path/to/verified-bundle/migration-connector run /path/to/verified-bundle/connector.json
 /path/to/verified-bundle/migration-connector resume /path/to/verified-bundle/connector.json REQUEST_ID
+/path/to/verified-bundle/migration-connector prepare-host /path/to/verified-bundle
 /usr/local/libexec/migration-key-broker /etc/migration-connector/broker.json
 ```
 
@@ -36,7 +37,11 @@
 
 현재 구현은 **네트워크 이름공간 하나에 관리 인터페이스 하나·활성 연결 하나**를 지원합니다. 브로커를 테넌트마다 분리하고 전용 컨테이너나 네트워크 이름공간에서 실행하십시오. 여러 테넌트의 경로를 한 helper에 공유하는 배포는 지원하지 않습니다. 양쪽의 WireGuard UDP endpoint와 포트는 운영자가 미리 도달 가능하게 설정해야 하며 자동 NAT 중계는 구현하지 않았습니다.
 
-관리자가 검증된 `migration-net-helper`를 `/usr/local/libexec/migration-net-helper`에 root:root0755로 설치합니다. `/etc/migration-connector`는 root 소유0755, `net-policy.json`은 root:root0644로 설치합니다. helper는 Linux `CAP_NET_ADMIN`과 `/usr/sbin/ip`, `/usr/sbin/nft`, `/usr/bin/wg`를 요구합니다. 단말 일반 사용자에게 허용하는 sudoers 항목은 다음 한 명령이며 추가 인수를 허용하지 않습니다.
+정상적으로 사전 설치된 단말은 추가 승인 없이 연결을 계속합니다. 준비가 안 된 단말은 단말 증명과 웹 승인을 먼저 마친 뒤 터미널에 설치 내용과 연결 상대를 표시합니다. 사용자가 동의하면 `sudo`가 관리자 인증을 직접 받고, Ubuntu 패키지 `iproute2`·`nftables`·`wireguard-tools` 중 없는 항목을 설치합니다. 서명된 배포 묶음의 보조 프로그램과 고객용 정책을 관리자 소유로 설치한 뒤 같은 요청의 터널 연결을 이어갑니다. 사용자 입력은 `/dev/tty`에서 받으므로 초기 등록 생성값의 표준입력과 섞이지 않습니다. 터미널이 없거나 동의를 거절하면 설치하지 않습니다.
+
+이 경로에는 이중서명 배포 목록에 포함된 `migration-net-helper`와 `net-policy.json`이 모두 필요합니다. 게시 정책은 `role: "client"`, `uid: 0`을 사용하고, 설치할 때 실제 실행 사용자의 UID(운영체제 사용자 번호)로 바꿉니다. 터널 상대·주소·포트는 게시자가 고객 네트워크에 맞게 준비해야 합니다. 기존 정책과 충돌하면 자동으로 바꾸지 않습니다. `prepare-host` 명령으로 등록 요청을 발급하기 전에 같은 관리자 승인 절차를 실행할 수도 있습니다.
+
+보조 프로그램은 `/usr/local/libexec/migration-net-helper`에 root:root0755, `/etc/migration-connector`는 root 소유0755, `net-policy.json`은 root:root0644로 설치합니다. helper는 Linux `CAP_NET_ADMIN`과 `/usr/sbin/ip`, `/usr/sbin/nft`, `/usr/bin/wg`를 요구합니다. 단말 일반 사용자에게 허용하는 sudoers 항목은 다음 한 명령이며 추가 인수를 허용하지 않습니다.
 
 ```sudoers
 CONNECTOR_USER ALL=(root) NOPASSWD: /usr/local/libexec/migration-net-helper ""

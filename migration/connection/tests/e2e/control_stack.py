@@ -56,7 +56,23 @@ def prepare(directory):
 def environment(directory):
     env = os.environ.copy()
     env["LIVE_E2E_DIR"] = str(directory)
-    bootstrap = directory / "release/releases/live-e2e-1/bootstrap.sh"
+    metadata_path = directory / "public/release-metadata.json"
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    version = metadata.get("release_version", "live-e2e-1")
+    if (
+        not isinstance(version, str)
+        or not version
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for c in version
+        )
+    ):
+        raise ValueError("invalid release version")
+    env["LIVE_E2E_RELEASE_VERSION"] = version
+    env["LIVE_E2E_BOOTSTRAP_URL"] = (
+        f"https://control.test/releases/{version}/bootstrap.sh"
+    )
+    bootstrap = directory / "release/releases" / version / "bootstrap.sh"
     env["BOOTSTRAP_SHA384"] = (
         hashlib.sha384(bootstrap.read_bytes()).hexdigest()
         if bootstrap.is_file()

@@ -13,6 +13,30 @@ SPEC.loader.exec_module(MODULE)
 
 
 class E2EReleasePreflightTests(unittest.TestCase):
+    @staticmethod
+    def elf(machine):
+        return b"\x7fELF\x02\x01" + bytes(12) + machine.to_bytes(2, "little")
+
+    def test_mislabeled_architecture_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin/linux-amd64").mkdir(parents=True)
+            (root / "bin/migration-connector").write_bytes(self.elf(183))
+            (root / "bin/linux-amd64/migration-connector").write_bytes(self.elf(183))
+            with self.assertRaisesRegex(ValueError, "does not match amd64"):
+                MODULE.prepare(root, "must-not-run", 3, with_amd64=True)
+            self.assertFalse((root / "release").exists())
+
+    def test_incomplete_amd64_build_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin/linux-amd64").mkdir(parents=True)
+            (root / "bin/migration-connector").write_bytes(self.elf(183))
+            (root / "bin/linux-amd64/.build-incomplete").touch()
+            with self.assertRaisesRegex(ValueError, "build is incomplete"):
+                MODULE.prepare(root, "must-not-run", 3, with_amd64=True)
+            self.assertFalse((root / "release").exists())
+
     def test_incomplete_build_never_creates_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -12,6 +12,17 @@ import time
 from pathlib import Path
 
 ARTIFACTS = ("migration-connector", "connector.json", "root-ca.pem", "inventory.pyz")
+HOST_ARTIFACTS = ("migration-net-helper", "net-policy.json")
+
+
+def artifact_names(bundle: Path) -> tuple[str, ...]:
+    present = [
+        (bundle / name).exists() or (bundle / name).is_symlink()
+        for name in HOST_ARTIFACTS
+    ]
+    if any(present) and not all(present):
+        raise ValueError("host installation requires both helper and client policy")
+    return ARTIFACTS + HOST_ARTIFACTS if all(present) else ARTIFACTS
 
 
 def sign(
@@ -29,7 +40,7 @@ def sign(
         raise ValueError("valid sequence and future expiry required")
     artifacts = []
     total = 0
-    for name in ARTIFACTS:
+    for name in artifact_names(bundle):
         path = bundle / name
         if path.is_symlink() or not path.is_file():
             raise ValueError("required regular release artifact missing")

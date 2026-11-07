@@ -37,10 +37,13 @@ RUN test -n "$MIGRATION_RELEASE_MLDSA_PUBLIC_KEY" && test -n "$MIGRATION_RELEASE
     && mkdir /out && cp target/release/migration-connector target/release/migration-key-broker target/release/migration-net-helper /out/ \
     && rm -rf target /usr/local/cargo/registry
 ARG TARGETARCH
-# This E2E currently validates Linux arm64 only. Amd64 needs its own checksum and run.
-RUN test "$TARGETARCH" = arm64 \
-    && curl -fSL https://dl.k8s.io/release/v1.37.2/bin/linux/arm64/kubectl -o /out/kubectl \
-    && echo 'fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509  /out/kubectl' | sha256sum -c - \
+RUN case "$TARGETARCH" in \
+      arm64) kubectl_hash=fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509 ;; \
+      amd64) kubectl_hash=c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4 ;; \
+      *) exit 1 ;; \
+    esac \
+    && curl -fSL "https://dl.k8s.io/release/v1.37.2/bin/linux/$TARGETARCH/kubectl" -o /out/kubectl \
+    && echo "$kubectl_hash  /out/kubectl" | sha256sum -c - \
     && chmod 0755 /out/kubectl
 
 FROM ubuntu:24.04 AS runtime

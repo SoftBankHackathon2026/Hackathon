@@ -99,6 +99,32 @@ class ReleaseToolsTests(unittest.TestCase):
                 Path(directory), 1, 9_000_000_000_000, Path("missing"), Path("missing")
             )
 
+    def test_host_install_assets_are_signed_as_a_pair(self):
+        publisher = tool("sign_manifest")
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            self.assertEqual(publisher.artifact_names(bundle), publisher.ARTIFACTS)
+            (bundle / "migration-net-helper").write_bytes(b"helper")
+            with self.assertRaisesRegex(ValueError, "both helper and client policy"):
+                publisher.artifact_names(bundle)
+            (bundle / "net-policy.json").write_text("{}")
+            self.assertEqual(
+                publisher.artifact_names(bundle),
+                publisher.ARTIFACTS + publisher.HOST_ARTIFACTS,
+            )
+
+    def test_host_install_symlink_is_rejected_before_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            for name in tool("sign_manifest").ARTIFACTS:
+                (bundle / name).write_bytes(b"fixture")
+            (bundle / "migration-net-helper").symlink_to(bundle / "migration-connector")
+            (bundle / "net-policy.json").write_text("{}")
+            with self.assertRaisesRegex(ValueError, "regular release artifact"):
+                tool("sign_manifest").sign(
+                    bundle, 1, 9_000_000_000_000, Path("missing"), Path("missing")
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

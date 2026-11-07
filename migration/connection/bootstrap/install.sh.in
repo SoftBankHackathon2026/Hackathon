@@ -6,7 +6,9 @@ _migration_enrollment=${MIGRATION_ENROLL-}
 unset MIGRATION_ENROLL
 set -euo pipefail
 umask 077
-PATH=/usr/sbin:/usr/bin:/sbin:/bin
+# Keep a fixed system path, including administrator-installed tools such as
+# K3s kubectl in /usr/local/bin. Do not inherit user-writable PATH entries.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
 export PATH
 
 _migration_base='@RELEASE_BASE_URL@'
@@ -43,9 +45,10 @@ case "$(uname -m)" in
   *) _migration_fail '지원하지 않는 프로세서입니다.' ;;
 esac
 for _migration_command in curl sha384sum mktemp python3 kubectl; do
-  command -v "$_migration_command" >/dev/null 2>&1 || _migration_fail '필수 단말 도구가 준비되지 않았습니다.'
+  command -v "$_migration_command" >/dev/null 2>&1 || _migration_fail "필수 단말 도구를 찾지 못했습니다: $_migration_command (검색 경로: $PATH)"
 done
-[[ -x /usr/local/libexec/migration-net-helper ]] || _migration_fail '관리자가 네트워크 보조 프로그램과 정책을 먼저 설치해야 합니다.'
+# Network prerequisites are prepared by the signed connector after device proof
+# and web approval. Administrator prompts read /dev/tty, never the seed pipe.
 [[ -n "${HOME-}" && -d "$HOME" ]] || _migration_fail '사용자 상태 디렉터리를 확인할 수 없습니다.'
 _migration_state="$HOME/.local/state/migration-connector"
 [[ ! -L "$_migration_state" ]] || _migration_fail '상태 디렉터리의 심볼릭 링크를 허용하지 않습니다.'
