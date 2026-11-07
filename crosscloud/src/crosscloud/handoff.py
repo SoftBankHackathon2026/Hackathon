@@ -12,7 +12,8 @@ ingress.env 는 원가연 durable-ingress(접수 큐, sample-app
 src/durable-ingress/server.js)를 운영자 PC compose 로 띄울 때 쓰는 env 파일이다
 (설계 0.1 S15). 대상 이름은 클라우드 라벨과 같고, 제어 토큰 값은 담지 않는다.
 
-  job = handoff.build_job_config(inventory, instance_id=..., ...)
+  source = handoff.db_from_terraform("aws", json.loads(tf_output_json))
+  job = handoff.build_job_config(inventory, source=source, target=..., ...)
   path, env_names = handoff.render_cloud_config(job, readiness, out_dir)
   path, env_names = handoff.render_ingress_env(job, targets, redis_url, out_dir)
 """
@@ -23,7 +24,7 @@ import json
 import pathlib
 import re
 import urllib.parse
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
@@ -51,6 +52,7 @@ INGRESS_CONTROL_TOKEN_ENV = "INGRESS_CONTROL_TOKEN"
 # durable-ingress 는 처음 뜰 때 'onprem' 대상이 있어야 한다(service.js
 # createIngress 의 initialTarget 기본값). 원본 앱 주소를 같은 이름으로 둔다.
 _INGRESS_INITIAL_TARGET = "onprem"
+_POSTGRES_PORT = 5432
 
 # migration.cloud 가 쪽마다 실제로 접속하는 역할. 원본은 CDC 로 읽고 대상은
 # sink 로 쓴다. app 은 이름만 쓰고(소유자 검사·트리거) 비밀번호는 읽지 않는다.
@@ -159,6 +161,11 @@ class CloudJobConfig:
         """
         if self.source.cloud == self.target.cloud:
             raise ValueError("source 와 target 의 cloud 라벨이 같다")
+        if self.source.database == self.target.database:
+            # 같으면 대상 앱이 아직 원본에 붙어 있어도 /api/info 로 못 가른다
+            # (설계 4.18 (d)). 귀환 대상은 옛 A 이름과도 달라야 하지만 그건
+            # 이 설정 한 장으로는 알 수 없다.
+            raise ValueError("원본과 대상 dbname 이 같다 — 대상 이름을 바꾼다")
         if not _JOB_ID.fullmatch(self.job_id):
             raise ValueError(f"job_id 규칙 위반: {self.job_id!r}")
         if not _LOOPBACK_URL.fullmatch(self.control_url):
@@ -203,33 +210,85 @@ def standard_logins(
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class TerraformDb:
+    """Terraform 출력에서 읽은 DB 하나.
+
+    Attributes:
+        instance_id: RDS 식별자 또는 Cloud SQL 인스턴스 이름.
+        endpoint: 접속 주소. database 는 job 이 쓸 DB 이름이다.
+    """
+
+    instance_id: str
+    endpoint: DbEndpoint
+
+
+def db_from_terraform(
+    cloud: model.Cloud,
+    outputs: dict[str, Any],
+    *,
+    database: str | None = None,
+) -> TerraformDb:
+    """`terraform output -json` 결과에서 DB 접속 정보를 읽는다.
+
+    AWS 는 terraform/aws 의 `db`(identifier·address·port·name), GCP 는
+    terraform/google/target_base 의 `db_instance_name`·`db_public_ip`·
+    `database_name` 을 읽는다. 비밀값은 출력에 없다.
+
+    Args:
+        cloud: 출력을 낸 Terraform 의 클라우드.
+        outputs: `terraform output -json` 을 json.loads 한 것.
+        database: job 이 쓸 DB 이름. None 이면 출력의 이름(대상은 job 마다
+            새 이름을 주는 것이 원칙이다 — 설계 4.18 (d)).
+
+    Raises:
+        ValueError: 필요한 출력이 없을 때.
+    """
+    if cloud == "aws":
+        db = _output(outputs, "db")
+        instance_id = _field(db, "identifier")
+        host, port = _field(db, "address"), int(_field(db, "port"))
+        name = _field(db, "name")
+    else:
+        instance_id = _output(outputs, "db_instance_name")
+        host, port = _output(outputs, "db_public_ip"), _POSTGRES_PORT
+        name = _output(outputs, "database_name")
+    return TerraformDb(
+        instance_id=str(instance_id),
+        endpoint=DbEndpoint(cloud, str(host), port, database or str(name)),
+    )
+
+
 def build_job_config(
     inventory: model.Inventory,
     *,
-    instance_id: str,
-    workload: str,
-    target: DbEndpoint,
+    source: TerraformDb,
+    target: TerraformDb,
+    source_app_user: str,
     tables: tuple[AppTable, ...],
     control_url: str,
     connect_url: str,
     now: datetime.datetime,
 ) -> CloudJobConfig:
-    """원본 Inventory 와 대상 정보로 job 설정을 만든다.
+    """원본 Inventory·Terraform 출력·운영자 인자로 job 설정을 만든다.
 
-    원본 DB 주소는 Inventory 의 postgres_instance 자원 속성(host·port·
-    database)에서, 앱 로그인은 워크로드의 db_user 에서 읽는다.
+    DB 주소는 Terraform 출력에서 받는다(수집기는 Cloud SQL 주소를 모른다).
+    앱 DB 사용자는 운영자가 준다(수집기는 Secret 값을 읽지 않아 모른다).
+    Inventory 는 원본 DB 가 실제로 파악한 원본에 있는지 맞춰 보는 데 쓴다.
 
     Raises:
-        ValueError: 자원·워크로드·속성이 없거나 규칙을 어길 때.
+        ValueError: 원본 DB 가 Inventory 에 없거나 규칙을 어길 때.
     """
-    source = _source_endpoint(inventory, instance_id)
-    app_user = _app_user(inventory, workload)
+    _require_discovered(inventory, source)
+    origin, destination = source.endpoint, target.endpoint
     return CloudJobConfig(
-        job_id=new_job_id(source.cloud, target.cloud, now),
-        source=source,
-        target=target,
-        source_logins=standard_logins(source.cloud, "source", app_user),
-        target_logins=standard_logins(target.cloud, "target", app_user),
+        job_id=new_job_id(origin.cloud, destination.cloud, now),
+        source=origin,
+        target=destination,
+        source_logins=standard_logins(origin.cloud, "source", source_app_user),
+        target_logins=standard_logins(
+            destination.cloud, "target", source_app_user
+        ),
         sslmode="require",
         tables=tables,
         control_url=control_url,
@@ -285,40 +344,34 @@ def render_cloud_config(
     return path, tuple(env_names)
 
 
-def _source_endpoint(
-    inventory: model.Inventory, instance_id: str
-) -> DbEndpoint:
+def _output(outputs: dict[str, Any], name: str) -> Any:
+    entry = outputs.get(name)
+    if not isinstance(entry, dict) or entry.get("value") in (None, ""):
+        raise ValueError(f"Terraform 출력 {name} 이 없다")
+    return entry["value"]
+
+
+def _field(value: Any, key: str) -> Any:
+    if not isinstance(value, dict) or value.get(key) in (None, ""):
+        raise ValueError(f"Terraform 출력 db.{key} 가 없다")
+    return value[key]
+
+
+def _require_discovered(inventory: model.Inventory, db: TerraformDb) -> None:
+    if inventory.cloud != db.endpoint.cloud:
+        raise ValueError(
+            f"Inventory cloud {inventory.cloud} 가 원본 {db.endpoint.cloud}"
+            " 와 다르다"
+        )
+    # 수집기 native_id: RDS 는 arn:...:db:<식별자>, Cloud SQL 은
+    # projects/<p>/instances/<이름>.
+    suffixes = (f":db:{db.instance_id}", f"/instances/{db.instance_id}")
     for resource in inventory.resources:
-        if (
-            resource.kind == "postgres_instance"
-            and resource.native_id == instance_id
+        if resource.kind == "postgres_instance" and resource.native_id.endswith(
+            suffixes
         ):
-            attributes = {kv.key: kv.value for kv in resource.attributes}
-            return DbEndpoint(
-                cloud=resource.cloud,
-                host=str(_attribute(attributes, "host", instance_id)),
-                port=int(_attribute(attributes, "port", instance_id)),
-                database=str(_attribute(attributes, "database", instance_id)),
-            )
-    raise ValueError(f"Inventory 에 postgres_instance 가 없다: {instance_id}")
-
-
-def _attribute(
-    attributes: dict[str, object], key: str, instance_id: str
-) -> object:
-    value = attributes.get(key)
-    if value is None or value == "":
-        raise ValueError(f"{instance_id}: 속성 {key} 가 없다")
-    return value
-
-
-def _app_user(inventory: model.Inventory, workload: str) -> str:
-    for candidate in inventory.workloads:
-        if candidate.name == workload:
-            if not candidate.db_user:
-                raise ValueError(f"워크로드 {workload} 의 db_user 가 없다")
-            return candidate.db_user
-    raise ValueError(f"Inventory 에 워크로드가 없다: {workload}")
+            return
+    raise ValueError(f"Inventory 에 원본 DB {db.instance_id} 가 없다")
 
 
 def _check_logins(side: Side, logins: tuple[MigrationLogin, ...]) -> None:

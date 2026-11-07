@@ -11,34 +11,20 @@ _NOW = datetime.datetime(2026, 11, 7, 15, 30, 0, tzinfo=datetime.UTC)
 _TABLES = (handoff.AppTable("public.requests", ("id",)),)
 
 
-def _inventory(db_attributes, db_user="shop_app"):
+def _inventory(cloud="aws", native_id="arn:aws:rds:ap-northeast-2:1:db:app"):
     resource = model.Resource(
         kind="postgres_instance",
-        cloud="aws",
-        native_id="ccx-src-db",
+        cloud=cloud,
+        native_id=native_id,
         region="ap-northeast-2",
-        attributes=tuple(model.KeyValue(k, v) for k, v in db_attributes),
+        attributes=(),
         source_of_truth="api",
     )
-    workload = model.Workload(
-        name="shop",
-        cloud="aws",
-        platform="ecs",
-        native_id="arn:aws:ecs:svc/shop",
-        identity_id="arn:aws:iam::1:role/shop",
-        image=None,
-        code_repo=None,
-        entries=(),
-        env=(),
-        secret_refs=(),
-        db_user=db_user,
-        depends_on=(),
-    )
     return model.Inventory(
-        cloud="aws",
+        cloud=cloud,
         collected_at=_NOW,
         resources=(resource,),
-        workloads=(workload,),
+        workloads=(),
         grants=(),
         restrictions=(),
         restriction_scans=(),
@@ -54,27 +40,46 @@ def _inventory(db_attributes, db_user="shop_app"):
     )
 
 
-_DB_ATTRIBUTES = (
-    ("host", "src.abc.ap-northeast-2.rds.amazonaws.com"),
-    ("port", 5432),
-    ("database", "shop"),
-)
-_TARGET = handoff.DbEndpoint(
-    cloud="gcp", host="34.64.1.2", port=5432, database="shop"
-)
+def _tf(value):
+    return {"value": value, "type": "string", "sensitive": False}
 
 
-def _job():
-    return handoff.build_job_config(
-        _inventory(_DB_ATTRIBUTES),
-        instance_id="ccx-src-db",
-        workload="shop",
-        target=_TARGET,
-        tables=_TABLES,
-        control_url="http://127.0.0.1:18080",
-        connect_url="http://127.0.0.1:8083",
-        now=_NOW,
-    )
+# terraform output -json 의 모양(terraform/aws·google/target_base outputs.tf).
+_AWS_OUTPUTS = {
+    "db": _tf(
+        {
+            "identifier": "app",
+            "address": "app.abc.ap-northeast-2.rds.amazonaws.com",
+            "port": 5432,
+            "name": "shop",
+            "username": "postgres",
+        }
+    ),
+    "region": _tf("ap-northeast-2"),
+}
+_GCP_OUTPUTS = {
+    "db_instance_name": _tf("app-db"),
+    "db_public_ip": _tf("34.64.1.2"),
+    "database_name": _tf("shop"),
+}
+_SOURCE = handoff.db_from_terraform("aws", _AWS_OUTPUTS)
+_TARGET_DB = handoff.db_from_terraform("gcp", _GCP_OUTPUTS, database="shop_b")
+_TARGET = _TARGET_DB.endpoint
+
+
+def _job(**overrides):
+    arguments = {
+        "source": _SOURCE,
+        "target": _TARGET_DB,
+        "source_app_user": "shop_app",
+        "tables": _TABLES,
+        "control_url": "http://127.0.0.1:18080",
+        "connect_url": "http://127.0.0.1:8083",
+        "now": _NOW,
+    }
+    arguments.update(overrides)
+    inventory = arguments.pop("inventory", _inventory())
+    return handoff.build_job_config(inventory, **arguments)
 
 
 def _all_ready():
@@ -93,12 +98,39 @@ def test_new_job_id_differs_per_direction_and_fits_migration_rule():
     assert len(forward) <= 40
 
 
-def test_build_job_config_reads_source_db_and_app_user_from_inventory():
+def test_db_from_terraform_reads_rds_outputs():
+    assert _SOURCE == handoff.TerraformDb(
+        instance_id="app",
+        endpoint=handoff.DbEndpoint(
+            "aws", "app.abc.ap-northeast-2.rds.amazonaws.com", 5432, "shop"
+        ),
+    )
+
+
+def test_db_from_terraform_reads_cloud_sql_outputs_with_job_database():
+    assert _TARGET_DB == handoff.TerraformDb(
+        instance_id="app-db",
+        endpoint=handoff.DbEndpoint("gcp", "34.64.1.2", 5432, "shop_b"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("cloud", "outputs", "missing"),
+    [
+        ("aws", {}, "db"),
+        ("aws", {"db": _tf({"identifier": "app", "port": 5432})}, "address"),
+        ("gcp", {"db_instance_name": _tf("app-db")}, "db_public_ip"),
+    ],
+)
+def test_db_from_terraform_names_missing_output(cloud, outputs, missing):
+    with pytest.raises(ValueError, match=missing):
+        handoff.db_from_terraform(cloud, outputs)
+
+
+def test_build_job_config_uses_terraform_db_and_operator_app_user():
     job = _job()
 
-    assert job.source == handoff.DbEndpoint(
-        "aws", "src.abc.ap-northeast-2.rds.amazonaws.com", 5432, "shop"
-    )
+    assert job.source == _SOURCE.endpoint
     assert job.target == _TARGET
     assert job.job_id == "ccx_aws_gcp_20261107153000"
     app_users = {
@@ -109,48 +141,26 @@ def test_build_job_config_reads_source_db_and_app_user_from_inventory():
     assert app_users == {"shop_app"}
 
 
-def test_build_job_config_rejects_missing_db_attribute():
-    inventory = _inventory(_DB_ATTRIBUTES[:2])
+def test_build_job_config_refuses_db_not_in_inventory():
+    inventory = _inventory(native_id="arn:aws:rds:ap-northeast-2:1:db:other")
 
-    with pytest.raises(ValueError, match="database"):
-        handoff.build_job_config(
-            inventory,
-            instance_id="ccx-src-db",
-            workload="shop",
-            target=_TARGET,
-            tables=_TABLES,
-            control_url="http://127.0.0.1:18080",
-            connect_url="http://127.0.0.1:8083",
-            now=_NOW,
-        )
+    with pytest.raises(ValueError, match="app"):
+        _job(inventory=inventory)
 
 
-def test_build_job_config_rejects_unknown_instance():
-    with pytest.raises(ValueError, match="no-such-db"):
-        handoff.build_job_config(
-            _inventory(_DB_ATTRIBUTES),
-            instance_id="no-such-db",
-            workload="shop",
-            target=_TARGET,
-            tables=_TABLES,
-            control_url="http://127.0.0.1:18080",
-            connect_url="http://127.0.0.1:8083",
-            now=_NOW,
-        )
+def test_build_job_config_refuses_inventory_of_other_cloud():
+    inventory = _inventory(cloud="gcp", native_id="projects/p/instances/app")
+
+    with pytest.raises(ValueError, match="cloud"):
+        _job(inventory=inventory)
 
 
-def test_build_job_config_rejects_workload_without_db_user():
-    with pytest.raises(ValueError, match="db_user"):
-        handoff.build_job_config(
-            _inventory(_DB_ATTRIBUTES, db_user=None),
-            instance_id="ccx-src-db",
-            workload="shop",
-            target=_TARGET,
-            tables=_TABLES,
-            control_url="http://127.0.0.1:18080",
-            connect_url="http://127.0.0.1:8083",
-            now=_NOW,
-        )
+def test_job_rejects_same_database_name_on_both_sides():
+    # 이름이 같으면 대상 앱이 아직 원본에 붙어 있어도 /api/info 로 못 가른다.
+    same = handoff.db_from_terraform("gcp", _GCP_OUTPUTS)
+
+    with pytest.raises(ValueError, match="dbname"):
+        _job(target=same)
 
 
 def test_job_rejects_same_cloud_on_both_sides():
@@ -167,16 +177,7 @@ def test_job_rejects_control_url_off_loopback():
 
 def test_job_rejects_app_login_reusing_migration_role_name():
     with pytest.raises(ValueError, match="app"):
-        handoff.build_job_config(
-            _inventory(_DB_ATTRIBUTES, db_user="migration_sink"),
-            instance_id="ccx-src-db",
-            workload="shop",
-            target=_TARGET,
-            tables=_TABLES,
-            control_url="http://127.0.0.1:18080",
-            connect_url="http://127.0.0.1:8083",
-            now=_NOW,
-        )
+        _job(source_app_user="migration_sink")
 
 
 @pytest.mark.parametrize(
