@@ -131,7 +131,7 @@ def _credential(ref):
                     or info.st_uid != os.getuid()
                 ):
                     raise ValueError()
-                password = stream.read(4097)
+                password = stream.read(4097).strip()
         if not password or len(password.encode("utf-8")) > 4096 or "\x00" in password:
             raise ValueError()
         return password

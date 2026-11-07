@@ -353,3 +353,17 @@ def test_postgres_live_rotation_with_temporary_role_and_database(monkeypatch):
                     sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db))
                 )
             admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+def test_postgres_admin_file_ignores_trailing_newline(tmp_path):
+    path = tmp_path / "credential"
+    path.write_text("PRIVATE-ADMIN-CANARY\n")
+    path.chmod(0o600)
+    server = PgDouble()
+    PostgresTarget(
+        spec(admin_password_ref="file:" + str(path)), server.connect
+    ).preflight()
+    assert any(
+        kwargs.get("password") == "PRIVATE-ADMIN-CANARY"
+        for kwargs in server.connection_kwargs
+    )

@@ -26,6 +26,7 @@ from .common import (
 from .models import SecretValue
 
 SCHEMA = "aws-openbao-secret-v1"
+MAX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -138,7 +139,7 @@ class OpenBao:
             and isinstance(ttl, (int, float))
             and not isinstance(ttl, bool)
             and math.isfinite(ttl)
-            and ttl > 0,
+            and 0 < ttl <= MAX_TOKEN_TTL_SECONDS,
             "FINITE_NONROOT_TOKEN_REQUIRED",
         )
         required = {self.path(p): ["create", "update", "read"] for p in paths}
@@ -150,7 +151,25 @@ class OpenBao:
             ),
             "INVALID_PREFIX",
         )
-        requested = [*required, outside, "sys/auth", "sys/policies/acl/unrelated"]
+        sibling = (
+            self.config["mount"]
+            + "/data/"
+            + self.config["prefix"]
+            + "__outside_secret_migration__/probe"
+        )
+        lifecycle = [
+            path.replace("/data/", "/" + action + "/", 1)
+            for path in required
+            for action in ("metadata", "delete", "destroy", "undelete")
+        ]
+        denied = [
+            outside,
+            sibling,
+            *lifecycle,
+            "sys/auth",
+            "sys/policies/acl/unrelated",
+        ]
+        requested = [*required, *denied]
         response = self.http.request(
             "POST", "sys/capabilities-self", {"paths": requested}
         )
@@ -161,10 +180,7 @@ class OpenBao:
                 "MIGRATION_PERMISSION_MISSING",
             )
         require(
-            all(
-                caps.get(p) == ["deny"]
-                for p in (outside, "sys/auth", "sys/policies/acl/unrelated")
-            ),
+            all(caps.get(p) == ["deny"] for p in denied),
             "MIGRATION_TOKEN_OVERPRIVILEGED",
         )
         return {

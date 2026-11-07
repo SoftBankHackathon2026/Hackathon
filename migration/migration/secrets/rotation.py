@@ -253,6 +253,10 @@ def rotate(
             password(original, spec)
             # Bind/check the actual server and ordinary account BEFORE preparing a candidate.
             service.preflight()
+            require(
+                service.verify(password(original, spec)) is True,
+                "CURRENT_CREDENTIAL_NOT_FOR_ROLE",
+            )
             new = candidate(original, spec)
             next_doc = copy.deepcopy(document)
             next_doc["values"][opid] = encode(new)

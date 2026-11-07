@@ -234,3 +234,46 @@ def test_duplicate_yaml_keys_and_private_artifacts(tmp_path):
         load(file)
     private_write(file, {"hello": "world"})
     assert file.stat().st_mode & 0o777 == 0o600
+
+
+def rehash_plan(plan):
+    plan["plan_hash"] = digest({k: v for k, v in plan.items() if k != "plan_hash"})
+    return plan
+
+
+@pytest.mark.parametrize(
+    ("kind", "change", "code"),
+    [
+        (
+            "k8s_role",
+            lambda p: p["rules"][0].update(verbs=["*"]),
+            "KUBERNETES_READ_ONLY_INITIAL_SCOPE",
+        ),
+        ("k8s_role", lambda p: p.update(kind="ClusterRole"), "KUBERNETES_ROLE_ONLY"),
+        (
+            "bao_policy",
+            lambda p: p["paths"][0].update(path="kv/*"),
+            "EXACT_KV2_DATA_PATH_REQUIRED",
+        ),
+    ],
+)
+def test_validate_plan_rechecks_grants_after_edits(
+    identity_config, identity_plan, kind, change, code
+):
+    from migration.identity.plan import validate_plan
+
+    plan = copy.deepcopy(identity_plan)
+    target = next(r for r in plan["resources"] if r["kind"] == kind)
+    change(target["payload"])
+    with pytest.raises(IdentityError, match=code):
+        validate_plan(rehash_plan(plan), identity_config)
+
+
+def test_validate_plan_rejects_unknown_kinds(identity_config, identity_plan):
+    from migration.identity.plan import validate_plan
+
+    plan = copy.deepcopy(identity_plan)
+    plan["resources"][0]["kind"] = "k8s_cluster_role_binding"
+    with pytest.raises(IdentityError, match="UNSUPPORTED_RESOURCE_KIND"):
+        validate_plan(rehash_plan(plan), identity_config)
+    assert validate_plan(identity_plan, identity_config) == identity_plan
