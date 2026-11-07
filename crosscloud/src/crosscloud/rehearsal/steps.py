@@ -197,7 +197,10 @@ def preflight(ctx: Context) -> None:
     )
     ctx.runner.sh(["docker", "buildx", "version"])
     problems = preflight_problems(cfg, identity, project, missing)
-    if problems:
+    if problems and ctx.dry:
+        # 계획만 찍는다. 실제 실행이면 여기서 멈춘다.
+        ctx.echo("  실제 실행이면 멈춤: " + "; ".join(problems))
+    elif problems:
         raise runner.StepError("; ".join(problems))
 
 
@@ -442,6 +445,15 @@ def cleanup(ctx: Context) -> None:
                     locks.enter_context(cutover_stage.cloud_lock(state))
         _stop_operator_pc(ctx)
         remaining, failed = _destroy_all(ctx)
+    if "aws" not in failed:
+        family = f"{ctx.cfg.prefix}-app"
+        ctx.runner.call(
+            f"ECS 작업 정의 {family} ACTIVE 리비전 등록 해제(Terraform 밖)",
+            lambda: deregister_task_definitions(
+                boto3.client("ecs", region_name=ctx.cfg.aws_region), family
+            ),
+            [],
+        )
     for host in _registry_hosts(ctx):
         ctx.runner.sh(["docker", "logout", host])
     left = {stack: list(addrs) for stack, addrs in remaining.items() if addrs}
@@ -553,7 +565,15 @@ def _stop_operator_pc(ctx: Context) -> None:
         return
     _require_session_ports(ctx)
     env = commands.compose_env(ctx.cfg, ctx.paths)
-    ingress = ["docker", "compose", "-f", str(commands.INGRESS_COMPOSE)]
+    # 봇도 이 프로젝트다. profile 을 켜야 봇 컨테이너·bot-ledger 도 내려간다.
+    ingress = [
+        "docker",
+        "compose",
+        "-f",
+        str(commands.INGRESS_COMPOSE),
+        "--profile",
+        "bot",
+    ]
     connect = ["docker", "compose", "-f", str(commands.CONNECT_COMPOSE)]
     ctx.runner.sh([*ingress, "stop", "traffic-bot"], env=env)
     drain = [
@@ -671,6 +691,34 @@ def _registry_hosts(ctx: Context) -> list[str]:
         if ctx.paths.outputs(stack).exists():
             hosts.append(wiring.registry_host(ctx.outputs(stack)[key]))
     return hosts
+
+
+def deregister_task_definitions(ecs: Any, family: str) -> list[str]:
+    """그 family 의 ACTIVE 작업 정의 리비전을 모두 등록 해제한다.
+
+    귀환 prepare-target 이 Terraform 밖에서 새 리비전을 등록한다. destroy 는
+    자기가 만든 리비전만 지우므로 나머지가 ACTIVE 로 남아 잔여가 된다.
+    familyPrefix 는 앞부분 일치라 family 가 정확히 같은 것만 고른다.
+
+    Args:
+        ecs: boto3 ECS 클라이언트.
+        family: 작업 정의 family(이 세션의 <접두사>-app).
+
+    Returns:
+        등록 해제한 리비전 ARN.
+    """
+    pages = ecs.get_paginator("list_task_definitions").paginate(
+        familyPrefix=family, status="ACTIVE"
+    )
+    arns = [
+        arn
+        for page in pages
+        for arn in page["taskDefinitionArns"]
+        if arn.rsplit("/", 1)[-1].rsplit(":", 1)[0] == family
+    ]
+    for arn in arns:
+        ecs.deregister_task_definition(taskDefinition=arn)
+    return arns
 
 
 def _residue(ctx: Context) -> list[str]:

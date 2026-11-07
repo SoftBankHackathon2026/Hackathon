@@ -473,3 +473,87 @@ def test_aws_master_refuses_sdk_debug_logging_before_reading_secret(
         botocore_logger.setLevel(before)
 
     assert reads == []
+
+
+def test_dry_run_preflight_reports_missing_tools_without_stopping(
+    state, no_cloud, capsys, monkeypatch
+):
+    monkeypatch.setattr(steps.shutil, "which", lambda tool: None)
+
+    rc = cli.main(["--state-dir", str(state), "preflight", "--dry-run"])
+
+    assert rc == 0
+    assert "도구 없음: terraform" in capsys.readouterr().out
+
+
+def test_real_preflight_stops_on_missing_tool(state, monkeypatch):
+    monkeypatch.setattr(steps.shutil, "which", lambda tool: None)
+    scripted = _ScriptedRunner(
+        {"gcloud config get-value project": tf.PROJECT + "\n"}
+    )
+
+    with pytest.raises(runner.StepError, match="도구 없음: terraform"):
+        steps.preflight(_real_ctx(state, scripted))
+
+
+def test_cleanup_stops_and_downs_bot_profile_too(state):
+    scripted = _ScriptedRunner(
+        {_STARTED: ["c1\n", ""], _PORT_OWNER: tf.RUN + "\n"}
+    )
+
+    steps.cleanup(_real_ctx(state, scripted))
+
+    ingress = [line for line in scripted.log if "ingress.compose" in line]
+    assert ingress
+    assert all("--profile bot" in line for line in ingress)
+
+
+def test_cleanup_deregisters_task_definitions_after_destroy(state):
+    scripted = _ScriptedRunner()
+
+    steps.cleanup(_real_ctx(state, scripted))
+
+    deregister = next(
+        i for i, line in enumerate(scripted.log) if "ccx-r1107a-app" in line
+    )
+    assert deregister > scripted.log.index("destroy aws")
+
+
+class _FakeEcs:
+    def __init__(self, arns):
+        self.arns = arns
+        self.deregistered = []
+        self.listed = []
+
+    def get_paginator(self, name):
+        assert name == "list_task_definitions"
+        return self
+
+    def paginate(self, **kwargs):
+        self.listed.append(kwargs)
+        return [{"taskDefinitionArns": self.arns}]
+
+    def deregister_task_definition(self, **kwargs):
+        self.deregistered.append(kwargs["taskDefinition"])
+
+
+def test_deregister_task_definitions_only_touches_exact_family():
+    arn = "arn:aws:ecs:ap-northeast-2:187478112557:task-definition/"
+    ecs = _FakeEcs(
+        [
+            arn + "ccx-r1107a-app:1",
+            arn + "ccx-r1107a-app:2",
+            arn + "ccx-r1107a-app2:1",
+        ]
+    )
+
+    left = steps.deregister_task_definitions(ecs, "ccx-r1107a-app")
+
+    assert ecs.listed == [
+        {"familyPrefix": "ccx-r1107a-app", "status": "ACTIVE"}
+    ]
+    assert ecs.deregistered == [
+        arn + "ccx-r1107a-app:1",
+        arn + "ccx-r1107a-app:2",
+    ]
+    assert left == ecs.deregistered
