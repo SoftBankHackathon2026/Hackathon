@@ -245,7 +245,13 @@ def main(argv: list[str] | None = None) -> int:
     if not args.platform_url or not token:
         parser.error("ONEPORT_PLATFORM_URL과 ONEPORT_INGEST_TOKEN이 필요합니다.")
     while True:
-        report_once(args, token)
+        # 플랫폼이 잠시 죽거나(502·연결 거부) 느려도 보고기는 내려가지 않는다. 다음 주기에 다시 보낸다.
+        reported = True
+        try:
+            report_once(args, token)
+        except (urllib.error.URLError, OSError) as exc:
+            reported = False
+            log(f"report failed: {exc}")
         if args.execute_commands:
             try:
                 if execute_once(args, token):
@@ -253,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             except (urllib.error.URLError, OSError) as exc:
                 log(f"command step failed: {exc}")
         if args.interval <= 0:
-            return 0
+            return 0 if reported else 1
         time.sleep(args.interval)
 
 

@@ -3,6 +3,7 @@ import json
 import shlex
 import sqlite3
 import sys
+import urllib.error
 from argparse import Namespace
 from pathlib import Path
 
@@ -152,3 +153,52 @@ def test_run_command_keeps_reporting_while_subprocess_runs(tmp_path):
     assert code == 3
     assert "done" in tail and "abc123" not in tail
     assert len(ticks) >= 2, ticks
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("https://platform.example/api", code, "Bad Gateway", {}, None)
+
+
+def test_main_one_shot_returns_1_but_does_not_crash_on_platform_502(monkeypatch, capsys):
+    monkeypatch.setenv("ONEPORT_INGEST_TOKEN", "token")
+
+    def failing_report(args, token):
+        raise _http_error(502)
+
+    monkeypatch.setattr(reporter, "report_once", failing_report)
+    rc = reporter.main(["--job-id", "forward_001", "--platform-url", "https://platform.example"])
+    assert rc == 1
+    assert "report failed" in capsys.readouterr().out
+
+
+def test_main_loop_keeps_running_after_platform_502(monkeypatch):
+    monkeypatch.setenv("ONEPORT_INGEST_TOKEN", "token")
+    calls: list[str] = []
+
+    def flaky_report(args, token):
+        calls.append("report")
+        if len(calls) == 1:
+            raise _http_error(502)
+
+    def stop_after_sleep(seconds):
+        calls.append("sleep")
+        if calls.count("sleep") == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(reporter, "report_once", flaky_report)
+    monkeypatch.setattr(reporter, "claim_command", lambda args, token: None)
+    monkeypatch.setattr(reporter.time, "sleep", stop_after_sleep)
+    with pytest.raises(KeyboardInterrupt):
+        reporter.main(
+            [
+                "--job-id",
+                "forward_001",
+                "--platform-url",
+                "https://platform.example",
+                "--interval",
+                "5",
+                "--execute-commands",
+            ]
+        )
+    # 첫 보고가 502 로 실패해도 다음 주기 보고까지 이어진다.
+    assert calls == ["report", "sleep", "report", "sleep"]
