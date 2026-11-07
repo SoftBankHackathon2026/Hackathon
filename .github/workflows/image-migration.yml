@@ -6,6 +6,9 @@ on:
       - 'migration/migration/image_migration/**'
       - 'migration/tests/image_migration/**'
       - 'migration/config.image-migration.example.yaml'
+      - 'migration/migration/image_export/**'
+      - 'migration/tests/test_image_export*.py'
+      - 'migration/config.image-export.example.yaml'
       - 'migration/pyproject.toml'
       - '.github/workflows/image-migration.yml'
   push:
@@ -14,6 +17,9 @@ on:
       - 'migration/migration/image_migration/**'
       - 'migration/tests/image_migration/**'
       - 'migration/config.image-migration.example.yaml'
+      - 'migration/migration/image_export/**'
+      - 'migration/tests/test_image_export*.py'
+      - 'migration/config.image-export.example.yaml'
       - 'migration/pyproject.toml'
       - '.github/workflows/image-migration.yml'
 
@@ -41,8 +47,9 @@ jobs:
         env:
           ONEPORT_IMAGE_TEST_REGISTRY: '1'
         run: |
-          ruff check --select E4,E7,E9,F,I migration/image_migration tests/image_migration
-          ruff format --check migration/image_migration tests/image_migration
-          python -m pytest tests/image_migration
+          ruff check --select E4,E7,E9,F,I migration/image_migration migration/image_export tests/image_migration tests/test_image_export*.py
+          ruff format --check migration/image_migration migration/image_export tests/image_migration tests/test_image_export*.py
+          python -m pytest tests/image_migration tests/test_image_export*.py
           cd /tmp
           python -m migration.image_migration --help
+          python -m migration.image_export --help
