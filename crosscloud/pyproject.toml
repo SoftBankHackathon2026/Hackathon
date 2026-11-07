@@ -9,6 +9,7 @@ description = "AWS↔GCP 클라우드 간 이전 도구 (파악·판정·적응�
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.35,<2",
+    "google-auth[requests]>=2.30,<3",
     "jsonschema>=4.23,<5",
 ]
 
