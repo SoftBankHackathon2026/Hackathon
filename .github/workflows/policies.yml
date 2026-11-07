@@ -14,10 +14,18 @@ on:
     branches: [main]
     paths:
       - "policies/**"
+      - "migration/migration/cutover*.py"
+      - "migration/migration/policy_client.py"
+      - "migration/tests/test_cutover*.py"
+      - "migration/tests/test_return_cutover.py"
       - ".github/workflows/policies.yml"
   pull_request:
     paths:
       - "policies/**"
+      - "migration/migration/cutover*.py"
+      - "migration/migration/policy_client.py"
+      - "migration/tests/test_cutover*.py"
+      - "migration/tests/test_return_cutover.py"
       - ".github/workflows/policies.yml"
   workflow_dispatch:
 
@@ -89,7 +97,7 @@ jobs:
         working-directory: migration
         run: |
           pip install -q ".[dev]"
-          python -m pytest tests/test_policy_client.py -q
+          python -m pytest tests/test_policy_client.py tests/test_cutover.py tests/test_cutover_policy.py tests/test_return_cutover.py -q
 
   build:
     name: build migration-policy
