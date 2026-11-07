@@ -2,6 +2,12 @@ export function formatCount(value: number) {
   return Math.round(value).toLocaleString("ko-KR");
 }
 
+export function formatRatio(part: number, whole: number) {
+  if (whole <= 0) return "-";
+  const tenths = Math.max(0, Math.min(1000, Math.floor((part * 1000) / whole)));
+  return `${(tenths / 10).toFixed(1)}%`;
+}
+
 export function formatSeconds(seconds: number | null) {
   if (seconds === null || !Number.isFinite(seconds)) return "-";
   if (seconds <= 0) return "0초";

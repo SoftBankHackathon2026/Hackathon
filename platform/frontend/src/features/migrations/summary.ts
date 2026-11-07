@@ -17,10 +17,14 @@ export function jobCounts(migrations: MigrationSummary[]) {
   };
 }
 
+export function failedWrites(m: Pick<MigrationSummary, "writes" | "downtime">) {
+  return m.writes.failed + m.downtime.failed_requests;
+}
+
 export function writeTotals(migrations: MigrationSummary[]) {
   return migrations.reduce(
     (acc, m) => ({
-      failed: acc.failed + m.downtime.failed_requests,
+      failed: acc.failed + failedWrites(m),
       rejected: acc.rejected + m.writes.rejected,
     }),
     { failed: 0, rejected: 0 },
@@ -203,10 +207,7 @@ export function overviewCards(migrations: MigrationSummary[]): OverviewCard[] {
           ? ["해당하는 작업이 없어요"]
           : migrations
               .slice(0, 3)
-              .map(
-                (m) =>
-                  `${m.job_id} ${formatCount(m.downtime.failed_requests)}건`,
-              ),
+              .map((m) => `${m.job_id} ${formatCount(failedWrites(m))}건`),
     },
     {
       title: "최대 쓰기 중단",

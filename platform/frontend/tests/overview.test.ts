@@ -27,7 +27,7 @@ function job(
     source_env: "onprem",
     target_env: "aws",
     status: "completed",
-    writes: { mismatch: 0, rejected: 0 },
+    writes: { failed: 0, mismatch: 0, rejected: 0 },
     downtime: { failed_requests: failed, write_pause_seconds: pause },
     verify_mismatch: mismatch,
     ...over,
