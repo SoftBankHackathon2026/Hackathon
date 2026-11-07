@@ -137,10 +137,12 @@ class Kubectl:
     ):
         # Configuration/executable are trusted local agent configuration, never
         # accepted from a remote task payload.
-        binary = executable or shutil.which("kubectl")
+        binary = (
+            executable or os.environ.get("MIGRATION_KUBECTL") or shutil.which("kubectl")
+        )
         if not binary:
             raise InventoryError("KUBECTL_NOT_INSTALLED")
-        self.base = [str(Path(binary).resolve())]
+        self.base = [str(Path(binary).absolute())]
         if kubeconfig:
             self.base.append("--kubeconfig=" + str(Path(kubeconfig).resolve()))
         self.runner = runner

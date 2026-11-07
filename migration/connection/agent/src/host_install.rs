@@ -330,11 +330,20 @@ fn unit_arg(value: &str) -> Result<String> {
 
 // Preserve local CLI configuration selectors across the service boundary.
 // Access keys, tokens and arbitrary environment variables never enter the unit.
-const CLOUD_SELECTORS: [&str; 3] = ["AWS_PROFILE", "AWS_REGION", "CLOUDSDK_ACTIVE_CONFIG_NAME"];
+const TOOL_SELECTORS: [&str; 4] = [
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "CLOUDSDK_ACTIVE_CONFIG_NAME",
+    "MIGRATION_KUBECTL",
+];
 
 fn unit(
-    bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str,
-    selectors: &[String; 3],
+    bundle: &Path,
+    uid: u32,
+    request: &str,
+    home: &str,
+    kubeconfig: &str,
+    selectors: &[String],
 ) -> Result<String> {
     crate::api::identifier(request)?;
     if uid == 0
@@ -359,9 +368,13 @@ fn unit(
     let home = unit_arg(&format!("HOME={home}"))?;
     let kubeconfig = unit_arg(&format!("KUBECONFIG={kubeconfig}"))?;
     let mut cloud = String::new();
-    for (name, value) in CLOUD_SELECTORS.iter().zip(selectors) {
+    for (name, value) in TOOL_SELECTORS.iter().zip(selectors) {
         if !value.is_empty() {
-            if value.len() > 128 {
+            if *name == "MIGRATION_KUBECTL" {
+                if !Path::new(value).is_absolute() {
+                    return Err("kubectl 경로는 절대 경로여야 합니다.".into());
+                }
+            } else if value.len() > 128 {
                 return Err("클라우드 명령줄 도구 설정 이름이 너무 깁니다.".into());
             }
             cloud.push(' ');
@@ -399,9 +412,19 @@ pub fn start_service(bundle: &Path, request: &str, replaces: Option<&str>) -> Re
         .map_err(|_| "invalid kubeconfig path")?,
         None => String::new(),
     };
-    let mut selectors = CLOUD_SELECTORS.map(|name| std::env::var(name).unwrap_or_default());
+    let mut selectors = TOOL_SELECTORS.map(|name| std::env::var(name).unwrap_or_default());
     if selectors[1].is_empty() {
         selectors[1] = std::env::var("AWS_DEFAULT_REGION").unwrap_or_default();
+    }
+    if let Some(path) = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| cwd.join(dir).join("kubectl"))
+            .find(|tool| fs::metadata(tool).is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0))
+    }) {
+        selectors[3] = path
+            .into_os_string()
+            .into_string()
+            .map_err(|_| "invalid kubectl path")?;
     }
     unit(&bundle, uid, request, &home, &kubeconfig, &selectors)?;
     let selectors = serde_json::to_string(&selectors)?;
@@ -455,9 +478,12 @@ pub fn install_service(
     let uid = uid.parse::<u32>()?;
     installation_account(uid, user)?;
     let selectors = selectors
-        .map(serde_json::from_str::<[String; 3]>)
+        .map(serde_json::from_str::<Vec<String>>)
         .transpose()?
         .unwrap_or_default();
+    if selectors.len() > TOOL_SELECTORS.len() {
+        return Err("지원하지 않는 도구 설정입니다.".into());
+    }
     let content = unit(bundle, uid, request, home, kubeconfig, &selectors)?;
     for path in ["/", "/etc", "/etc/systemd", SERVICE_DIR, "/run"] {
         trusted_directory(Path::new(path))?;
@@ -792,10 +818,15 @@ mod tests {
             "request_12345678901234",
             "/home/client",
             "/home/client/a config:/home/client/$KUBE",
-            &["demo-profile".into(), "ap-northeast-2".into(), "demo-config".into()],
+            &[
+                "demo-profile".into(),
+                "ap-northeast-2".into(),
+                "demo-config".into(),
+                "/home/client/.local/bin/kubectl".into(),
+            ],
         )
         .unwrap();
-        assert!(content.contains(r#""AWS_PROFILE=demo-profile" "AWS_REGION=ap-northeast-2" "CLOUDSDK_ACTIVE_CONFIG_NAME=demo-config""#));
+        assert!(content.contains(r#""AWS_PROFILE=demo-profile" "AWS_REGION=ap-northeast-2" "CLOUDSDK_ACTIVE_CONFIG_NAME=demo-config" "MIGRATION_KUBECTL=/home/client/.local/bin/kubectl""#));
         assert!(content.contains("Type=notify\nNotifyAccess=main\nUser=1001\n"));
         assert!(content.contains(
             r#"ExecStart=:/bin/sh -c "exec \"$@\"" migration-connector-launch "/home/client/with spaces/%%u \"quoted\"/migration-connector" serve "#
@@ -807,7 +838,7 @@ mod tests {
             "request_12345678901234",
             "/root",
             "",
-            &Default::default()
+            &[]
         )
         .is_err());
         assert!(unit(
@@ -816,7 +847,7 @@ mod tests {
             "request_12345678901234",
             "/home/client\n[Service]",
             "",
-            &Default::default()
+            &[]
         )
         .is_err());
     }

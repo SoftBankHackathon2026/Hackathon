@@ -138,6 +138,59 @@ fn remove_owned(p: &Policy, s: &State) -> Result<()> {
     }
     remove(p)
 }
+
+fn client_lease_expired(p: &Policy, s: &State) -> Result<bool> {
+    if s.key_expires_at_ms <= migration_connector::now_ms() {
+        return Ok(true);
+    }
+    let table = format!("migration_{}", p.interface);
+    let output = cmd(
+        "/usr/sbin/nft",
+        &["-j", "list", "set", "inet", &table, "lease"],
+        None,
+    )?;
+    let data: serde_json::Value = serde_json::from_slice(&output)?;
+    let set = data["nftables"]
+        .as_array()
+        .and_then(|items| {
+            items.iter().filter_map(|item| item.get("set")).find(|set| {
+                set["family"] == "inet" && set["table"] == table && set["name"] == "lease"
+            })
+        })
+        .ok_or("lease set unconfirmed")?;
+    // nft omits elem when the set is empty. Unknown shapes cannot prove expiry.
+    match set.get("elem") {
+        None => Ok(true),
+        Some(elements) => elements
+            .as_array()
+            .map(Vec::is_empty)
+            .ok_or_else(|| "lease elements unconfirmed".into()),
+    }
+}
+
+fn prepare_client(p: &Policy, r: &Request) -> Result<bool> {
+    if p.role != "client" {
+        return Err("client recovery requires a client policy".into());
+    }
+    match fs::symlink_metadata(STATE) {
+        Ok(_) => {
+            let s = state()?;
+            let same_binding = s.connection_id == r.connection_id && s.epoch == r.epoch;
+            if !same_binding && !client_lease_expired(p, &s)? {
+                return Ok(false);
+            }
+            remove_owned(p, &s)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if Path::new("/sys/class/net").join(&p.interface).exists() {
+                return Err("unowned interface exists".into());
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(true)
+}
+
 fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
     p.validate()?;
     if r.connection_id.len() < 16
@@ -150,6 +203,7 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
         return Err("bad connection identifier".into());
     }
     match r.operation.as_str() {
+        "prepare-client" => Ok(serde_json::json!({"ready": prepare_client(p, r)?})),
         "check" => {
             let status = fs::read_to_string("/proc/self/status")?;
             let cap = status
