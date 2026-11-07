@@ -25,6 +25,7 @@ import {
 } from "./ConnectionRegistration";
 import { CopyFailure, copyEnrollmentCommand } from "./copyEnrollmentCommand";
 import { connectionStatus, formatTime, STEPS, stepFor } from "./model";
+import { LiveAppSelect } from "./LiveAppSelect";
 import { AppSelectStep } from "./AppSelectStep";
 import "./prepare.css";
 
@@ -179,7 +180,11 @@ export function PreparePage({
       });
   }
   const status = snapshot ? connectionStatus(snapshot) : null;
-  const registered = Boolean(snapshot?.environmentId && snapshot.target);
+  const registered = Boolean(
+    snapshot?.environmentId &&
+    snapshot.target &&
+    snapshot.device === "APPROVED",
+  );
   const apps = phase === "apps" && registered;
   const source = snapshot?.collected.find(
     (c) => c.id === snapshot.selectedEnvironmentId,
@@ -211,10 +216,29 @@ export function PreparePage({
       )}
       {apps && snapshot?.target && (
         <>
-          <AppSelectStep
-            sourceName={snapshot.target.name}
-            namespace={source?.context ?? "default"}
-          />
+          {gateway.mode === "preview" ? (
+            <AppSelectStep
+              sourceName={snapshot.target.name}
+              namespace={source?.context ?? "default"}
+            />
+          ) : (
+            <LiveAppSelect
+              key={snapshot.id + ":" + snapshot.inventoryDigest}
+              snapshot={snapshot}
+              busy={busy}
+              onRefresh={() =>
+                run(
+                  () =>
+                    gateway.collect(
+                      snapshot.id,
+                      snapshot.selectedEnvironmentId!,
+                    ),
+                  "앱 목록 수집을 요청했어요.",
+                )
+              }
+            />
+          )}
+          {error && <p role="alert">{error}</p>}
           <div className="appsel-bar">
             <span className="appsel-bar-status">
               <StatusDot tone="ok">
@@ -370,11 +394,7 @@ export function PreparePage({
                   ) : snapshot?.environmentId ? (
                     <RegisteredEnvironment
                       snapshot={snapshot}
-                      onNext={
-                        registered && gateway.mode === "preview"
-                          ? () => setPhase("apps")
-                          : undefined
-                      }
+                      onNext={registered ? () => setPhase("apps") : undefined}
                     />
                   ) : step === 1 && snapshot ? (
                     <ConnectionTargetForm

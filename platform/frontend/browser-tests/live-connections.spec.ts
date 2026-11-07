@@ -210,10 +210,38 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "다음: 앱 선택" }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
   await expect(
-    page.getByText(/실제 연결에서는 환경 등록까지 지원해요/),
+    page.getByRole("heading", { name: "옮길 앱 고르기" }),
   ).toBeVisible();
+  await expect(
+    page.getByText(/이전 수집 결과에는 앱 목록이 없어요/),
+  ).toBeVisible();
+  await expect(page.getByText("sample-app", { exact: true })).toHaveCount(0);
+  state!.workloads = {
+    coverage: "complete",
+    items: [
+      {
+        namespace: "customer",
+        kind: "Deployment",
+        name: "real-orders",
+        replicas: 2,
+        images: ["registry/orders:v1"],
+        secrets: ["orders-db"],
+        configMaps: [],
+        pvcs: [],
+      },
+    ],
+  };
+  state!.inventoryDigest = "updated-inventory";
+  await expect(
+    page.getByText("customer / real-orders", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: "customer/Deployment/real-orders 선택" })
+    .check();
+  await expect(page.getByText("선택한 앱 1개", { exact: true })).toBeVisible();
   expect(mutations.find((item) => item.action === "approve")?.body.code).toBe(
     "ABCD2345",
   );

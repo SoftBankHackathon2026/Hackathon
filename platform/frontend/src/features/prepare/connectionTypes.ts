@@ -34,6 +34,20 @@ export type ConnectionSnapshot = {
   collectionPending?: boolean;
   discovered: DiscoveredEnvironment[];
   collected: CollectedEnvironment[];
+  workloads?: {
+    coverage: "complete" | "unavailable";
+    rolloutsAvailable?: boolean;
+    items: {
+      namespace: string;
+      kind: string;
+      name: string;
+      replicas: number;
+      images: string[];
+      secrets: string[];
+      configMaps: string[];
+      pvcs: string[];
+    }[];
+  } | null;
   collectedAt?: number;
   inventoryDigest?: string;
   selectedEnvironmentId?: string;

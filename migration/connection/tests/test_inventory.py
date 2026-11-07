@@ -108,6 +108,41 @@ class FakeKubectl:
                     }
                 ]
             }
+        elif resource == "rollouts.argoproj.io":
+            result = {"items": []}
+        elif resource == "deployments.apps,statefulsets.apps,daemonsets.apps":
+            result = {
+                "items": [
+                    {
+                        "kind": "Deployment",
+                        "metadata": {"name": "actual-app", "namespace": "customer"},
+                        "spec": {
+                            "replicas": 2,
+                            "template": {
+                                "spec": {
+                                    "containers": [
+                                        {
+                                            "image": "registry/app:v1",
+                                            "env": [
+                                                {"name": "PASSWORD", "value": SECRET},
+                                                {
+                                                    "name": "DB",
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": "app-db",
+                                                            "key": "password",
+                                                        }
+                                                    },
+                                                },
+                                            ],
+                                        }
+                                    ]
+                                }
+                            },
+                        },
+                    }
+                ]
+            }
         else:
             raise AssertionError("Unexpected resource: " + resource)
         return json.dumps(result).encode()
@@ -117,6 +152,26 @@ class InventoryTests(unittest.TestCase):
     def setUp(self):
         self.runner = FakeKubectl()
         self.client = Kubectl(runner=self.runner, executable="/usr/local/bin/kubectl")
+
+    def test_workloads_are_real_and_only_safe_references_cross_boundary(self):
+        report = self.report()
+        self.assertEqual(report["workloads"]["items"][0]["name"], "actual-app")
+        self.assertEqual(report["workloads"]["items"][0]["secrets"], ["app-db"])
+        self.assertNotIn(SECRET, json.dumps(report))
+        report["workloads"]["items"][0]["password"] = SECRET
+        with self.assertRaises(ReportError):
+            validate_report(report)
+
+    def test_denied_workloads_are_not_reported_as_empty_success(self):
+        self.runner.denied.add("deployments.apps,statefulsets.apps,daemonsets.apps")
+        self.assertEqual(
+            self.report()["workloads"], {"coverage": "unavailable", "items": []}
+        )
+
+    def test_legacy_report_still_valid(self):
+        report = self.report()
+        del report["workloads"]
+        validate_report(report)
 
     def selected(self):
         return next(
