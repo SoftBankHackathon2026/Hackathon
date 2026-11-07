@@ -21,9 +21,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 CUTOVER_DB = "cutover.sqlite3"
 POLICY_DB = "policy.sqlite3"
@@ -40,6 +40,9 @@ ACTION_ARGS = {
     "abort": ["abort"],
 }
 EXIT_CONFIG = 2
+POLICY_DIR = "policy"
+POLICY_EVIDENCE = "CUTOVER_POLICY_EVIDENCE"
+POLICY_SETTINGS = "CUTOVER_POLICY_COLLECTOR_SETTINGS"
 
 
 def log(message: str) -> None:
@@ -159,12 +162,15 @@ def command_argv(
 
 
 def run_command(
-    argv: list[str], on_tick: Callable[[], None] | None = None, tick_seconds: float = 5.0
+    argv: list[str],
+    on_tick: Callable[[], None] | None = None,
+    tick_seconds: float = 5.0,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     """cutover 서브프로세스를 끝까지 돌린다. 실행 중에도 tick_seconds 마다 on_tick(보통 report_once)을
     불러 플랫폼 화면의 단계가 멈추지 않게 한다. 출력은 가린 뒤 끝 LOG_TAIL_LIMIT 자만 남긴다."""
     proc = subprocess.Popen(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env
     )
     chunks: list[str] = []
 
@@ -281,6 +287,28 @@ def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
     return path
 
 
+def policy_env(claimed: dict, state_dir: Path) -> dict[str, str]:
+    job_id = claimed["job_id"]
+    out_dir = state_dir / POLICY_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in (POLICY_EVIDENCE, POLICY_SETTINGS)}
+    env[POLICY_EVIDENCE] = str(out_dir / f"{job_id}.json")
+    collectors_path = os.environ.get("CUTOVER_POLICY_COLLECTORS")
+    if not collectors_path:
+        return env
+    collectors = json.loads(Path(collectors_path).read_text())
+    if not isinstance(collectors, dict):
+        raise TypeError("정책 증거 수집 설정은 대상 이름별 객체여야 합니다.")
+    settings = collectors.get(claimed["data_target"])
+    if settings is None:
+        return env
+    path = out_dir / f"{job_id}.settings.json"
+    path.write_text(json.dumps(settings))
+    path.chmod(0o600)
+    env[POLICY_SETTINGS] = str(path)
+    return env
+
+
 def execute_any(args: argparse.Namespace, token: str) -> bool:
     claimed = claim_any_command(args, token)
     if claimed is None:
@@ -297,13 +325,15 @@ def execute_any(args: argparse.Namespace, token: str) -> bool:
             str(config),
             args.state_dir,
         )
+        env = policy_env(claimed, state_dir)
         log(f"command {command_id} argv: {' '.join(argv)}")
         exit_code, tail = run_command(
             argv,
             on_tick=lambda: report_job(args, token, job_id),
             tick_seconds=float(getattr(args, "interval", 0) or 5),
+            env=env,
         )
-    except (ValueError, OSError) as exc:
+    except (ValueError, TypeError, OSError) as exc:
         exit_code, tail = EXIT_CONFIG, redact(str(exc))
     cutover = read_cutover(state_dir, job_id)
     stage = cutover["stage"] if cutover else None
