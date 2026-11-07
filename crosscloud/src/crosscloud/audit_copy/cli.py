@@ -18,17 +18,18 @@ r"""감사 기록 이관 명령줄 — 실클라우드 시험(T2·T3)과 리허�
   python -m crosscloud.audit_copy.cli verify-gcp \
       --target-bucket ccx-RUN-audit-s3 --run RUN --receipt receipt-gcp.json
 
-종료 코드: 0 valid(이관 명령은 성공), 1 invalid, 2 사용법 오류,
+종료 코드: 0 valid(이관 명령은 성공), 1 invalid, 2 사용법·입력 파일 오류,
 3 no_evidence(어긋난 것은 없지만 서명으로 확인한 객체가 없음 — GCP→AWS
-검증은 늘 3).
+검증은 늘 3), 4 partial(일부만 서명으로 확인 — 개수는 결과의 counts).
 """
 
 import argparse
+import contextlib
 import json
 import pathlib
 import sys
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Iterator, Sequence
+from typing import Any, TextIO
 
 import boto3
 from google.cloud import storage
@@ -36,8 +37,19 @@ from google.cloud import storage
 from crosscloud.audit_copy import archive, archive_files, object_store
 
 EXIT_INVALID = 1
+EXIT_USAGE = 2
 EXIT_NO_EVIDENCE = 3
-_EXIT_CODES = {"invalid": EXIT_INVALID, "no_evidence": EXIT_NO_EVIDENCE}
+EXIT_PARTIAL = 4
+_EXIT_CODES = {
+    "invalid": EXIT_INVALID,
+    "no_evidence": EXIT_NO_EVIDENCE,
+    "partial": EXIT_PARTIAL,
+}
+_PROG = "crosscloud.audit_copy.cli"
+
+
+class _InputError(Exception):
+    """운영자 입력(파일·run)이 틀렸다. 한 줄로 알리고 종료 코드 2 로 끝낸다."""
 
 
 def open_s3_bucket(bucket: str) -> object_store.ObjectStore:
@@ -52,79 +64,121 @@ def open_gcs_bucket(bucket: str) -> object_store.ObjectStore:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """명령 하나를 실행하고 종료 코드를 돌려준다."""
-    parser = _parser()
-    args = parser.parse_args(argv)
-    if args.is_copy and pathlib.Path(args.receipt).exists():
-        parser.error(f"이관 기록 파일이 이미 있음: {args.receipt}")
-    result = args.run_command(args)
+    args = _parser().parse_args(argv)
+    try:
+        result = args.run_command(args)
+    except _InputError as e:
+        sys.stderr.write(f"{_PROG}: 오류: {e}\n")
+        return EXIT_USAGE
     sys.stdout.write(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     return _EXIT_CODES.get(result.get("result", ""), 0)
 
 
 def _aws_to_gcp(args: argparse.Namespace) -> dict[str, Any]:
-    receipt = archive.archive_cloudtrail(
-        open_s3_bucket(args.source_bucket),
-        args.source_prefix,
-        open_gcs_bucket(args.target_bucket),
-        args.run,
-        _read_public_keys(args.public_keys),
-    )
-    return _write_receipt(args.receipt, receipt)
+    _check_run(args.run)
+    public_keys = _read_public_keys(args.public_keys)
+    with _new_receipt_file(args.receipt) as receipt_file:
+        receipt = archive.archive_cloudtrail(
+            open_s3_bucket(args.source_bucket),
+            args.source_prefix,
+            open_gcs_bucket(args.target_bucket),
+            args.run,
+            public_keys,
+        )
+        return _write_receipt(receipt_file, receipt)
 
 
 def _gcp_to_aws(args: argparse.Namespace) -> dict[str, Any]:
-    receipt = archive.archive_gcp_export(
-        open_gcs_bucket(args.source_bucket),
-        args.source_prefix,
-        open_s3_bucket(args.target_bucket),
-        args.run,
-    )
-    return _write_receipt(args.receipt, receipt)
+    _check_run(args.run)
+    with _new_receipt_file(args.receipt) as receipt_file:
+        receipt = archive.archive_gcp_export(
+            open_gcs_bucket(args.source_bucket),
+            args.source_prefix,
+            open_s3_bucket(args.target_bucket),
+            args.run,
+        )
+        return _write_receipt(receipt_file, receipt)
 
 
 def _verify_aws(args: argparse.Namespace) -> dict[str, Any]:
+    _check_run(args.run)
+    receipt = _read_receipt(args.receipt)
+    public_keys = _read_public_keys(args.public_keys)
     return archive.verify_cloudtrail_archive(
-        open_gcs_bucket(args.target_bucket),
-        args.run,
-        _read_receipt(args.receipt),
-        _read_public_keys(args.public_keys),
+        open_gcs_bucket(args.target_bucket), args.run, receipt, public_keys
     )
 
 
 def _verify_gcp(args: argparse.Namespace) -> dict[str, Any]:
+    _check_run(args.run)
+    receipt = _read_receipt(args.receipt)
     return archive.verify_gcp_archive(
-        open_s3_bucket(args.target_bucket),
-        args.run,
-        _read_receipt(args.receipt),
+        open_s3_bucket(args.target_bucket), args.run, receipt
     )
+
+
+def _check_run(run_id: str) -> None:
+    try:
+        archive.check_run_id(run_id)
+    except ValueError as e:
+        raise _InputError(str(e)) from e
 
 
 def _read_public_keys(
     paths: Sequence[str],
 ) -> tuple[archive_files.PublicKey, ...]:
-    return archive_files.merge_public_keys(
-        archive_files.public_keys_from_cli_output(_read_json(path))
-        for path in paths
-    )
+    try:
+        return archive_files.merge_public_keys(
+            archive_files.public_keys_from_cli_output(_read_json(path))
+            for path in paths
+        )
+    except archive_files.InvalidArchiveFileError as e:
+        raise _InputError(f"공개키 파일: {e}") from e
 
 
 def _read_receipt(path: str) -> archive_files.Receipt:
-    return archive_files.receipt_from_json(_read_json(path))
+    try:
+        return archive_files.receipt_from_json(_read_json(path))
+    except archive_files.InvalidArchiveFileError as e:
+        raise _InputError(f"이관 기록 {path}: {e}") from e
 
 
-def _write_receipt(path: str, receipt: archive_files.Receipt) -> dict[str, Any]:
+@contextlib.contextmanager
+def _new_receipt_file(path: str) -> Iterator[TextIO]:
+    """복사를 시작하기 전에 이관 기록 파일을 새로 만들어 확보한다.
+
+    이미 있으면 아무것도 복사하지 않고 _InputError 다. 이관이 실패하면
+    비어 있는 확보 파일을 지운다.
+    """
+    try:
+        receipt_file = open(path, "x", encoding="utf-8")
+    except OSError as e:
+        raise _InputError(f"이관 기록 파일을 새로 만들 수 없음: {e}") from e
+    try:
+        with receipt_file:
+            yield receipt_file
+    except BaseException:
+        pathlib.Path(path).unlink(missing_ok=True)
+        raise
+
+
+def _write_receipt(
+    receipt_file: TextIO, receipt: archive_files.Receipt
+) -> dict[str, Any]:
     document = archive_files.receipt_to_json(receipt)
-    with open(path, "x", encoding="utf-8") as f:
-        json.dump(document, f, ensure_ascii=False, indent=2)
+    json.dump(document, receipt_file, ensure_ascii=False, indent=2)
     return document
 
 
 def _read_json(path: str) -> object:
-    return json.loads(pathlib.Path(path).read_text("utf-8"))
+    try:
+        return json.loads(pathlib.Path(path).read_text("utf-8"))
+    except (OSError, ValueError) as e:
+        raise _InputError(f"{path}: {e}") from e
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="crosscloud.audit_copy.cli")
+    parser = argparse.ArgumentParser(prog=_PROG)
     commands = parser.add_subparsers(required=True)
     for name, run_command, is_copy, needs_keys in (
         ("aws-to-gcp", _aws_to_gcp, True, True),
@@ -133,7 +187,7 @@ def _parser() -> argparse.ArgumentParser:
         ("verify-gcp", _verify_gcp, False, False),
     ):
         command = commands.add_parser(name)
-        command.set_defaults(run_command=run_command, is_copy=is_copy)
+        command.set_defaults(run_command=run_command)
         command.add_argument("--target-bucket", required=True)
         command.add_argument("--run", required=True)
         command.add_argument(

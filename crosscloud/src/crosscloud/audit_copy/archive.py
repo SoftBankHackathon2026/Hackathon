@@ -15,9 +15,11 @@ manifest.json 을 남긴다. 두 방향 모두 이관 기록(Receipt)을 돌려�
 이관 기록과 SHA-256 이 같은 bundle·manifest 만 믿고, 공개키는 운영자가
 보관한 list-public-keys 파일 것만 쓴다.
 
-결과(result)는 셋 중 하나다. invalid: 변조·누락·기록 불일치.
+결과(result)는 넷 중 하나다. invalid: 변조·누락·기록 불일치.
 no_evidence: 어긋난 것은 없지만 서명으로 확인한 객체도 없음(GCP→AWS 는 늘
-이것이다). valid: 서명으로 확인한 객체가 있고 어긋난 것이 없음.
+이것이다). partial: 일부만 서명으로 확인됨 — 다이제스트가 덮지 않는 객체
+(끼워 넣은 객체, 아직 다이제스트가 오지 않은 최신 로그, backfill 만 덮는
+로그)나 검증 꺼짐 구간이 있다. valid: 모든 객체를 서명으로 확인함.
 """
 
 import hashlib
@@ -145,7 +147,7 @@ def verify_cloudtrail_archive(
 
     Returns:
         {"direction", "result", "archive_file", ...}. result 는 valid·
-        invalid·no_evidence.
+        partial·invalid·no_evidence 이고, 개수는 cloudtrail.counts 에 있다.
     """
     try:
         document = _load_trusted(target, run_id, receipt, "aws_to_gcp", _BUNDLE)
@@ -335,9 +337,18 @@ def _all_valid(transfer: list[dict[str, str]]) -> bool:
     return all(entry["status"] == "valid" for entry in transfer)
 
 
-def _run_prefix(run_id: str) -> str:
+def check_run_id(run_id: str) -> None:
+    """run_id 가 ccx-<run> 규약(영문 소문자·숫자 1–16자)인지 본다.
+
+    Raises:
+        ValueError: 규약에 맞지 않을 때.
+    """
     if not _RUN_ID.fullmatch(run_id):
         raise ValueError(f"run_id 는 영문 소문자·숫자 1–16자: {run_id!r}")
+
+
+def _run_prefix(run_id: str) -> str:
+    check_run_id(run_id)
     return f"ccx-{run_id}/"
 
 

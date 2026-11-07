@@ -142,16 +142,76 @@ def test_verify_aws_exits_nonzero_on_tampering(buckets, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["result"] == "invalid"
 
 
-def test_existing_receipt_file_is_not_overwritten(buckets, tmp_path):
+def test_existing_receipt_file_stops_before_copying(buckets, tmp_path, capsys):
     _fill_trail(buckets)
     (tmp_path / "receipt.json").write_text("{}")
 
-    with pytest.raises(SystemExit) as raised:
-        _aws_to_gcp(tmp_path)
+    code = _aws_to_gcp(tmp_path)
 
-    assert raised.value.code == 2
+    assert code == 2
     assert (tmp_path / "receipt.json").read_text() == "{}"
     assert ("gs", "ccx-t-audit-gcs") not in buckets
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
+def test_invalid_run_id_exits_2_and_leaves_no_receipt(
+    buckets, tmp_path, capsys
+):
+    _fill_trail(buckets)
+
+    code = cli.main(
+        [
+            "aws-to-gcp",
+            "--source-bucket", fixture.BUCKET,
+            "--source-prefix", "AWSLogs/",
+            "--target-bucket", "ccx-t-audit-gcs",
+            "--run", "Bad_Run",
+            "--public-keys", str(_public_keys_file(tmp_path)),
+            "--receipt", str(tmp_path / "receipt.json"),
+        ]
+    )  # fmt: skip
+
+    assert code == 2
+    assert not (tmp_path / "receipt.json").exists()
+    assert "run_id" in capsys.readouterr().err
+
+
+def test_malformed_receipt_exits_2_with_one_line(buckets, tmp_path, capsys):
+    (tmp_path / "receipt.json").write_text('{"format": "other"}')
+
+    code = _verify_aws(tmp_path)
+
+    assert code == 2
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
+def test_malformed_public_keys_file_exits_2(buckets, tmp_path, capsys):
+    _fill_trail(buckets)
+    _aws_to_gcp(tmp_path)
+    capsys.readouterr()
+    broken = tmp_path / "broken.json"
+    broken.write_text("not json")
+
+    code = _verify_aws(tmp_path, broken)
+
+    assert code == 2
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+
+
+def test_partially_covered_archive_exits_with_partial_code(
+    buckets, tmp_path, capsys
+):
+    _fill_trail(buckets)
+    buckets[("s3", fixture.BUCKET)].objects["AWSLogs/x_FORGED.json.gz"] = (
+        object_store.StoredObject(data=b"x")
+    )
+    _aws_to_gcp(tmp_path)
+    capsys.readouterr()
+
+    code = _verify_aws(tmp_path)
+
+    assert code == cli.EXIT_PARTIAL
+    assert json.loads(capsys.readouterr().out)["result"] == "partial"
 
 
 def test_gcp_to_aws_then_verify_reports_no_evidence(buckets, tmp_path, capsys):
@@ -193,3 +253,15 @@ def test_unknown_command_exits_with_usage_error():
         cli.main(["nope"])
 
     assert raised.value.code == 2
+
+
+def test_failed_copy_removes_the_reserved_receipt(buckets, tmp_path):
+    _fill_trail(buckets)
+    _aws_to_gcp(tmp_path)
+    (tmp_path / "receipt.json").rename(tmp_path / "first.json")
+    buckets[("gs", "ccx-t-audit-gcs")].objects.pop("ccx-t/bundle.json")
+
+    with pytest.raises(object_store.ObjectExistsError):
+        _aws_to_gcp(tmp_path)
+
+    assert not (tmp_path / "receipt.json").exists()

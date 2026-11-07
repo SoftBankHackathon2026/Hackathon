@@ -40,7 +40,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 Status = Literal["valid", "invalid", "missing", "evidence_none"]
-Result = Literal["valid", "invalid", "no_evidence"]
+Result = Literal["valid", "invalid", "partial", "no_evidence"]
 ObjectKind = Literal["digest", "log"]
 
 SIGNATURE_ALGORITHM = "SHA256withRSA"
@@ -114,7 +114,9 @@ class VerificationReport:
     """검증 결과.
 
     evidence_none 은 실패가 아니지만 무결성 확인도 아니다. 그래서 서명으로
-    확인된 객체가 하나도 없으면 결과는 valid 가 아니라 no_evidence 다.
+    확인된 객체가 하나도 없으면 결과는 no_evidence, 일부만 확인됐으면
+    (증거 없는 객체·구간이 하나라도 있으면) partial 이다. valid 는 모든
+    객체를 서명으로 확인했을 때뿐이다.
     """
 
     findings: tuple[Finding, ...]
@@ -122,12 +124,24 @@ class VerificationReport:
 
     @property
     def result(self) -> Result:
-        """invalid·missing 이 있으면 invalid, valid 가 없으면 no_evidence."""
-        if any(f.status in ("invalid", "missing") for f in self.findings):
+        """판정 우선순위: invalid > no_evidence > partial > valid."""
+        counts = self.counts
+        if counts["invalid"] or counts["missing"]:
             return "invalid"
-        if not any(f.status == "valid" for f in self.findings):
+        if not counts["valid"]:
             return "no_evidence"
+        if counts["evidence_none"] or self.evidence_none_spans:
+            return "partial"
         return "valid"
+
+    @property
+    def counts(self) -> dict[Status, int]:
+        """판정별 객체 수."""
+        statuses = collections.Counter(f.status for f in self.findings)
+        return {
+            status: statuses[status]
+            for status in ("valid", "evidence_none", "invalid", "missing")
+        }
 
 
 class _DigestError(Exception):
@@ -238,6 +252,7 @@ def report_to_dict(report: VerificationReport) -> dict[str, Any]:
     ]
     return {
         "result": report.result,
+        "counts": report.counts,
         "findings": findings,
         "evidence_none_spans": spans,
     }

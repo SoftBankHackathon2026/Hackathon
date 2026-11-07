@@ -45,8 +45,16 @@ bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 
 쓴다. 검증은 이 기록과 맞는 bundle·manifest 만 믿고, 공개키는 운영자가
 보관한 `aws cloudtrail list-public-keys` 출력 파일(리전마다 하나)만 쓴다.
 
-결과는 `valid` · `invalid` · `no_evidence`(어긋난 것은 없지만 서명으로 확인한
-객체가 없음) 중 하나다. 종료 코드는 차례로 0 · 1 · 3 이다.
+결과는 넷 중 하나다. 종료 코드를 괄호에 적는다.
+
+*   `valid`(0): 모든 객체를 서명으로 확인했다.
+*   `invalid`(1): 변조·누락·이관 기록 불일치가 있다.
+*   `no_evidence`(3): 어긋난 것은 없지만 서명으로 확인한 객체가 없다.
+*   `partial`(4): 일부만 서명으로 확인했다. 다이제스트가 덮지 않는 객체(아직
+    다이제스트가 오지 않은 최신 로그, backfill 만 덮는 로그 등)나 검증 꺼짐
+    구간이 있다. 개수는 `counts` 에 있다.
+
+입력 파일·`--run` 형식 오류는 한 줄 메시지와 종료 코드 2 다.
 
 명령은 `python -m crosscloud.audit_copy.cli --help` 로 본다. 버킷은
 `terraform/audit/` 가 만들고, 잠그지 않는다.

@@ -423,3 +423,20 @@ def test_bundle_with_fewer_rows_than_recorded_is_invalid():
 
     assert result["result"] == "invalid"
     assert "객체 수" in result["archive_file"]["reason"]
+
+
+def test_object_no_digest_covers_makes_archive_result_partial():
+    trail = fixture.chain(2)
+    source = _trail_bucket(trail)
+    source.objects["AWSLogs/planted_FORGED.json.gz"] = (
+        object_store.StoredObject(data=gzip.compress(b"{}"))
+    )
+    target = memory_store.MemoryStore("gs", "ccx-r6t-audit-gcs")
+    receipt = archive.archive_cloudtrail(
+        source, "AWSLogs/", target, _RUN, (_PUBLIC_KEY,)
+    )
+
+    result = _verify_aws(target, receipt)
+
+    assert result["result"] == "partial"
+    assert result["cloudtrail"]["counts"]["evidence_none"] == 1

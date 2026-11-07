@@ -152,7 +152,8 @@ def test_validation_off_period_is_an_evidence_none_span():
 
     report = _verify(trail)
 
-    assert report.result == "valid"
+    # 증거 없는 구간이 있으면 전체 valid 로 올리지 않는다.
+    assert report.result == "partial"
     (span,) = report.evidence_none_spans
     assert (span.start, span.end) == (
         "2026-11-07T01:00:00Z",
@@ -169,7 +170,7 @@ def test_backfill_digest_is_not_verified_and_has_no_evidence():
 
     report = _verify(trail)
 
-    assert report.result == "valid"
+    assert report.result == "partial"
     finding = _status(report, backfill)
     assert finding.status == "evidence_none"
     assert "backfill" in finding.reason
@@ -259,7 +260,13 @@ def test_report_dict_marks_evidence_none_explicitly():
 
     document = cloudtrail_verify.report_to_dict(_verify(trail))
 
-    assert document["result"] == "valid"
+    assert document["result"] == "partial"
+    assert document["counts"] == {
+        "valid": 4,
+        "evidence_none": 1,
+        "invalid": 0,
+        "missing": 0,
+    }
     (span,) = document["evidence_none_spans"]
     assert span["evidence"] == "none"
     no_evidence = [
@@ -394,7 +401,7 @@ def test_empty_previous_key_starts_a_new_chain_like_null():
 
     report = _verify(trail)
 
-    assert report.result == "valid"
+    assert report.result == "partial"
     assert len(report.evidence_none_spans) == 1
 
 
@@ -442,3 +449,25 @@ def test_recorded_chain_absent_from_archive_is_missing():
 
     assert report.result == "invalid"
     assert _status(report, deleted).status == "missing"
+
+
+def test_planted_log_no_digest_covers_makes_result_partial():
+    # trail 버킷에 끼워 넣은 객체: 어떤 다이제스트도 가리키지 않는다.
+    trail = fixture.chain(2)
+    planted = trail.log_uris[0].replace("_abc.json.gz", "_FORGED.json.gz")
+    trail.objects[planted] = gzip.compress(b'{"Records": []}')
+    trail.log_uris.append(planted)
+
+    report = _verify(trail)
+
+    assert report.result == "partial"
+    assert _status(report, planted).status == "evidence_none"
+
+
+def test_newest_log_not_yet_covered_by_a_digest_makes_result_partial():
+    trail = fixture.chain(2)
+    trail.add_hour(2, validation_on=False)
+
+    report = _verify(trail)
+
+    assert report.result == "partial"
