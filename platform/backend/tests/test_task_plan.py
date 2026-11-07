@@ -52,7 +52,6 @@ def test_directions_without_a_tool_are_marked_unsupported(source, target):
     found = statuses(source, target)
     assert found[StepId.IMAGES] == StepStatus.UNSUPPORTED
     assert found[StepId.IDENTITY] == StepStatus.UNSUPPORTED
-    assert found[StepId.DEPLOY] == StepStatus.PENDING
     assert found[StepId.DATA_SYNC] == StepStatus.PENDING
 
 
@@ -111,7 +110,7 @@ def test_cutover_stages_map_onto_the_three_application_steps(signals, expected):
 
 
 def step(status):
-    return PlannedStep(StepDef(StepId.DEPLOY, None, "", ""), "tool", status, False)
+    return PlannedStep(StepDef(StepId.IMAGES, None, "", ""), "tool", status, False)
 
 
 @pytest.mark.parametrize(

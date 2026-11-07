@@ -25,7 +25,6 @@ class StepId(StrEnum):
     IMAGES = "images"
     SECRETS = "secrets"
     IDENTITY = "identity"
-    DEPLOY = "deploy"
     DATA_SYNC = "data_sync"
     TRAFFIC_SWITCH = "traffic_switch"
     VERIFY = "verify"
@@ -103,12 +102,6 @@ STEPS: tuple[StepDef, ...] = (
         "원본 사용자·그룹·권한을 대상 인증·권한 체계로 구성",
     ),
     StepDef(
-        StepId.DEPLOY,
-        PlanPhase.APPLICATION,
-        "앱 배포",
-        "이관한 이미지와 비밀값으로 대상 환경에 앱을 띄우고 준비 상태 확인",
-    ),
-    StepDef(
         StepId.DATA_SYNC,
         PlanPhase.APPLICATION,
         "데이터 동기화",
@@ -182,8 +175,6 @@ def tool_for(step: StepId, source: str, target: str) -> str | None:
         if target != ONPREM:
             return None
         return "migration.harbor_infra · openbao_infra · keycloak_infra · wazuh_infra"
-    if step == StepId.DEPLOY:
-        return "플랫폼 배포(릴리즈)"
     return TOOLS[step].get((source, target))
 
 
