@@ -22,6 +22,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+mod service;
+
 const RECOVERY_DELAY: Duration = Duration::from_secs(5);
 const BROKER_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Deserialize)]
@@ -153,7 +155,9 @@ fn collect_raw(
             }
             return Ok(serde_json::from_slice(&b)?);
         }
-        if std::time::Instant::now() > deadline || !valid.load(std::sync::atomic::Ordering::Acquire)
+        if service::stopping()
+            || std::time::Instant::now() > deadline
+            || !valid.load(std::sync::atomic::Ordering::Acquire)
         {
             child.kill()?;
             child.wait()?;
@@ -366,14 +370,18 @@ fn cleanup(c: &Config, dir: &Path, s: &Local, key: &PKey<Private>) -> Result<()>
             fs::remove_file(path)?;
         }
     }
-    api::device(
+    if api::device(
         &c.public_api_url,
         &s.request_id,
         &s.candidate_id,
         key,
         "cleanup",
         json!({"local":true}),
-    )?;
+    )
+    .is_err()
+    {
+        eprintln!("CONNECTOR_CLEANUP_UNCONFIRMED");
+    }
     Ok(())
 }
 fn retryable_control_error(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -424,6 +432,7 @@ fn remove_tunnel(c: &Config, state: &Local) -> Result<()> {
 enum SessionExit {
     Rotate,
     Revoked,
+    Stopped,
     Recover(&'static str),
 }
 
@@ -434,6 +443,7 @@ fn serve_tunnel(
     key: &PKey<Private>,
     policy: &Policy,
     binding: &Binding,
+    notify_service: bool,
 ) -> Result<SessionExit> {
     let tunnel = SocketAddr::new(policy.peer_address, policy.job_port);
     let api_base = format!("http://{tunnel}/api/v1/connections");
@@ -453,9 +463,16 @@ fn serve_tunnel(
     {
         return Ok(SessionExit::Recover("discovery-relay"));
     }
+    if notify_service {
+        service::ready()?;
+    }
+    println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
     let mut last_lease = None::<std::time::Instant>;
     let mut completed = std::collections::HashSet::new();
     loop {
+        if service::stopping() {
+            return Ok(SessionExit::Stopped);
+        }
         if migration_connector::now_ms() >= binding.expires_at_ms.saturating_sub(300000) {
             return Ok(SessionExit::Rotate);
         }
@@ -527,12 +544,22 @@ fn serve_tunnel(
     }
 }
 
-fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunMode {
+    Foreground,
+    SetupService,
+    Service,
+}
+
+fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
     if config_path.file_name().and_then(|n| n.to_str()) != Some("connector.json") {
         return Err("signed connector.json required".into());
     }
     if !cfg!(target_os = "linux") {
         return Err("Ubuntu Linux required".into());
+    }
+    if mode == RunMode::Service {
+        service::install_stop_handler()?;
     }
     let base = config_path.parent().ok_or("bundle path")?;
     migration_connector::release::verify_bundle(base)?;
@@ -662,7 +689,8 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
     }
     drop(seed);
     drop(enrollment);
-    loop {
+    let mut replaces = None;
+    while mode != RunMode::Service {
         let status = api::device(
             &c.public_api_url,
             &request,
@@ -672,7 +700,12 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
             json!({}),
         )?;
         match status["snapshot"]["device"].as_str() {
-            Some("APPROVED") => break,
+            Some("APPROVED") => {
+                replaces = status["replacement"]["request_id"]
+                    .as_str()
+                    .map(str::to_owned);
+                break;
+            }
             Some("PENDING_APPROVAL") => {
                 if let Some(code) = status["confirmation_code"].as_str() {
                     println!("웹에서 단말 확인 코드를 입력하세요: {code}");
@@ -687,26 +720,48 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
             }
         }
     }
-    // Prove the short-lived invitation and obtain web approval before apt or
-    // administrator input can take minutes. No network privilege is used yet.
-    migration_connector::host_install::ensure(base, Path::new(&c.helper_path)).map_err(
-        |error| {
+    // Prove the invitation and obtain web approval before any administrator prompts.
+    if mode != RunMode::Service {
+        let setup = migration_connector::host_install::ensure(base, Path::new(&c.helper_path));
+        let setup = if setup.is_ok() && mode == RunMode::SetupService {
+            // systemd's worker takes the same per-request lock as the foreground mode.
+            drop(lock);
+            migration_connector::host_install::start_service(base, &request, replaces.as_deref())
+        } else {
+            setup
+        };
+        if let Err(error) = setup {
+            let executable = base.join("migration-connector");
+            let operation = if mode == RunMode::SetupService {
+                "resume-service"
+            } else {
+                "resume"
+            };
             eprintln!("단말 설치 중단: {error}");
             eprintln!(
-                "같은 요청을 이어가려면 실행하세요: {} resume {} {}",
-                base.join("migration-connector").display(),
-                config_path.display(),
+                "같은 요청을 이어가려면 실행하세요: {} {operation} {} {}",
+                shell_arg(&executable),
+                shell_arg(config_path),
                 request
             );
-            error
-        },
-    )?;
+            return Err(error);
+        }
+        if mode == RunMode::SetupService {
+            let status = control_status(&c, &state, &key)?;
+            if !status.is_some_and(|s| s["snapshot"]["tunnel"] == "READY") {
+                eprintln!("서비스 상태는 단말과 웹에서 확인해 주세요. 터널 응답을 아직 확인하지 못했습니다.");
+                return Err("tunnel readiness unconfirmed".into());
+            }
+            println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
+            return Ok(());
+        }
+    }
     let policy: Policy = serde_json::from_value(
         network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
     )?;
     policy.validate()?;
     remove_tunnel(&c, &state)?;
-    loop {
+    while !service::stopping() {
         // Require fresh approval before opening a new tunnel, including after
         // administrator installation, key rotation, and interrupted recovery.
         let Some(status) = control_status(&c, &state, &key).map_err(|error| {
@@ -733,14 +788,20 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
             &policy,
             replacement.as_ref(),
         ) {
-            Ok(binding) => {
-                println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
-                serve_tunnel(&c, base, &state, &key, &policy, &binding)
-            }
+            Ok(binding) => serve_tunnel(
+                &c,
+                base,
+                &state,
+                &key,
+                &policy,
+                &binding,
+                mode == RunMode::Service,
+            ),
             Err(stage) => Ok(SessionExit::Recover(stage)),
         };
         match outcome {
             Ok(SessionExit::Revoked) => return cleanup(&c, &dir, &state, &key),
+            Ok(SessionExit::Stopped) => break,
             Ok(SessionExit::Rotate) => remove_tunnel(&c, &state)?,
             Ok(SessionExit::Recover(stage)) => {
                 remove_tunnel(&c, &state)?;
@@ -752,13 +813,47 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
             }
         }
     }
+    remove_tunnel(&c, &state)
+}
+
+fn shell_arg(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
 }
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
-        Some("run") if args.len() == 3 => run(Path::new(&args[2]), None),
-        Some("resume") if args.len() == 4 => run(Path::new(&args[2]), Some(&args[3])),
+        Some("run" | "enroll") if args.len() == 3 => run(
+            Path::new(&args[2]),
+            None,
+            if args[1] == "enroll" {
+                RunMode::SetupService
+            } else {
+                RunMode::Foreground
+            },
+        ),
+        Some("resume" | "resume-service" | "serve") if args.len() == 4 => run(
+            Path::new(&args[2]),
+            Some(&args[3]),
+            match args[1].as_str() {
+                "serve" => RunMode::Service,
+                "resume-service" => RunMode::SetupService,
+                _ => RunMode::Foreground,
+            },
+        ),
+        Some("install-service") if matches!(args.len(), 8 | 9) => {
+            migration_connector::host_install::install_service(
+                Path::new(&args[2]),
+                &args[3],
+                &args[4],
+                &args[5],
+                &args[6],
+                &args[7],
+                args.get(8)
+                    .map(String::as_str)
+                    .filter(|value| !value.is_empty()),
+            )
+        }
         Some("crypto-vector") if args.len() == 2 => vector(),
         Some("verify-release") if args.len() == 3 => {
             migration_connector::release::verify_bundle(Path::new(&args[2])).map(|_| ())
@@ -785,7 +880,7 @@ fn main() {
     if let Err(error) = result {
         if matches!(
             args.get(1).map(String::as_str),
-            Some("prepare-host" | "install-host")
+            Some("prepare-host" | "install-host" | "install-service")
         ) {
             eprintln!("단말 설치 중단: {error}");
         }

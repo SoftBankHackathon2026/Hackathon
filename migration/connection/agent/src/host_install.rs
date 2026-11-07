@@ -18,6 +18,9 @@ use std::{
 const HELPER: &str = "/usr/local/libexec/migration-net-helper";
 const POLICY: &str = "/etc/migration-connector/net-policy.json";
 const FLOOR: &str = "/etc/migration-connector/release-sequence";
+const SERVICE: &str = "migration-connector.service";
+const SERVICE_DIR: &str = "/etc/systemd/system";
+const SYSTEMCTL: &str = "/usr/bin/systemctl";
 const PACKAGES: &[&str] = &["iproute2", "nftables", "wireguard-tools"];
 const MAX_ARTIFACT: u64 = 256 * 1024 * 1024;
 const STAGE_SCRIPT: &str = r#"set -eu
@@ -28,7 +31,11 @@ stage=$(/usr/bin/mktemp -d /var/tmp/migration-host-launch.XXXXXXXX)
 trap '/usr/bin/rm -rf -- "$stage"' EXIT HUP INT TERM
 /usr/bin/install -m 0700 -- "$1" "$stage/migration-connector"
 printf '%s  %s\n' "$2" "$stage/migration-connector" | /usr/bin/sha384sum --check --status
-"$stage/migration-connector" install-host "$3" "$4" "$5"
+shift 2
+case "$1" in
+    install-host|install-service) "$stage/migration-connector" "$@" ;;
+    *) exit 1 ;;
+esac
 "#;
 struct Stage(PathBuf);
 impl Stage {
@@ -182,30 +189,13 @@ pub fn ensure(bundle: &Path, helper: &Path) -> Result<()> {
     if uid == 0 {
         return Err("일반 사용자로 실행한 뒤 설치 단계에서 sudo 승인을 해 주세요.".into());
     }
-    let out = Command::new("/usr/bin/id")
-        .arg("-un")
-        .env_clear()
-        .output()?;
-    if !out.status.success() {
-        return Err("단말 사용자 이름을 확인하지 못했습니다.".into());
-    }
-    let user = String::from_utf8(out.stdout)?.trim().to_owned();
-    account(uid, &user)?;
-    let manifest = release::verify_bundle(bundle)?;
+    let user = current_user(uid)?;
+    let (manifest, executable, digest) = signed_installer(bundle, uid)?;
     required(&manifest)?;
     let p = policy(
         &read_regular(&bundle.join("net-policy.json"), uid, 65536)?,
         uid,
     )?;
-    let executable = std::env::current_exe()?;
-    let digest = crypto::digest(&read_regular(&executable, uid, MAX_ARTIFACT)?);
-    if !manifest
-        .artifacts
-        .iter()
-        .any(|a| a.name == "migration-connector" && a.sha384 == digest)
-    {
-        return Err("현재 실행 파일이 서명된 설치 프로그램과 일치하지 않습니다.".into());
-    }
     let mut tty = OpenOptions::new()
         .read(true)
         .write(true)
@@ -247,6 +237,51 @@ pub fn ensure(bundle: &Path, helper: &Path) -> Result<()> {
         tty,
         "sudo가 관리자 인증을 요청합니다. 비밀번호는 연결 프로그램에 전달되지 않습니다."
     )?;
+    approved_install(
+        &executable,
+        &digest,
+        &[
+            "install-host".as_ref(),
+            bundle.as_os_str(),
+            uid.to_string().as_ref(),
+            user.as_ref(),
+        ],
+    )?;
+    check(helper, uid)?;
+    writeln!(
+        tty,
+        "단말 구성요소 설치를 확인했습니다. 보안 연결을 이어갑니다."
+    )?;
+    Ok(())
+}
+fn current_user(uid: u32) -> Result<String> {
+    let out = Command::new("/usr/bin/id")
+        .arg("-un")
+        .env_clear()
+        .output()?;
+    if !out.status.success() {
+        return Err("단말 사용자 이름을 확인하지 못했습니다.".into());
+    }
+    let user = String::from_utf8(out.stdout)?.trim().to_owned();
+    account(uid, &user)?;
+    Ok(user)
+}
+
+fn signed_installer(bundle: &Path, uid: u32) -> Result<(release::Manifest, PathBuf, String)> {
+    let manifest = release::verify_bundle(bundle)?;
+    let executable = std::env::current_exe()?;
+    let digest = crypto::digest(&read_regular(&executable, uid, MAX_ARTIFACT)?);
+    if !manifest
+        .artifacts
+        .iter()
+        .any(|a| a.name == "migration-connector" && a.sha384 == digest)
+    {
+        return Err("현재 실행 파일이 서명된 설치 프로그램과 일치하지 않습니다.".into());
+    }
+    Ok((manifest, executable, digest))
+}
+
+fn approved_install(executable: &Path, digest: &str, args: &[&std::ffi::OsStr]) -> Result<()> {
     let status = Command::new("/usr/bin/sudo")
         .args([
             "-p",
@@ -259,24 +294,194 @@ pub fn ensure(bundle: &Path, helper: &Path) -> Result<()> {
         ])
         .arg(executable)
         .arg(digest)
-        .arg(bundle)
-        .arg(uid.to_string())
-        .arg(&user)
+        .args(args)
         .env_clear()
         .stdin(Stdio::null())
         .status()?;
     if !status.success() {
-        return Err(
-            "관리자 설치가 완료되지 않았습니다. 오류를 확인하고 연결을 재개해 주세요.".into(),
-        );
+        return Err("관리자 설치 또는 서비스 시작을 완료하지 못했습니다.".into());
     }
-    check(helper, uid)?;
-    writeln!(
-        tty,
-        "단말 구성요소 설치를 확인했습니다. 보안 연결을 이어갑니다."
-    )?;
     Ok(())
 }
+
+fn installation_account(uid: u32, user: &str) -> Result<()> {
+    account(uid, user)?;
+    if unsafe { libc::geteuid() } != 0
+        || std::env::var("SUDO_UID").ok().as_deref() != Some(uid.to_string().as_str())
+        || std::env::var("SUDO_USER").ok().as_deref() != Some(user)
+    {
+        return Err("관리자 승인을 한 사용자와 설치 대상이 일치하지 않습니다.".into());
+    }
+    Ok(())
+}
+
+fn unit_arg(value: &str) -> Result<String> {
+    if value.chars().any(char::is_control) {
+        return Err("서비스 설정의 경로에 제어 문자를 사용할 수 없습니다.".into());
+    }
+    Ok(format!(
+        r#""{}""#,
+        value
+            .replace('\\', r"\\")
+            .replace('"', r#"\""#)
+            .replace('%', "%%")
+    ))
+}
+
+fn unit(bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str) -> Result<String> {
+    crate::api::identifier(request)?;
+    if uid == 0
+        || !bundle.is_absolute()
+        || !Path::new(home).is_absolute()
+        || std::env::split_paths(kubeconfig).any(|p| !p.as_os_str().is_empty() && !p.is_absolute())
+    {
+        return Err("일반 사용자와 절대 경로가 필요합니다.".into());
+    }
+    let executable = bundle.join("migration-connector");
+    let config = bundle.join("connector.json");
+    let executable = unit_arg(executable.to_str().ok_or("invalid executable path")?)?;
+    // systemd restricts executable names. Pass the user path as an argument to
+    // a fixed launcher; exec keeps the same PID for the readiness notification.
+    let launcher = unit_arg(r#"exec "$@""#)?;
+    let config = unit_arg(config.to_str().ok_or("invalid config path")?)?;
+    let state = Path::new(home)
+        .join(".local/state/migration-connector")
+        .join(request)
+        .join("state.json");
+    let state = unit_arg(state.to_str().ok_or("invalid state path")?)?;
+    let home = unit_arg(&format!("HOME={home}"))?;
+    let kubeconfig = unit_arg(&format!("KUBECONFIG={kubeconfig}"))?;
+    Ok(format!("# migration-connector uid={uid} request={request}\n\
+[Unit]\nDescription=On-premises migration tunnel\nStartLimitIntervalSec=10min\nStartLimitBurst=5\nWants=network-online.target\nAfter=network-online.target\n\
+[Service]\nType=notify\nNotifyAccess=main\nUser={uid}\nUMask=0077\n\
+Environment={home} {kubeconfig}\n\
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin\n\
+ExecCondition=:/usr/bin/test -f {state}\n\
+ExecStart=:/bin/sh -c {launcher} migration-connector-launch {executable} serve {config} {request}\n\
+KillMode=mixed\n\
+TimeoutStartSec=90s\nTimeoutStopSec=25s\nRestart=on-failure\nRestartSec=10s\n\
+[Install]\nWantedBy=multi-user.target\n"))
+}
+
+pub fn start_service(bundle: &Path, request: &str, replaces: Option<&str>) -> Result<()> {
+    if !Path::new("/run/systemd/system").is_dir() {
+        return Err("서비스를 시작하려면 systemd로 부팅한 Ubuntu가 필요합니다.".into());
+    }
+    let uid = unsafe { libc::getuid() };
+    let user = current_user(uid)?;
+    let bundle = bundle.canonicalize()?;
+    let home = std::env::var("HOME")?;
+    let cwd = std::env::current_dir()?;
+    let kubeconfig = match std::env::var_os("KUBECONFIG") {
+        Some(paths) => std::env::join_paths(
+            std::env::split_paths(&paths)
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| cwd.join(p)),
+        )?
+        .into_string()
+        .map_err(|_| "invalid kubeconfig path")?,
+        None => String::new(),
+    };
+    unit(&bundle, uid, request, &home, &kubeconfig)?;
+    let (_, executable, digest) = signed_installer(&bundle, uid)?;
+    let mut tty = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| "서비스 설치 승인을 위해 대화형 터미널에서 실행해 주세요.")?;
+    write!(tty, "\n{user} 사용자로 보안 연결 서비스를 설치하고 부팅 시 시작하도록 설정합니다. 승인하시겠습니까? [y/N]: ")?;
+    tty.flush()?;
+    let mut answer = String::new();
+    BufReader::new(tty.try_clone()?)
+        .take(257)
+        .read_line(&mut answer)?;
+    if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+        return Err("서비스 설치를 취소했습니다.".into());
+    }
+    approved_install(
+        &executable,
+        &digest,
+        &[
+            "install-service".as_ref(),
+            bundle.as_os_str(),
+            uid.to_string().as_ref(),
+            user.as_ref(),
+            request.as_ref(),
+            home.as_ref(),
+            kubeconfig.as_ref(),
+            replaces.unwrap_or_default().as_ref(),
+        ],
+    )
+}
+
+/// Root only writes a unit for the invoking non-root user. User paths are never
+/// executed by the system manager as root.
+pub fn install_service(
+    bundle: &Path,
+    uid: &str,
+    user: &str,
+    request: &str,
+    home: &str,
+    kubeconfig: &str,
+    replaces: Option<&str>,
+) -> Result<()> {
+    if let Some(previous) = replaces {
+        crate::api::identifier(previous)?;
+    }
+    let uid = uid.parse::<u32>()?;
+    installation_account(uid, user)?;
+    let content = unit(bundle, uid, request, home, kubeconfig)?;
+    for path in ["/", "/etc", "/etc/systemd", SERVICE_DIR, "/run"] {
+        trusted_directory(Path::new(path))?;
+    }
+    let _lock = install_lock("/run/migration-connector-service.lock")?;
+    let path = Path::new(SERVICE_DIR).join(SERVICE);
+    let old = existing(&path)?;
+    let changed = old.as_deref() != Some(content.as_bytes());
+    if let Some(old) = &old {
+        let old = std::str::from_utf8(old)?;
+        let header = format!("# migration-connector uid={uid} request=");
+        let old_request = old
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix(&header))
+            .ok_or("기존 서비스가 다른 사용자 또는 관리 설정에 속해 있습니다.")?;
+        crate::api::identifier(old_request)?;
+        if old_request != request {
+            if replaces == Some(old_request) {
+                run(SYSTEMCTL, &["stop", SERVICE])?;
+            } else {
+                let status = Command::new(SYSTEMCTL)
+                    .args(["show", "--property=ActiveState", "--value", SERVICE])
+                    .env_clear()
+                    .output()?;
+                if !status.status.success()
+                    || !matches!(status.stdout.as_slice(), b"inactive\n" | b"failed\n")
+                {
+                    return Err("기존 연결 서비스를 중지한 후 새 연결을 설치해 주세요.".into());
+                }
+            }
+        }
+    }
+    if changed {
+        atomic(&path, content.as_bytes(), 0o644)?;
+    }
+    run(SYSTEMCTL, &["daemon-reload"])?;
+    run(
+        SYSTEMCTL,
+        &[
+            if changed && old.is_some() {
+                "restart"
+            } else {
+                "start"
+            },
+            SERVICE,
+        ],
+    )?;
+    run(SYSTEMCTL, &["is-active", "--quiet", SERVICE])?;
+    run(SYSTEMCTL, &["enable", SERVICE])
+}
+
 fn trusted_directory(path: &Path) -> Result<()> {
     let m = fs::symlink_metadata(path)?;
     if !m.is_dir() || m.uid() != 0 || m.mode() & 0o022 != 0 {
@@ -331,6 +536,25 @@ fn run(bin: &str, args: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+fn install_lock(path: &str) -> Result<File> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let meta = lock.metadata()?;
+    if !meta.is_file()
+        || meta.uid() != 0
+        || meta.mode() & 0o077 != 0
+        || unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0
+    {
+        return Err("다른 네트워크 설정 작업이 진행 중입니다. 다시 시도해 주세요.".into());
+    }
+    Ok(lock)
+}
 fn missing_packages() -> Result<Vec<&'static str>> {
     let mut missing = Vec::new();
     for &package in PACKAGES {
@@ -349,12 +573,7 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
     if !cfg!(target_os = "linux") || unsafe { libc::geteuid() } != 0 {
         return Err("Linux 관리자 권한이 필요합니다.".into());
     }
-    account(uid, user)?;
-    if std::env::var("SUDO_UID").ok().as_deref() != Some(uid.to_string().as_str())
-        || std::env::var("SUDO_USER").ok().as_deref() != Some(user)
-    {
-        return Err("관리자 승인을 한 사용자와 설치 대상이 일치하지 않습니다.".into());
-    }
+    installation_account(uid, user)?;
     let os = fs::read_to_string("/etc/os-release")?;
     if !os.lines().any(|l| l == "ID=ubuntu") || !os.lines().any(|l| l == "VERSION_ID=\"24.04\"") {
         return Err("Ubuntu 24.04에서만 자동 설치할 수 있습니다.".into());
@@ -453,22 +672,7 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
     // Package downloads can take minutes. Lock only the short configuration commit,
     // then recheck the snapshots so an intervening administrator edit is preserved.
     trusted_directory(Path::new("/run"))?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open("/run/migration-connector-network.lock")?;
-    let meta = lock.metadata()?;
-    if !meta.is_file()
-        || meta.uid() != 0
-        || meta.mode() & 0o077 != 0
-        || unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0
-    {
-        return Err("다른 네트워크 설정 작업이 진행 중입니다. 다시 시도해 주세요.".into());
-    }
+    let _lock = install_lock("/run/migration-connector-network.lock")?;
     if (!existing_install && fs::symlink_metadata("/run/migration-connector-network.json").is_ok())
         || existing(Path::new(HELPER))? != old_helper
         || existing(Path::new(POLICY))? != old_policy
@@ -551,6 +755,38 @@ mod tests {
         }
         assert!(safe_name("migration-net-helper"));
         assert!(safe_name("net-policy.json"));
+    }
+    #[test]
+    fn service_unit_binds_the_request_and_quotes_local_paths() {
+        let content = unit(
+            Path::new(r#"/home/client/with spaces/%u "quoted""#),
+            1001,
+            "request_12345678901234",
+            "/home/client",
+            "/home/client/a config:/home/client/$KUBE",
+        )
+        .unwrap();
+        assert!(content.contains("Type=notify\nNotifyAccess=main\nUser=1001\n"));
+        assert!(content.contains(
+            r#"ExecStart=:/bin/sh -c "exec \"$@\"" migration-connector-launch "/home/client/with spaces/%%u \"quoted\"/migration-connector" serve "#
+        ));
+        assert!(content.contains(r#"ExecCondition=:/usr/bin/test -f "/home/client/.local/state/migration-connector/request_12345678901234/state.json""#));
+        assert!(unit(
+            Path::new("/bundle"),
+            0,
+            "request_12345678901234",
+            "/root",
+            ""
+        )
+        .is_err());
+        assert!(unit(
+            Path::new("/bundle"),
+            1001,
+            "request_12345678901234",
+            "/home/client\n[Service]",
+            ""
+        )
+        .is_err());
     }
     #[test]
     fn root_launcher_checks_actual_copy_before_execution() {

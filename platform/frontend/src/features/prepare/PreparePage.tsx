@@ -550,12 +550,25 @@ export function PreparePage({
                   <section className="connection-management">
                     <h3>연결 관리</h3>
                     <p>
-                      마지막 확인 {formatTime(snapshot.observedAt)}, 키{" "}
-                      {snapshot.epoch}세대
+                      마지막 단말 응답{" "}
+                      {snapshot.lastTunnelActivityAt
+                        ? formatTime(snapshot.lastTunnelActivityAt)
+                        : "기록 없음"}
+                      {snapshot.epoch > 0 && `, 연결 키 ${snapshot.epoch}세대`}
                       {snapshot.keyExpiresAt
                         ? ", 만료 " + formatTime(snapshot.keyExpiresAt)
                         : ""}
                     </p>
+                    {snapshot.tunnel === "DEGRADED" &&
+                      gateway.mode === "live" && (
+                        <p>
+                          온프레미스에서 연결 서비스가 실행 중인지 확인해
+                          주세요. 중지된 서비스는 단말에서{" "}
+                          <code>sudo systemctl start migration-connector</code>
+                          로 시작할 수 있어요. 이전 버전은 기존 요청의 재개
+                          명령을 사용해 주세요.
+                        </p>
+                      )}
                     <div className="connection-actions">
                       {snapshot.tunnel === "DEGRADED" && (
                         <button
@@ -564,7 +577,7 @@ export function PreparePage({
                           onClick={() =>
                             run(
                               () => gateway.reconnect(snapshot.id),
-                              "새 보안 연결을 준비해요.",
+                              "재접속을 요청했어요. 단말 응답을 기다려 주세요.",
                             )
                           }
                         >

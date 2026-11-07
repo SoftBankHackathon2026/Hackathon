@@ -622,3 +622,53 @@ def test_replacement_revokes_only_the_selected_request_and_waits_for_both_sides(
     svc.tunnel(new, ready_report)
     assert svc.get(new, OWNER)["tunnel"] == "READY"
     assert svc.get(previous, OWNER)["cleanup"]["local"] is False
+
+
+def test_offline_reconnect_times_out_and_requires_a_new_tunnel(svc):
+    request_id = ready(svc)
+    initial_activity = svc.get(request_id, OWNER)["lastTunnelActivityAt"]
+    svc.test_now[0] += 10_000
+    svc.device(request_id, envelope(svc, request_id, "poll", {}), through_tunnel=True)
+    last_activity = svc.clock()
+    assert last_activity > initial_activity
+
+    svc.test_now[0] += 60_000
+    offline = svc.get(request_id, OWNER)
+    assert offline["tunnel"] == "DEGRADED"
+    assert offline["lastTunnelActivityAt"] == last_activity
+    reconnect = svc.browser(request_id, OWNER, "reconnect", {})
+    assert reconnect["tunnel"] == "CONNECTING"
+    assert reconnect["tunnelChecks"] == 0
+    svc.test_now[0] += 30_000
+    duplicate = svc.browser(request_id, OWNER, "reconnect", {})
+    assert duplicate["revision"] == reconnect["revision"]
+    stale_report = {
+        "epoch": 1,
+        "connection_id": "connection_1234567890",
+        "state": "READY",
+        "checks": 2,
+        "key_expires_at_ms": svc.store.get(request_id)["key_expires_at"],
+        "lease_expires_at_ms": svc.clock() + 60_000,
+    }
+    with pytest.raises(ConnectionError, match="NEW_KEY_EPOCH_REQUIRED"):
+        svc.tunnel(request_id, stale_report)
+
+    svc.test_now[0] += 60_000
+    timed_out = svc.get(request_id, OWNER)
+    assert timed_out["tunnel"] == "DEGRADED"
+    assert timed_out["lastTunnelActivityAt"] == last_activity
+    assert "단말 응답을 확인하지 못했습니다" in timed_out["issue"]
+    assert svc.browser(request_id, OWNER, "reconnect", {})["tunnel"] == "CONNECTING"
+    svc.tunnel(
+        request_id,
+        {
+            **stale_report,
+            "epoch": 2,
+            "connection_id": "second_connection_1234",
+            "lease_expires_at_ms": svc.clock() + 60_000,
+        },
+    )
+    restored = svc.get(request_id, OWNER)
+    assert restored["tunnel"] == "READY"
+    assert restored["epoch"] == 2
+    assert restored["lastTunnelActivityAt"] == svc.clock()

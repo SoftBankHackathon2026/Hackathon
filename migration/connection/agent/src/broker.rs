@@ -86,9 +86,12 @@ impl Broker {
     }
     fn status(&self, s: &Session, state: &str) -> Result<Value> {
         let now = migration_connector::now_ms();
+        let lease = (now + 55_000)
+            .min(s.last_activity_ms + 60_000)
+            .min(s.binding.expires_at_ms);
         api::post(
             &format!("{}/{}/tunnel", self.config.runtime_api_url, s.request_id),
-            &json!({"state":state,"epoch":s.binding.epoch,"connection_id":s.binding.connection_id,"checks":2,"key_expires_at_ms":s.binding.expires_at_ms,"lease_expires_at_ms":(now+55000).min(s.binding.expires_at_ms)}),
+            &json!({"state":state,"epoch":s.binding.epoch,"connection_id":s.binding.connection_id,"checks":2,"key_expires_at_ms":s.binding.expires_at_ms,"lease_expires_at_ms":lease}),
             Some(&self.token),
         )
     }
@@ -199,7 +202,7 @@ impl Broker {
             ),
             expires_at_ms: migration_connector::now_ms() + 1800000,
         };
-        let session = Session {
+        let mut session = Session {
             request_id: bind.request_id,
             binding,
             last_activity_ms: migration_connector::now_ms(),
@@ -254,6 +257,7 @@ impl Broker {
                 return Err("probe confirmation rejected".into());
             }
             self.authorize(&session.request_id)?;
+            session.last_activity_ms = migration_connector::now_ms();
             self.status(&session, "READY")?;
             eprintln!(
                 "TUNNEL_READY epoch={epoch} bidirectional_checks=2 wireguard_handshake=fresh"
@@ -340,10 +344,12 @@ impl Broker {
                 None
             },
         )?;
-        if let Ok(mut current) = self.current.lock() {
-            if let Some(active) = current.as_mut() {
-                if active.binding.epoch == session.binding.epoch {
-                    active.last_activity_ms = migration_connector::now_ms();
+        if suffix == "device" {
+            if let Ok(mut current) = self.current.lock() {
+                if let Some(active) = current.as_mut() {
+                    if active.binding.epoch == session.binding.epoch {
+                        active.last_activity_ms = migration_connector::now_ms();
+                    }
                 }
             }
         }

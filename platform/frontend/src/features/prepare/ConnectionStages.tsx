@@ -208,7 +208,10 @@ export function TunnelProgress({
                 ? "단말에서 이전 터널을 정리하지 못했어요. 터미널의 실행 상태를 확인하세요."
                 : replacement && replacement.client !== "ready"
                   ? "단말에서 이전 터널을 정리하고 있어요."
-                  : "승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요."}
+                  : s.tunnel === "DEGRADED"
+                    ? (s.issue ??
+                      "온프레미스 단말에서 연결 서비스를 확인해 주세요.")
+                    : "승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요."}
         </p>
       </header>
       <ol className="connection-check-list">
