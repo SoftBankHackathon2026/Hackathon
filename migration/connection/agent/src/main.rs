@@ -221,6 +221,22 @@ fn collect(
     }
     result.map(Some)
 }
+enum EstablishFailure {
+    Identity(&'static str),
+    KeySetup(&'static str),
+    WireGuard(&'static str),
+}
+
+impl EstablishFailure {
+    fn log_fields(self) -> (&'static str, u8) {
+        match self {
+            Self::Identity(stage) => (stage, 2),
+            Self::KeySetup(stage) => (stage, 3),
+            Self::WireGuard(stage) => (stage, 4),
+        }
+    }
+}
+
 fn establish(
     c: &Config,
     base: &Path,
@@ -228,48 +244,59 @@ fn establish(
     s: &mut Local,
     key: &PKey<Private>,
     policy: &Policy,
-) -> std::result::Result<Binding, &'static str> {
+) -> std::result::Result<Binding, EstablishFailure> {
+    use EstablishFailure::{Identity, KeySetup, WireGuard};
+
     let stream = (c.broker_host.as_str(), c.broker_port)
         .to_socket_addrs()
-        .map_err(|_| "broker-dns")?
+        .map_err(|_| Identity("broker-dns"))?
         .find_map(|addr| TcpStream::connect_timeout(&addr, BROKER_TIMEOUT).ok())
-        .ok_or("broker-connect")?;
-    let mut tls = (|| -> Result<_> {
+        .ok_or(Identity("broker-connect"))?;
+    let client = (|| -> Result<_> {
         let cert = crypto::certificate(key)?;
         let client = transport::client(&asset(base, &c.root_ca)?, key, &cert)?;
         stream.set_read_timeout(Some(BROKER_TIMEOUT))?;
         stream.set_write_timeout(Some(BROKER_TIMEOUT))?;
-        let tls = client.connect(&c.broker_host, stream)?;
-        transport::enforce(tls.ssl())?;
-        transport::peer_public(&tls)?;
-        Ok(tls)
+        Ok(client)
     })()
-    .map_err(|_| "broker-tls")?;
+    .map_err(|_| Identity("broker-tls-setup"))?;
+    let mut tls = client
+        .connect(&c.broker_host, stream)
+        .map_err(|error| match error {
+            openssl::ssl::HandshakeError::Failure(ref failed)
+                if failed.ssl().verify_result() != openssl::x509::X509VerifyResult::OK =>
+            {
+                Identity("broker-cert-verification")
+            }
+            _ => Identity("broker-tls-handshake"),
+        })?;
+    transport::enforce(tls.ssl()).map_err(|_| Identity("broker-tls-profile"))?;
+    transport::peer_public(&tls).map_err(|error| Identity(error.code()))?;
     eprintln!("TUNNEL_TLS_VERIFIED protocol=TLSv1.3 group=X25519MLKEM768 peer_auth=MLDSA65");
     if s.epoch > 0 {
-        let (private, public) = crypto::wg_key().map_err(|_| "local-key")?;
+        let (private, public) = crypto::wg_key().map_err(|_| KeySetup("local-key"))?;
         s.wireguard_private = private.to_string();
         s.wireguard_public = public;
-        save(dir, s).map_err(|_| "local-state")?;
+        save(dir, s).map_err(|_| KeySetup("local-state"))?;
     }
     protocol::send(
         &mut tls,
         &json!({"type":"BIND","request_id":s.request_id,"client_wireguard_public_key":s.wireguard_public}),
     )
-    .map_err(|_| "broker-prepare")?;
-    let prepared: Value = protocol::recv(&mut tls).map_err(|_| "broker-prepare")?;
+    .map_err(|_| Identity("broker-bind-send"))?;
+    let prepared: Value = protocol::recv(&mut tls).map_err(|_| Identity("broker-prepare"))?;
     if prepared["type"] != "PREPARE" {
-        return Err("broker-prepare");
+        return Err(Identity("broker-prepare"));
     }
-    let binding: Binding =
-        serde_json::from_value(prepared["binding"].clone()).map_err(|_| "broker-binding")?;
+    let binding: Binding = serde_json::from_value(prepared["binding"].clone())
+        .map_err(|_| KeySetup("broker-binding"))?;
     binding
         .validate(
-            s.device_id.as_deref().ok_or("local-state")?,
+            s.device_id.as_deref().ok_or(KeySetup("local-state"))?,
             &s.wireguard_public,
             s.epoch,
         )
-        .map_err(|_| "broker-binding")?;
+        .map_err(|_| KeySetup("broker-binding"))?;
     if binding.client_tunnel_address != policy.local_address.to_string()
         || binding.gateway_tunnel_address != policy.peer_address.to_string()
         || binding.allowed_services_digest
@@ -279,23 +306,23 @@ fn establish(
                     &protocol::canonical(
                         &json!({"job_port":policy.job_port,"probe_port":policy.probe_port})
                     )
-                    .map_err(|_| "network-policy")?
+                    .map_err(|_| KeySetup("network-policy"))?
                 )
             )
     {
-        return Err("network-policy");
+        return Err(KeySetup("network-policy"));
     }
-    let psk = transport::exporter(&tls, &binding).map_err(|_| "tls-key-derivation")?;
+    let psk = transport::exporter(&tls, &binding).map_err(|_| KeySetup("tls-key-derivation"))?;
     eprintln!("TUNNEL_PSK_DERIVED source=TLS-exporter context=SHA384 bytes=32");
     protocol::send(&mut tls, &json!({"type":"PREPARE","epoch":binding.epoch}))
-        .map_err(|_| "broker-commit")?;
-    let commit: Value = protocol::recv(&mut tls).map_err(|_| "broker-commit")?;
+        .map_err(|_| KeySetup("broker-commit"))?;
+    let commit: Value = protocol::recv(&mut tls).map_err(|_| KeySetup("broker-commit"))?;
     if commit["type"] != "COMMIT" || commit["epoch"] != binding.epoch {
-        return Err("broker-commit");
+        return Err(KeySetup("broker-commit"));
     }
     s.epoch = binding.epoch;
     s.connection_id = Some(binding.connection_id.clone());
-    save(dir, s).map_err(|_| "local-state")?;
+    save(dir, s).map_err(|_| KeySetup("local-state"))?;
     let started = migration_connector::now_ms() / 1000;
     let req = Request {
         operation: "configure".into(),
@@ -305,32 +332,38 @@ fn establish(
         public_key: Some(
             STANDARD.encode(
                 crypto::decode(&binding.gateway_wireguard_public_key, 32)
-                    .map_err(|_| "broker-binding")?,
+                    .map_err(|_| KeySetup("broker-binding"))?,
             ),
         ),
         psk: Some(STANDARD.encode(&psk[..])),
         key_expires_at_ms: binding.expires_at_ms,
     };
-    network::helper(Path::new(&c.helper_path), &req).map_err(|_| "wireguard-configure")?;
+    network::helper(Path::new(&c.helper_path), &req)
+        .map_err(|_| WireGuard("wireguard-configure"))?;
     drop(req);
     drop(psk);
     protocol::send(&mut tls, &json!({"type":"COMMIT","epoch":binding.epoch}))
-        .map_err(|_| "broker-commit")?;
-    network::probe(policy, prepared["nonce"].as_str().ok_or("wireguard-probe")?)
-        .map_err(|_| "wireguard-probe")?;
+        .map_err(|_| WireGuard("wireguard-commit"))?;
+    network::probe(
+        policy,
+        prepared["nonce"]
+            .as_str()
+            .ok_or(WireGuard("wireguard-probe"))?,
+    )
+    .map_err(|_| WireGuard("wireguard-probe"))?;
     let status = network::helper(Path::new(&c.helper_path), &net_req("status", s))
-        .map_err(|_| "wireguard-handshake")?;
+        .map_err(|_| WireGuard("wireguard-handshake"))?;
     if status["handshake_at"].as_u64().unwrap_or(0) < started {
-        return Err("wireguard-handshake");
+        return Err(WireGuard("wireguard-handshake"));
     }
     protocol::send(
         &mut tls,
         &json!({"type":"STATUS","epoch":binding.epoch,"checks":2}),
     )
-    .map_err(|_| "broker-ready")?;
-    let ready: Value = protocol::recv(&mut tls).map_err(|_| "broker-ready")?;
+    .map_err(|_| WireGuard("broker-ready"))?;
+    let ready: Value = protocol::recv(&mut tls).map_err(|_| WireGuard("broker-ready"))?;
     if ready["type"] != "STATUS" || ready["ready"] != true {
-        return Err("broker-ready");
+        return Err(WireGuard("broker-ready"));
     }
     eprintln!(
         "TUNNEL_READY epoch={} bidirectional_checks=2 wireguard_handshake=fresh",
@@ -709,7 +742,13 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
                 println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
                 serve_tunnel(&c, base, &state, &key, &policy, &binding)
             }
-            Err(stage) => Ok(SessionExit::Recover(stage)),
+            Err(failure) => {
+                let (stage, step) = failure.log_fields();
+                eprintln!("TUNNEL_RECOVERY_REQUIRED stage={stage} step={step}");
+                remove_tunnel(&c, &state)?;
+                std::thread::sleep(RECOVERY_DELAY);
+                continue;
+            }
         };
         match outcome {
             Ok(SessionExit::Revoked) => return cleanup(&c, &dir, &state, &key),

@@ -98,22 +98,54 @@ pub fn exporter(s: &SslStream<TcpStream>, binding: &Binding) -> Result<Zeroizing
     )?;
     Ok(out)
 }
-pub fn peer_public(s: &SslStream<TcpStream>) -> Result<String> {
-    let cert = s
-        .ssl()
-        .peer_certificate()
-        .ok_or("missing peer certificate")?;
-    let now = openssl::asn1::Asn1Time::from_unix((crate::now_ms() / 1000) as i64)?;
-    if cert.not_before() > now || cert.not_after() < now || {
-        let d = cert.not_before().diff(cert.not_after())?;
-        i64::from(d.days) * 86400 + i64::from(d.secs) > 86400
-    } {
-        return Err("certificate lifetime rejected".into());
+#[derive(Debug)]
+pub enum PeerCertificateError {
+    Missing,
+    Validity,
+    Lifetime,
+    Key,
+    Inspection,
+}
+
+impl PeerCertificateError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Missing => "peer-cert-missing",
+            Self::Validity => "peer-cert-validity",
+            Self::Lifetime => "peer-cert-lifetime",
+            Self::Key => "peer-cert-key",
+            Self::Inspection => "peer-cert-inspection",
+        }
     }
-    let key = cert.public_key()?;
-    let raw = key.raw_public_key()?;
+}
+
+impl std::fmt::Display for PeerCertificateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+impl std::error::Error for PeerCertificateError {}
+
+pub fn peer_public(s: &SslStream<TcpStream>) -> std::result::Result<String, PeerCertificateError> {
+    use PeerCertificateError::{Inspection, Key, Lifetime, Missing, Validity};
+    let cert = s.ssl().peer_certificate().ok_or(Missing)?;
+    let now = openssl::asn1::Asn1Time::from_unix((crate::now_ms() / 1000) as i64)
+        .map_err(|_| Inspection)?;
+    if cert.not_before() > now || cert.not_after() < now {
+        return Err(Validity);
+    }
+    let duration = cert
+        .not_before()
+        .diff(cert.not_after())
+        .map_err(|_| Inspection)?;
+    if i64::from(duration.days) * 86400 + i64::from(duration.secs) > 86400 {
+        return Err(Lifetime);
+    }
+    let key = cert.public_key().map_err(|_| Key)?;
+    let raw = key.raw_public_key().map_err(|_| Key)?;
     if raw.len() != 1952 {
-        return Err("ML-DSA-65 required".into());
+        return Err(Key);
     }
     Ok(crypto::b64(&raw))
 }

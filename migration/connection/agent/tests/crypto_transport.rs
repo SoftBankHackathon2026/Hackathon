@@ -16,7 +16,12 @@ use std::{
     thread,
     time::Duration,
 };
-fn cert(key: &PKey<Private>, ca: Option<(&X509, &PKey<Private>)>, server: bool) -> X509 {
+fn cert(
+    key: &PKey<Private>,
+    ca: Option<(&X509, &PKey<Private>)>,
+    server: bool,
+    valid_for_secs: i64,
+) -> X509 {
     let mut n = X509NameBuilder::new().unwrap();
     n.append_entry_by_text("CN", if server { "localhost" } else { "test-root" })
         .unwrap();
@@ -33,7 +38,8 @@ fn cert(key: &PKey<Private>, ca: Option<(&X509, &PKey<Private>)>, server: bool) 
         .unwrap();
     b.set_pubkey(key).unwrap();
     let before = Asn1Time::from_unix((migration_connector::now_ms() / 1000) as i64 - 30).unwrap();
-    let after = Asn1Time::from_unix((migration_connector::now_ms() / 1000) as i64 + 3600).unwrap();
+    let after = Asn1Time::from_unix((migration_connector::now_ms() / 1000) as i64 + valid_for_secs)
+        .unwrap();
     b.set_not_before(&before).unwrap();
     b.set_not_after(&after).unwrap();
     if ca.is_none() {
@@ -54,16 +60,21 @@ fn cert(key: &PKey<Private>, ca: Option<(&X509, &PKey<Private>)>, server: bool) 
         .unwrap();
     b.build()
 }
-fn fixture() -> (std::path::PathBuf, PKey<Private>, X509) {
+fn fixture(server_valid_for_secs: i64) -> (std::path::PathBuf, PKey<Private>, X509) {
     let dir = std::env::temp_dir().join(format!(
         "migration-tls-test-{}",
         crypto::b64(&crypto::random::<12>().unwrap())
     ));
     fs::create_dir(&dir).unwrap();
     let root_key = crypto::device_key().unwrap();
-    let root = cert(&root_key, None, false);
+    let root = cert(&root_key, None, false, 3600);
     let server_key = crypto::device_key().unwrap();
-    let server = cert(&server_key, Some((&root, &root_key)), true);
+    let server = cert(
+        &server_key,
+        Some((&root, &root_key)),
+        true,
+        server_valid_for_secs,
+    );
     fs::write(dir.join("root.pem"), root.to_pem().unwrap()).unwrap();
     fs::write(dir.join("server.pem"), server.to_pem().unwrap()).unwrap();
     fs::write(
@@ -93,7 +104,7 @@ fn binding() -> Binding {
 }
 #[test]
 fn mutual_mldsa_hybrid_tls_exporter_matches() {
-    let (dir, key, client_cert) = fixture();
+    let (dir, key, client_cert) = fixture(3600);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let acceptor = transport::server(&dir.join("server.pem"), &dir.join("key.pem")).unwrap();
@@ -121,7 +132,7 @@ fn mutual_mldsa_hybrid_tls_exporter_matches() {
 }
 #[test]
 fn classical_only_client_is_rejected() {
-    let (dir, key, client_cert) = fixture();
+    let (dir, key, client_cert) = fixture(3600);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let acceptor = transport::server(&dir.join("server.pem"), &dir.join("key.pem")).unwrap();
@@ -145,6 +156,30 @@ fn classical_only_client_is_rejected() {
     tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     assert!(connector.build().connect("localhost", tcp).is_err());
     assert!(server.join().unwrap());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn valid_chain_with_overlong_broker_certificate_reports_lifetime() {
+    let (dir, key, client_cert) = fixture(397 * 86400);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let acceptor = transport::server(&dir.join("server.pem"), &dir.join("key.pem")).unwrap();
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        acceptor.accept(stream).unwrap();
+    });
+    let connector = transport::client(&dir.join("root.pem"), &key, &client_cert).unwrap();
+    let tcp = TcpStream::connect(addr).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let tls = connector.connect("localhost", tcp).unwrap();
+    transport::enforce(tls.ssl()).unwrap();
+    let error = transport::peer_public(&tls).unwrap_err();
+    assert_eq!(error.code(), "peer-cert-lifetime");
+    server.join().unwrap();
     fs::remove_dir_all(dir).unwrap();
 }
 

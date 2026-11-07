@@ -124,7 +124,7 @@ impl Broker {
             Ok(p) => p,
             Err(e) => {
                 self.auth_failure(source);
-                return Err(e);
+                return Err(e.into());
             }
         };
         let bind: Bind = protocol::recv(&mut tls)?;
