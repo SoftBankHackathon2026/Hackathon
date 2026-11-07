@@ -23,7 +23,11 @@
 | `src/crosscloud/control_adapter.py` | 원가연 앱 제어 API 6개 → 접수 큐(durable-ingress) 제어 |
 | `src/crosscloud/ingress_control.py` | 접수 큐 제어 API 클라이언트 |
 | `src/crosscloud/health_probe.py` | 앱 `/readyz`·`/api/info` 점검 |
-| `src/crosscloud/cli.py` | `crosscloud` 명령(`discover` · `ingress-start` · `serve-adapter`) |
+| `src/crosscloud/cli.py` | `crosscloud` 명령 진입점(`discover` 와 전환 연결 명령 등록) |
+| `src/crosscloud/cutover_cli.py` | 전환 연결 명령 `render-handoff` · `ingress-start` · `serve-adapter` · `prepare-target` · `ingress-status` · `ingress-drain-check` |
+| `src/crosscloud/cutover_stage.py` | 원가연 job 단계 읽기(읽기 전용)와 `cloud.lock` |
+| `src/crosscloud/target_deploy.py` | 대상 앱을 대상 DB 프로필로 재배포(Cloud Run·ECS) |
+| `src/crosscloud/ingress_drain.py` | 접수 큐 정리 전 미처리 0 확인 |
 | `deploy/operator-pc/` | 운영자 PC compose 예시(접수 큐·Redis·Connect)와 순서 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/secret_transfer/` | Secret 값 이관(AWS↔GCP). 값은 메모리 bytes 로만 다루고 SHA-256 으로 대조 |
