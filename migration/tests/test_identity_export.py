@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import pytest
-from botocore.exceptions import ClientError
 from migration.identity.common import IdentityError, digest, load, private_write
 from migration.identity.execute import status
 from migration.identity_export import __main__ as cli
@@ -17,6 +16,8 @@ from migration.identity_export.execute import apply, preflight
 from migration.identity_export.plan import create_plan, mapping_template
 from migration.identity_export.report import markdown
 from migration.identity_export.verify import verify
+
+ClientError = pytest.importorskip("botocore.exceptions").ClientError
 
 ACCOUNT = "111122223333"
 OTHER_ACCOUNT = "444455556666"
