@@ -15,7 +15,7 @@ Deployment, StatefulSet, DaemonSet을 수집하며 Argo Rollout은 별도로 조
 1. 변경 검토 및 push/PR/머지 후 platform-ec2 자동배포로 웹/API 갱신.
 2. platform/deploy/ec2/README.md의 기존 연결 도구 release 절차로 새 version/증가한 sequence의 서명된 배포본 생성. 변경된 inventory.pyz가 포함되어야 한다. 기존 배포본을 같은 버전으로 덮어쓰지 않는다.
 3. 서버의 release metadata/게이트웨이 구성과 배포본을 해당 절차에 맞춰 갱신하고 단말에 새 도구를 적용한다. 기존 세션/티켓 재사용 가능 여부를 확인하고 불가능하면 새 연결을 등록한다. 비밀키는 Git에 포함하지 않는다.
-4. 사용자 등록 환경에서 앱 목록 재수집 → 실제 이름/namespace/image 대조 → 앱 체크 확인. 현재 로컬 kubeconfig의 클러스터 identity는 사용자가 제시한 스크린샷 identity와 달라 동일 환경 E2E로 간주하지 않는다.
+4. 사용자 등록 환경에서 앱 목록 재수집 → 실제 이름/namespace/image 대조 → 앱 체크 확인. 사용자는 스크린샷의 k3s-local이 별도 온프렘 환경임을 확인했다. 기존 시연 환경과 매핑하지 않는다. 로컬 kubeconfig 시험은 그 별도 환경의 E2E 검증이 아니다.
 
 ## 검증
 
