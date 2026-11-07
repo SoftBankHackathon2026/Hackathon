@@ -1,10 +1,14 @@
 """잔여 검사 — 이 실행(run)이 만든 자원이 클라우드에 남았는지 본다.
 
 crosscloud 가 만드는 모든 자원의 이름은 실행 접두사 `ccx-<run>` 으로 시작한다.
-terraform destroy 뒤 클라우드마다 이 접두사로 질의해, 결과가 비어야 잔여 0
-이다. 질의가 실패하면 "잔여 없음"이 아니라 오류다. 0 의 근거는 실시간 조회
-(서비스 API 직접 호출)여야 한다 — 색인(GCP Cloud Asset, AWS Resource Groups
-Tagging 등)은 변경을 늦게 반영해 빈 결과가 0 을 뜻하지 않는다.
+잔여 검사는 보조 확인이다. 정리됐다는 1차 근거는 terraform destroy 뒤 state 가
+빈 것이다. 잔여 검사는 그 뒤 클라우드마다 이 접두사로 질의해 state 밖에 남은
+자원(생성 응답 유실 등)을 찾는다. 질의가 실패하면 "잔여 없음"이 아니라 오류다.
+
+구현은 서비스 API 를 직접 부른다 — 색인(GCP Cloud Asset, AWS Resource Groups
+Tagging 등)은 변경을 늦게 반영한다. 그래도 서비스 목록 자체가 최종 일관성인
+경우가 있어(예: Secret Manager 목록은 막 만든 비밀이 잠시 빠질 수 있다), 빈
+결과가 잔여 0 을 보장하지는 않는다.
 
 클라우드별 구현은 residue_gcp(GCP)·residue_aws(AWS) 에 둔다.
 
@@ -36,7 +40,9 @@ class ResidueItem:
     Attributes:
         cloud: 자원이 있는 클라우드.
         kind: 클라우드 고유 자원 종류(GCP asset type, AWS 리소스 종류).
-        native_id: 클라우드 고유 식별자(GCP 전체 리소스 이름, AWS ARN).
+        native_id: 목록 응답의 이름 값 그대로. GCP 는 종류에 따라 짧은
+            이름(Cloud SQL·Cloud Run·Compute·GCS), 전체 리소스 이름(Secret
+            Manager·Artifact Registry), 이메일(서비스 계정)이다.
     """
 
     cloud: model.Cloud

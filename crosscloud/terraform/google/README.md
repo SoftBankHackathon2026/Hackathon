@@ -26,9 +26,11 @@ AWS↔GCP 이전에서 GCP 쪽 자원을 만드는 Terraform 루트 모듈 셋�
 
 모든 자원 이름은 `name_prefix` 로 시작한다. 라벨을 받는 자원에는
 `crosscloud-run`(= `name_prefix`)과 `crosscloud-direction` 라벨이 붙는다.
-잔여 검사(`crosscloud.provision.residue_gcp`)는 이 모듈들이 만드는 자원 종류마다
-서비스 API 목록을 이름 접두사로 직접 조회한다(실시간). 모듈에 새 자원 종류를
-더하면 `residue_gcp._LISTINGS` 에도 더한다.
+해체됐다는 1차 근거는 `terraform destroy` 뒤 state 가 빈 것이다. 잔여
+검사(`crosscloud.provision.residue_gcp`)는 보조 확인이다. 이 모듈들이 만드는
+자원 종류마다 서비스 API 목록을 이름 접두사로 직접 조회해 state 밖에 남은
+자원을 찾는다. Secret Manager 목록은 최종 일관성이라 막 만든 비밀이 잠시 빠질
+수 있다. 모듈에 새 자원 종류를 더하면 `residue_gcp._LISTINGS` 에도 더한다.
 
 방향이 동작을 바꾸는 곳은 `target_app` 의 Cloud Run 진입(ingress) 하나다.
 대상(`aws_to_gcp`)은 전환 전까지 진입을 닫아 두고, 원본 고정물(`gcp_to_aws`)은
@@ -59,7 +61,8 @@ Terraform state 에 비밀 평문을 두지 않는다.
 *   API: `artifactregistry` · `sqladmin` · `secretmanager` · `run` ·
     `compute` · `iam`.
 *   잔여 검사 신원에는 위 서비스와 Cloud Storage 의 목록 권한이 있어야
-    한다(프로젝트 Viewer 로 충분하다).
+    한다(프로젝트 Viewer 로 충분하다). Cloud SQL 은 REST 로 보므로 `curl` 이
+    필요하다.
 *   `target_app` 은 비밀 IAM 바인딩과 Cloud Run 호출자 IAM 끄기를 한다. 실행
     신원에 IAM 정책 설정 권한이 있어야 한다(프로젝트 Editor 만으로는 부족할 수
     있다 — 실측 전).
