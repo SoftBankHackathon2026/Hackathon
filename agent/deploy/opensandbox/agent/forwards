@@ -1,0 +1,4 @@
+migration-policy 18181:8181
+openbao 18200:8200
+sample-app-smoke 18080:80
+postgres 15432:5432

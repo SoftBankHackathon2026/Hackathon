@@ -61,6 +61,7 @@ class ProbeSettings:
     sslrootcert: str | None = None
     password_url_env: str = "SAMPLE_APP_DATABASE_URL"
     connect_timeout: float = 5.0
+    address_map: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,9 @@ class RestartSettings:
     timeout: float = 180.0
     poll_interval: float = 3.0
     stuck_after: float = 45.0
+    api_server: str | None = None
+    token_file: str | None = None
+    ca_file: str | None = None
 
 
 @dataclass(frozen=True)

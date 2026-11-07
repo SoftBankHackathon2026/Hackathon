@@ -1,0 +1,19 @@
+[Unit]
+Description=Port-forward hackathon/%i for the remote AI agent
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=oneport-agent
+Group=oneport-agent
+EnvironmentFile=/etc/oneport-agent/forward-%i.env
+ExecStart=/usr/local/bin/kubectl --kubeconfig /etc/oneport-agent/kubeconfig -n hackathon port-forward --address 127.0.0.1 svc/%i ${PORTS}
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

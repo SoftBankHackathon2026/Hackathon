@@ -1,0 +1,62 @@
+# 원격 AI 에이전트 (OpenSandbox 호스트에서 실행)
+
+OpenSandbox 가 있는 호스트에서 에이전트를 돌려 온프렘 클러스터의 sample-app 설정을 고친다.
+Codex 는 같은 호스트의 샌드박스에서 돌고, 클러스터에는 Tailscale + kube API 포트 포워드로만 닿는다.
+
+```
+[OpenSandbox 호스트]                                   [온프렘 k3s, hackathon 네임스페이스]
+ oneport-agent (watch 60초)                             migration-policy (OPA)
+   ├─ 127.0.0.1:18181 ─ kubectl port-forward ─────────▶ svc/migration-policy:8181
+   ├─ 127.0.0.1:18200 ─ kubectl port-forward ─────────▶ svc/openbao:8200
+   ├─ 127.0.0.1:18080 ─ kubectl port-forward ─────────▶ svc/sample-app-smoke:80
+   ├─ 127.0.0.1:15432 ─ kubectl port-forward ─────────▶ svc/postgres:5432 (TLS 는 원래 호스트 이름으로 검증)
+   ├─ kube API (Tailscale) ───────────────────────────▶ Rollout sample-app 재시작
+   └─ 127.0.0.1:8090 OpenSandbox ─ gVisor 샌드박스 ─ Codex (OpenAI 도메인만 나감)
+```
+
+## 흐름
+
+`watch` 가 60초마다 한 번 판정한다.
+
+1. 대상 앱 스모크(`--target-only`) → OPA `pre_cutover` 판정
+2. allow 면 끝. deny 이고 사유가 전부 APP-01 이면 OpenBao 값을 읽고 Codex(샌드박스)에 제안을 받는다
+3. 정적 검사(S0~S7) → 수정 값으로 DB 탐침 → OpenBao cas 쓰기 → Rollout 재시작 → 다시 판정
+4. 재판정 allow 일 때만 `RESOLVED`. 그 밖의 사유·hold 는 사람에게 넘긴다
+
+승인 대기(`auto_apply: false`) 실행이 있으면 새로 판정하지 않는다.
+
+## 설치
+
+먼저 상위 폴더의 `install.sh` 로 OpenSandbox 호스트를 만든다. 호스트를 Tailscale 에 붙여 kube API 에 닿게 한다.
+
+```sh
+sudo tailscale up --accept-routes --accept-dns=false
+sudo K8S_API_SERVER=https://<kube API 주소>:6443 agent/deploy/opensandbox/agent/install.sh
+```
+
+`install.sh` 는 kubectl(체크섬 확인), 에이전트 venv, 설정, systemd 유닛을 깐다. 비밀 파일이 다 있으면 서비스를 켜고, 없으면 빠진 파일을 알려 준다.
+
+## 비밀 파일 (`/etc/oneport-agent`, root:opensandbox 0640)
+
+| 파일 | 내용 | 얻는 곳 |
+|---|---|---|
+| `kubeconfig` | ServiceAccount `ai-agent` 토큰 kubeconfig | gitops `apps/ai-agent` 의 토큰 Secret |
+| `kube-token`, `kube-ca.crt` | 같은 토큰과 클러스터 CA (Rollout 재시작용) | 같은 Secret |
+| `db-ca.pem` | 대상 DB CA (verify-full) | Secret `sample-app-db-ca` |
+| `agent.env` | `VAULT_TOKEN=`(에이전트 전용 OpenBao 토큰), `SAMPLE_APP_DATABASE_URL=`(탐침 비밀번호) | OpenBao, Secret `sample-app-db` |
+| `codex.env` | `CODEX_API_KEY=` | 직접 넣는다 |
+
+값은 저장소·로그에 남기지 않는다. `/etc/opensandbox/server.env` 의 OpenSandbox API 키는 서비스가 같이 읽는다.
+
+## 확인
+
+```sh
+systemctl status oneport-agent 'oneport-forward@*'
+journalctl -u oneport-agent -f
+sudo -u oneport-agent /opt/oneport-agent/venv/bin/python -m agent --config /etc/oneport-agent/agent.yaml status
+```
+
+## 한계
+
+- 포트 포워드가 끊기면 systemd 가 5초 뒤 다시 잇는다. 그동안의 판정은 `ERROR`/hold 로 끝나고 다음 주기에 다시 한다.
+- 이 호스트가 클러스터에 하는 일은 ServiceAccount `ai-agent` 권한(Rollout 재시작, 파드 조회·포트 포워드) 안이다. OpenBao 쓰기는 에이전트 토큰 정책(한 경로)으로 막는다.

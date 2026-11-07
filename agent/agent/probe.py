@@ -36,17 +36,33 @@ class PostgresProber:
         self.settings = settings
         self._env = os.environ if env is None else env
 
+    def _address(self, host: str, port: int) -> tuple[str, int] | None:
+        mapped = self.settings.address_map.get(f"{host}:{port}")
+        if not mapped:
+            return None
+        addr, _, mapped_port = str(mapped).rpartition(":")
+        if not addr:
+            raise ValueError(mapped)
+        return addr, int(mapped_port)
+
     def probe(self, config: Mapping[str, Any]) -> ProbeResult:
         host, port = str(config["DB_HOST"]), int(config["DB_PORT"])
         try:
-            socket.create_connection((host, port), timeout=self.settings.connect_timeout).close()
+            mapped = self._address(host, port)
+        except ValueError:
+            return ProbeResult(False, "tcp", "AddressMapInvalid")
+        connect_to = mapped or (host, port)
+        try:
+            socket.create_connection(connect_to, timeout=self.settings.connect_timeout).close()
         except OSError as exc:
             return ProbeResult(False, "tcp", type(exc).__name__)
         kwargs: dict[str, Any] = {
-            "host": host, "port": port, "dbname": config.get("DB_NAME"), "user": config.get("DB_USER"),
+            "host": host, "port": connect_to[1], "dbname": config.get("DB_NAME"), "user": config.get("DB_USER"),
             "password": password_from_url(self._env.get(self.settings.password_url_env)),
             "sslmode": self.settings.sslmode, "connect_timeout": max(int(self.settings.connect_timeout), 1),
         }
+        if mapped:
+            kwargs["hostaddr"] = mapped[0]
         if self.settings.sslrootcert:
             kwargs["sslrootcert"] = self.settings.sslrootcert
         try:
