@@ -13,6 +13,8 @@ import datetime
 from typing import Literal
 
 Cloud = Literal["aws", "gcp"]
+# 이전 방향. CLI --direction 값과 Terraform 모듈의 방향 변수와 같은 문자열이다.
+Direction = Literal["aws_to_gcp", "gcp_to_aws"]
 ComputePlatform = Literal[
     "ec2", "ecs", "lambda", "eks", "gce", "cloud_run", "gke"
 ]
