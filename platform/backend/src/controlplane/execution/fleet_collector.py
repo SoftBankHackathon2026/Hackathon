@@ -6,13 +6,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
-from kubernetes.client.exceptions import ApiException
-from kubernetes.config import ConfigException
-from urllib3.exceptions import HTTPError as Urllib3Error
-
 from controlplane.core import db
-from controlplane.cost.collect import collect_inventory
+from controlplane.cost.collect import carry_over_kubernetes, collect_inventory
 from controlplane.cost.config import CostConfig, load_cost_config
 from controlplane.cost.models import CostInventory
 from controlplane.cost.onprem import OnPremMeter, create_meter
@@ -85,9 +80,17 @@ class FleetCollector:
         if self._costs is None:
             return
         settings = self._cost_config.environment(env.id)
-        self._costs.put(
-            self._cost_reader(env, settings.tags, meter=self._meter(env), project=settings.project)
+        current = self._cost_reader(
+            env, settings.tags, meter=self._meter(env), project=settings.project
         )
+        self._costs.put(carry_over_kubernetes(current, self._previous_costs(env)))
+
+    def _previous_costs(self, env: EnvironmentConfig) -> CostInventory | None:
+        try:
+            return self._costs.get(env.id)
+        except Exception as exc:  # noqa: BLE001 - 이전 값을 못 읽어도 이번 값은 저장한다
+            LOG.warning("env=%s previous cost error=%s", env.id, type(exc).__name__)
+            return None
 
     def collect_worker(self, job: MigrationConfig) -> None:
         if not job.worker_url:
@@ -119,7 +122,7 @@ class FleetCollector:
             for collect in (self.collect_worker, self.collect_connectors):
                 try:
                     collect(job)
-                except httpx.HTTPError as exc:
+                except Exception as exc:  # noqa: BLE001 - 한 작업의 오류가 수집기 프로세스를 끝내지 않게 한다
                     LOG.warning(
                         "job=%s collect=%s error=%s",
                         job.job_id,
@@ -130,13 +133,13 @@ class FleetCollector:
             for env in self._config.environments:
                 try:
                     self.collect_environment(env)
-                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
+                except Exception as exc:  # noqa: BLE001 - DB·검증 오류도 다음 환경과 다음 tick 을 막지 않는다
                     LOG.warning("env=%s facts error=%s", env.id, type(exc).__name__)
         if self._ticks % COST_EVERY_TICKS == 0:
             for env in self._config.environments:
                 try:
                     self.collect_costs(env)
-                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
+                except Exception as exc:  # noqa: BLE001 - DB·검증 오류도 다음 환경과 다음 tick 을 막지 않는다
                     LOG.warning("env=%s cost error=%s", env.id, type(exc).__name__)
         self._ticks += 1
 
