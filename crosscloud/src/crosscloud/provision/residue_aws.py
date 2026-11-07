@@ -6,8 +6,6 @@ terraform destroy 뒤에 부른다. ResidueScanner 계약(scan(name_prefix))을 
 *   리전 자원: Resource Groups Tagging API 로 태그 `crosscloud-run=<접두사>`
     가 붙은 것.
 *   IAM 역할: 전역이라 태그 질의에 안 나온다. 이름 접두사로 거른다.
-*   Route 53 호스팅 영역: 이름 첫 조각(`ccx-r1.internal.` 의 `ccx-r1`)으로
-    거른다.
 *   Secrets Manager: 삭제 예약된 Secret 도 목록에 넣어 이름으로 거른 뒤, ID 로
     다시 조회해 정말 남았는지 본다(강제 삭제 직후에는 목록이 늦다).
 
@@ -81,20 +79,16 @@ _RUN_TAG_KEY = "crosscloud-run"
 class AwsResidueScanner:
     """한 AWS 계정·리전에서 실행 접두사 자원을 찾는다(ResidueScanner 구현)."""
 
-    def __init__(
-        self, *, tagging: Any, iam: Any, route53: Any, secrets: Any
-    ) -> None:
+    def __init__(self, *, tagging: Any, iam: Any, secrets: Any) -> None:
         """질의에 쓸 boto3 클라이언트를 받는다.
 
         Args:
             tagging: 대상 리전의 `resourcegroupstaggingapi` 클라이언트.
             iam: `iam` 클라이언트.
-            route53: `route53` 클라이언트.
             secrets: 대상 리전의 `secretsmanager` 클라이언트.
         """
         self._tagging = tagging
         self._iam = iam
-        self._route53 = route53
         self._secrets = secrets
 
     @classmethod
@@ -103,7 +97,6 @@ class AwsResidueScanner:
         return cls(
             tagging=session.client("resourcegroupstaggingapi"),
             iam=session.client("iam"),
-            route53=session.client("route53"),
             secrets=session.client("secretsmanager"),
         )
 
@@ -125,7 +118,6 @@ class AwsResidueScanner:
             arns = {
                 *self._tagged(name_prefix),
                 *self._roles(name_prefix),
-                *self._zones(name_prefix),
                 *self._secrets_left(name_prefix),
             }
         except exceptions.ClientError as error:
@@ -151,14 +143,6 @@ class AwsResidueScanner:
             for role in page["Roles"]:
                 if is_named_with_prefix(role["RoleName"], name_prefix):
                     yield role["Arn"]
-
-    def _zones(self, name_prefix: str) -> Iterator[str]:
-        pages = self._route53.get_paginator("list_hosted_zones").paginate()
-        for page in pages:
-            for zone in page["HostedZones"]:
-                first_label = zone["Name"].split(".", 1)[0]
-                if is_named_with_prefix(first_label, name_prefix):
-                    yield f"arn:aws:route53:::{zone['Id'].lstrip('/')}"
 
     def _secrets_left(self, name_prefix: str) -> Iterator[str]:
         # name 필터는 앞부분 일치라 ccx-r10 도 돌려준다. 이름으로 다시 거른다.

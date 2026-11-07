@@ -11,7 +11,6 @@ _SG_ARN = f"arn:aws:ec2:{_REGION}:{_ACCOUNT}:security-group/sg-1"
 _RDS_ARN = f"arn:aws:rds:{_REGION}:{_ACCOUNT}:db:ccx-r1-db"
 _LOG_ARN = f"arn:aws:logs:{_REGION}:{_ACCOUNT}:log-group:/ecs/ccx-r1"
 _ROLE_ARN = f"arn:aws:iam::{_ACCOUNT}:role/ccx-r1-exec"
-_ZONE_ARN = "arn:aws:route53:::hostedzone/Z0123"
 _SECRET_ARN = (
     f"arn:aws:secretsmanager:{_REGION}:{_ACCOUNT}:secret:ccx-r1-db-url-AbCdEf"
 )
@@ -27,28 +26,25 @@ def _client(service):
 
 
 class _Clients:
-    """Stubber 를 붙인 네 클라이언트. 기대 호출이 남으면 실패한다."""
+    """Stubber 를 붙인 세 클라이언트. 기대 호출이 남으면 실패한다."""
 
     def __init__(self):
         self.tagging = _client("resourcegroupstaggingapi")
         self.iam = _client("iam")
-        self.route53 = _client("route53")
         self.secrets = _client("secretsmanager")
         self.tag_stub = Stubber(self.tagging)
         self.iam_stub = Stubber(self.iam)
-        self.zone_stub = Stubber(self.route53)
         self.secret_stub = Stubber(self.secrets)
 
     def scanner(self):
         return residue_aws.AwsResidueScanner(
             tagging=self.tagging,
             iam=self.iam,
-            route53=self.route53,
             secrets=self.secrets,
         )
 
     def stubs(self):
-        return (self.tag_stub, self.iam_stub, self.zone_stub, self.secret_stub)
+        return (self.tag_stub, self.iam_stub, self.secret_stub)
 
     def __enter__(self):
         for stub in self.stubs():
@@ -91,23 +87,6 @@ def _expect_roles(clients, *names):
     )
 
 
-def _expect_zones(clients, *zones):
-    hosted_zones = [
-        {"Id": f"/hostedzone/{zone_id}", "Name": name, "CallerReference": "x"}
-        for zone_id, name in zones
-    ]
-    clients.zone_stub.add_response(
-        "list_hosted_zones",
-        {
-            "HostedZones": hosted_zones,
-            "IsTruncated": False,
-            "Marker": "",
-            "MaxItems": "100",
-        },
-        {},
-    )
-
-
 def _expect_secret_list(clients, *secrets):
     clients.secret_stub.add_response(
         "list_secrets",
@@ -124,8 +103,6 @@ def _expect_empty_queries(clients, skip=()):
         _expect_tagged(clients, [])
     if "roles" not in skip:
         _expect_roles(clients)
-    if "zones" not in skip:
-        _expect_zones(clients)
     if "secrets" not in skip:
         _expect_secret_list(clients)
 
@@ -165,25 +142,6 @@ def test_scan_finds_iam_roles_by_name_prefix_only():
     assert residue == (
         residue_aws.ResidueItem(
             cloud="aws", kind="iam:role", native_id=_ROLE_ARN
-        ),
-    )
-
-
-def test_scan_finds_hosted_zone_whose_first_label_is_the_prefix():
-    with _Clients() as clients:
-        _expect_zones(
-            clients,
-            ("Z0123", "ccx-r1.internal."),
-            ("Z0456", "ccx-r10.internal."),
-            ("Z0789", "app.ccx-r1.example."),
-        )
-        _expect_empty_queries(clients, skip=("zones",))
-
-        residue = clients.scanner().scan(_PREFIX)
-
-    assert residue == (
-        residue_aws.ResidueItem(
-            cloud="aws", kind="route53:hostedzone", native_id=_ZONE_ARN
         ),
     )
 
@@ -229,11 +187,16 @@ def test_scan_skips_listed_secret_named_outside_the_prefix():
         assert clients.scanner().scan(_PREFIX) == ()
 
 
-def test_scan_reports_resource_found_by_two_queries_once():
+def test_scan_reports_secret_found_by_tag_and_name_queries_once():
     with _Clients() as clients:
-        _expect_tagged(clients, [_ZONE_ARN])
-        _expect_zones(clients, ("Z0123", "ccx-r1.internal."))
-        _expect_empty_queries(clients, skip=("tagged", "zones"))
+        _expect_tagged(clients, [_SECRET_ARN])
+        _expect_roles(clients)
+        _expect_secret_list(clients, (_SECRET_ARN, "ccx-r1-db-url"))
+        clients.secret_stub.add_response(
+            "describe_secret",
+            {"ARN": _SECRET_ARN, "Name": "ccx-r1-db-url"},
+            {"SecretId": _SECRET_ARN},
+        )
 
         residue = clients.scanner().scan(_PREFIX)
 
@@ -243,7 +206,7 @@ def test_scan_reports_resource_found_by_two_queries_once():
 @pytest.mark.parametrize("prefix", ["", "ccx-", "ccx-R1", "team-ccx-r1"])
 def test_scan_rejects_malformed_prefix_before_querying(prefix):
     scanner = residue_aws.AwsResidueScanner(
-        tagging=None, iam=None, route53=None, secrets=None
+        tagging=None, iam=None, secrets=None
     )
 
     with pytest.raises(ValueError):
