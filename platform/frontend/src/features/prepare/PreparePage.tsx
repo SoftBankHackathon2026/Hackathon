@@ -24,7 +24,13 @@ import {
   RegisteredEnvironment,
 } from "./ConnectionRegistration";
 import { CopyFailure, copyEnrollmentCommand } from "./copyEnrollmentCommand";
-import { connectionStatus, formatTime, STEPS, stepFor } from "./model";
+import {
+  connectionStatus,
+  formatTime,
+  isListedConnection,
+  STEPS,
+  stepFor,
+} from "./model";
 import { LiveAppSelect } from "./LiveAppSelect";
 import { AppSelectStep } from "./AppSelectStep";
 import "./prepare.css";
@@ -65,12 +71,18 @@ export function PreparePage({
   const liveGateway = useMemo(() => createLiveConnections(), [team]);
   const gateway = providedGateway ?? liveGateway;
   const snapshots = useSyncExternalStore(gateway.subscribe, gateway.list);
+  const listedConnections = useMemo(
+    () => snapshots.filter(isListedConnection),
+    [snapshots],
+  );
   const snapshot = snapshots.find((s) => s.id === requestId) ?? null;
   const [acknowledged, setAcknowledged] = useState(false),
     [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(""),
     [error, setError] = useState(""),
-    [confirmRevoke, setConfirmRevoke] = useState(false);
+    [disconnectId, setDisconnectId] = useState<string>();
+  const disconnectDialog = useRef<HTMLDialogElement>(null);
+  const disconnectTarget = listedConnections.find((s) => s.id === disconnectId);
   // 준비 단계: 1 환경 연결 → 2 앱 선택. 환경을 등록한 뒤에만 2 로 갈 수 있다
   const [phase, setPhase] = useState<"connect" | "apps">("connect");
   const lock = useRef(false),
@@ -109,7 +121,8 @@ export function PreparePage({
       setError("");
       setMessage("");
     }
-    setConfirmRevoke(false);
+    disconnectDialog.current?.close();
+    setDisconnectId(undefined);
     setPhase("connect");
   }, [requestId]);
   useEffect(() => {
@@ -140,6 +153,39 @@ export function PreparePage({
         lock.current = false;
         if (alive.current) setBusy(false);
       });
+  };
+  const canDisconnect = (s: ConnectionSnapshot) =>
+    gateway.available && s.permissions.revoke && isListedConnection(s);
+  const closeDisconnect = () => {
+    disconnectDialog.current?.close();
+    setDisconnectId(undefined);
+  };
+  const openDisconnect = (
+    s: ConnectionSnapshot,
+    trigger: HTMLButtonElement,
+  ) => {
+    setError("");
+    setDisconnectId(s.id);
+    trigger.focus({ preventScroll: true });
+    disconnectDialog.current?.showModal();
+  };
+  const disconnect = () => {
+    const s = disconnectTarget;
+    if (!s || !canDisconnect(s)) return;
+    const approved = s.device === "APPROVED";
+    const pending = s.device === "PENDING_APPROVAL";
+    run(
+      async () => {
+        if (approved) await gateway.revoke(s.id);
+        else if (pending) await gateway.reject(s.id);
+        else await gateway.cancel(s.id);
+        closeDisconnect();
+        if (alive.current) heading.current?.focus({ preventScroll: true });
+      },
+      approved
+        ? "서버 권한을 철회했어요. 터널과 단말 정리는 별도로 확인해요."
+        : "연결 요청을 취소했어요.",
+    );
   };
   const startNew = () => {
     if (busy) return;
@@ -261,7 +307,7 @@ export function PreparePage({
           <div className="connection-sidebar-heading">
             <h2>연결 환경</h2>
             <span>
-              {snapshots.filter((s) => s.environmentId).length}개 등록
+              {listedConnections.filter((s) => s.environmentId).length}개 등록
             </span>
           </div>
           <button
@@ -272,26 +318,28 @@ export function PreparePage({
             <Icon name="layers" size={16} />
             환경 연결 추가
           </button>
-          {snapshots.length === 0 ? (
+          {listedConnections.length === 0 ? (
             <p className="connection-empty">
-              등록한 환경이 없어요.
+              진행 중이거나 등록된 연결이 없어요.
               <br />
               환경정보 수집부터 시작하세요.
             </p>
           ) : (
             <ul className="connection-environments">
-              {snapshots.map((s) => {
+              {listedConnections.map((s) => {
                 const state = connectionStatus(s);
+                const name = s.target?.name ?? "환경 연결 요청";
                 return (
                   <li key={s.id}>
                     <button
+                      className="connection-environment-select"
                       disabled={busy}
                       aria-current={s.id === requestId ? "true" : undefined}
                       onClick={() =>
                         onNavigate("#prepare/" + encodeURIComponent(s.id))
                       }
                     >
-                      <strong>{s.target?.name ?? "환경 연결 요청"}</strong>
+                      <strong>{name}</strong>
                       <span>
                         {s.target
                           ? s.target.role === "source"
@@ -300,6 +348,18 @@ export function PreparePage({
                           : "환경 이름, 역할 미등록"}
                       </span>
                       <StatusDot tone={state.tone}>{state.label}</StatusDot>
+                    </button>
+                    <button
+                      type="button"
+                      className="connection-disconnect"
+                      aria-label={`${name} 연결 해제`}
+                      title="연결 해제"
+                      disabled={busy || !canDisconnect(s)}
+                      onClick={(event) =>
+                        openDisconnect(s, event.currentTarget)
+                      }
+                    >
+                      <Icon name="unlink" size={18} />
                     </button>
                   </li>
                 );
@@ -347,7 +407,7 @@ export function PreparePage({
             <div className="connection-feedback" aria-live="polite">
               {message && <p className="connection-success">{message}</p>}
             </div>
-            {error && (
+            {error && !disconnectId && (
               <p className="connection-error" role="alert">
                 {error}
               </p>
@@ -393,6 +453,10 @@ export function PreparePage({
                 >
                   {snapshot?.device === "REVOKED" ? (
                     <CleanupResult snapshot={snapshot} />
+                  ) : snapshot?.registration === "CANCELLED" ? (
+                    <section className="connection-title">
+                      <h2>연결 요청을 취소했어요</h2>
+                    </section>
                   ) : snapshot?.environmentId ? (
                     <RegisteredEnvironment
                       snapshot={snapshot}
@@ -479,45 +543,21 @@ export function PreparePage({
                           새 연결로 재접속
                         </button>
                       )}
-                      {!confirmRevoke ? (
-                        <button
-                          className="secondary"
-                          disabled={busy || !snapshot.permissions.revoke}
-                          onClick={() => setConfirmRevoke(true)}
-                        >
-                          연결 해제
-                        </button>
-                      ) : (
-                        <div className="connection-revoke">
-                          <p>
-                            새 수집 요청과 터널을 차단할까요? 고객 권한과 단말
-                            파일 정리는 별도로 확인해요.
-                          </p>
-                          <button
-                            className="connection-danger"
-                            disabled={busy}
-                            onClick={() =>
-                              run(
-                                () => gateway.revoke(snapshot.id),
-                                "서버 권한을 철회했어요. 터널과 단말 정리 결과를 확인해요.",
-                              )
-                            }
-                          >
-                            연결 해제 확인
-                          </button>
-                          <button
-                            className="secondary"
-                            onClick={() => setConfirmRevoke(false)}
-                          >
-                            취소
-                          </button>
-                        </div>
-                      )}
+                      <button
+                        className="secondary"
+                        disabled={busy || !canDisconnect(snapshot)}
+                        onClick={(event) =>
+                          openDisconnect(snapshot, event.currentTarget)
+                        }
+                      >
+                        연결 해제
+                      </button>
                     </div>
                   </section>
                 )}
                 {snapshot &&
                   (snapshot.registration === "EXPIRED" ||
+                    snapshot.registration === "CANCELLED" ||
                     snapshot.device === "REJECTED" ||
                     snapshot.device === "REVOKED") && (
                     <div className="connection-actions">
@@ -554,6 +594,54 @@ export function PreparePage({
           {previewTools?.(snapshot, context)}
         </div>
       </div>
+      <dialog
+        ref={disconnectDialog}
+        className="connection-revoke"
+        aria-labelledby="connection-revoke-title"
+        aria-describedby="connection-revoke-description"
+        onCancel={(event) => {
+          event.preventDefault();
+          if (!busy) closeDisconnect();
+        }}
+      >
+        <h2 id="connection-revoke-title">연결을 해제할까요?</h2>
+        <p id="connection-revoke-description">
+          {disconnectTarget?.target?.name && (
+            <strong>{disconnectTarget.target.name} · </strong>
+          )}
+          {disconnectTarget?.device === "APPROVED"
+            ? "새 수집 요청과 터널을 차단해요. 고객 권한과 단말 파일 정리는 별도로 확인해요."
+            : disconnectTarget
+              ? "이 환경의 연결 요청을 취소해요."
+              : "이 연결 요청은 이미 종료되었어요."}
+        </p>
+        {error && disconnectId && (
+          <p className="connection-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="connection-actions">
+          <button
+            type="button"
+            className="secondary"
+            autoFocus
+            disabled={busy}
+            onClick={closeDisconnect}
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            className="connection-danger"
+            disabled={
+              busy || !disconnectTarget || !canDisconnect(disconnectTarget)
+            }
+            onClick={disconnect}
+          >
+            {busy ? "연결 해제 중…" : "연결 해제 확인"}
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }

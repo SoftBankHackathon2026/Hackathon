@@ -151,12 +151,65 @@ for (const [source, provider] of [
 test("revocation retains separate cleanup statuses", async ({ page }) => {
   await setup(page);
   await scenario(page, "registered");
-  await page.getByRole("button", { name: "연결 해제", exact: true }).click();
-  await page.getByRole("button", { name: "연결 해제 확인" }).click();
+  const sidebar = page.getByRole("complementary", { name: "연결 환경" });
+  const disconnect = sidebar.getByRole("button", {
+    name: "busan-production 연결 해제",
+  });
+  await disconnect.click();
+  const dialog = page.getByRole("dialog", { name: "연결을 해제할까요?" });
+  await expect(
+    dialog.getByRole("button", { name: "취소", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(disconnect).toBeFocused();
+  await expect(sidebar).toContainText("1개 등록");
+  await disconnect.click();
+  await dialog.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(
     page.getByRole("heading", { name: "연결 해제를 확인하고 있어요" }),
   ).toBeVisible();
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
+  await expect(sidebar.getByRole("listitem")).toHaveCount(0);
+  await expect(sidebar).toContainText("0개 등록");
+  await page.reload();
+  await expect(sidebar.getByRole("listitem")).toHaveCount(0);
+  await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
+});
+test("sidebar disconnects a pending request without switching away from the selected environment", async ({
+  page,
+}) => {
+  await setup(page);
+  await scenario(page, "pending");
+  await page.getByRole("button", { name: "환경 연결 추가" }).click();
+  await scenario(page, "registered");
+  const sidebar = page.getByRole("complementary", { name: "연결 환경" });
+  await expect(sidebar.getByRole("listitem")).toHaveCount(2);
+  await sidebar
+    .getByRole("button", { name: "환경 연결 요청 연결 해제" })
+    .click();
+  await page.getByRole("button", { name: "연결 해제 확인" }).click();
+  await expect(sidebar.getByRole("listitem")).toHaveCount(1);
+  await expect(sidebar).toContainText("1개 등록");
+  await expect(
+    page.getByRole("heading", { name: "환경을 등록했어요" }),
+  ).toBeVisible();
+});
+test("sidebar cancels a command waiting to be run", async ({ page }) => {
+  await setup(page);
+  await page
+    .getByLabel("이 환경에 접근할 수 있는 지원 단말을 준비했어요.")
+    .check();
+  await page.getByRole("button", { name: "미리보기 명령 복사" }).click();
+  const sidebar = page.getByRole("complementary", { name: "연결 환경" });
+  await sidebar
+    .getByRole("button", { name: "환경 연결 요청 연결 해제" })
+    .click();
+  await page.getByRole("button", { name: "연결 해제 확인" }).click();
+  await expect(sidebar.getByRole("listitem")).toHaveCount(0);
+  await expect(
+    page.getByText("연결 요청을 취소했어요.", { exact: true }),
+  ).toBeVisible();
 });
 for (const width of [390, 768, 1024, 1600])
   test(
@@ -240,6 +293,11 @@ test("expired request stays within collection", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "명령 기한이 끝났어요" }),
   ).toBeVisible();
+  await expect(
+    page
+      .getByRole("complementary", { name: "연결 환경" })
+      .getByRole("listitem"),
+  ).toHaveCount(0);
   await expect(
     page
       .getByRole("list", { name: "환경 연결 진행", exact: true })
