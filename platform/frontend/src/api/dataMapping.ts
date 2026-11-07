@@ -13,6 +13,7 @@ export type DataResource = {
   name: string;
   origin: "managed" | "cluster";
   detail: string | null;
+  infrastructure: boolean;
 };
 
 export type DataBinding = {
@@ -26,6 +27,7 @@ export type BindingView = DataBinding & {
   kind: DataKind;
   basis: BindingBasis;
   candidates: string[];
+  note: string | null;
 };
 
 export type DataMapping = {

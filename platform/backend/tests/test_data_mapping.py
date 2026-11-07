@@ -381,3 +381,158 @@ def test_name_only_suggestions_still_need_confirmation():
     view = service(envs).get("forward_001")
     assert {b.basis for b in view.bindings} == {"name"}
     assert (view.status, view.required) == ("needs_review", True)
+
+
+def test_kafka_members_in_one_namespace_are_one_cluster():
+    inv = inventory(
+        "onprem",
+        workloads=[
+            WorkloadDemand(namespace="hackathon", name="kafka-broker", role="kafka", replicas=2),
+            WorkloadDemand(
+                namespace="hackathon", name="kafka-controller", role="kafka", replicas=3
+            ),
+            WorkloadDemand(namespace="hackathon", name="kafka-zookeeper", role="kafka"),
+            WorkloadDemand(namespace="hackathon", name="kafka-broker-ui", role="kafka"),
+            WorkloadDemand(namespace="other", name="kafka-broker", role="kafka"),
+            WorkloadDemand(namespace="hackathon", name="pg-controller", role="postgres"),
+        ],
+    )
+    found = [(r.id, r.kind, r.detail) for r in data_resources("onprem", inv)]
+    assert found == [
+        ("cluster:hackathon/pg-controller", "postgres", "파드 1개"),
+        (
+            "cluster:hackathon/kafka",
+            "kafka",
+            "파드 6개 (kafka-broker, kafka-controller, kafka-zookeeper)",
+        ),
+        ("cluster:hackathon/kafka-broker-ui", "kafka", "파드 1개"),
+        ("cluster:other/kafka", "kafka", "파드 1개"),
+    ]
+
+
+def test_infrastructure_buckets_are_marked_but_kept():
+    inv = inventory(
+        "aws",
+        managed=[
+            ManagedService(kind="object_storage", name="oneaction-logs-1"),
+            ManagedService(kind="object_storage", name="oneaction-tfstate-1"),
+            ManagedService(kind="object_storage", name="team-cloudtrail"),
+            ManagedService(kind="object_storage", name="oneaction-review-docs-1"),
+            ManagedService(kind="object_storage", name="catalog"),
+            ManagedService(kind="postgres", name="audit-logs-db"),
+        ],
+    )
+    assert [(r.name, r.infrastructure) for r in data_resources("aws", inv)] == [
+        ("audit-logs-db", False),
+        ("catalog", False),
+        ("oneaction-logs-1", True),
+        ("oneaction-review-docs-1", False),
+        ("oneaction-tfstate-1", True),
+        ("team-cloudtrail", True),
+    ]
+
+
+def test_live_shaped_inventory_pairs_without_review():
+    envs = {
+        "onprem": inventory(
+            "onprem",
+            workloads=[
+                WorkloadDemand(namespace="hackathon", name="postgres", role="postgres"),
+                WorkloadDemand(
+                    namespace="hackathon", name="kafka-broker", role="kafka", replicas=2
+                ),
+                WorkloadDemand(
+                    namespace="hackathon", name="kafka-controller", role="kafka", replicas=3
+                ),
+                WorkloadDemand(namespace="hackathon", name="object-storage", role="object_storage"),
+            ],
+        ),
+        "aws": inventory(
+            "aws",
+            managed=[
+                ManagedService(kind="postgres", name="oneaction-review-db"),
+                ManagedService(kind="kafka", name="oneaction-review"),
+                ManagedService(kind="object_storage", name="oneaction-logs-1"),
+                ManagedService(kind="object_storage", name="oneaction-review-docs-1"),
+                ManagedService(kind="object_storage", name="oneaction-tfstate-1"),
+            ],
+        ),
+    }
+    view = service(envs).get("forward_001")
+    assert (view.status, view.required) == ("ready", False)
+    assert {b.basis for b in view.bindings} == {"only_pair"}
+    bucket = next(b for b in view.bindings if b.kind == "object_storage")
+    assert bucket.note == "인프라 버킷 2개 제외"
+    assert bucket.candidates == [
+        "managed:object_storage:oneaction-review-docs-1",
+        "managed:object_storage:oneaction-logs-1",
+        "managed:object_storage:oneaction-tfstate-1",
+    ]
+    assert next(b for b in view.bindings if b.kind == "kafka").note is None
+    assert {b.target for b in view.bindings} == {
+        "managed:postgres:oneaction-review-db",
+        "managed:kafka:oneaction-review",
+        "managed:object_storage:oneaction-review-docs-1",
+    }
+
+
+def test_only_infrastructure_buckets_still_need_a_choice():
+    sources = data_resources(
+        "onprem",
+        inventory(
+            "onprem",
+            workloads=[WorkloadDemand(namespace="a", name="files", role="object_storage")],
+        ),
+    )
+    targets = data_resources(
+        "aws",
+        inventory(
+            "aws",
+            managed=[
+                ManagedService(kind="object_storage", name="team-logs"),
+                ManagedService(kind="object_storage", name="team-tfstate"),
+            ],
+        ),
+    )
+    [view] = suggest(sources, targets)
+    assert (view.target, view.basis, view.note) == (None, "none", None)
+    assert len(view.candidates) == 2
+
+
+def test_name_ranking_ignores_infrastructure_buckets():
+    sources = data_resources(
+        "onprem",
+        inventory(
+            "onprem",
+            workloads=[
+                WorkloadDemand(namespace="a", name="orders-files", role="object_storage"),
+                WorkloadDemand(namespace="a", name="media", role="object_storage"),
+                WorkloadDemand(namespace="a", name="assets", role="object_storage"),
+                WorkloadDemand(namespace="a", name="audit-logs", role="object_storage"),
+            ],
+        ),
+    )
+    targets = data_resources(
+        "aws",
+        inventory(
+            "aws",
+            managed=[
+                ManagedService(kind="object_storage", name="orders-logs"),
+                ManagedService(kind="object_storage", name="orders-files-bucket"),
+                ManagedService(kind="object_storage", name="media-bucket"),
+                ManagedService(kind="object_storage", name="audit-logs-bucket"),
+                ManagedService(kind="object_storage", name="audit-archive"),
+            ],
+        ),
+    )
+    views = {v.source: v for v in suggest(sources, targets)}
+    first = views["cluster:a/orders-files"]
+    assert (first.target, first.basis, first.note) == (
+        "managed:object_storage:orders-files-bucket",
+        "name",
+        "인프라 버킷 2개 제외",
+    )
+    unmatched = views["cluster:a/assets"]
+    assert (unmatched.target, unmatched.basis, unmatched.note) == (None, "none", None)
+    audit = views["cluster:a/audit-logs"]
+    assert audit.target == "managed:object_storage:audit-archive"
