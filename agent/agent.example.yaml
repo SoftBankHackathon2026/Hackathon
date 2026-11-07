@@ -49,7 +49,7 @@ openbao:
 codex:
   bin: codex
   timeout: 300
-  # 파드는 sidecar (제한된 파드에서 Codex 샌드박스가 돌지 않는다). Mac·개발은 local.
+  # 파드는 sidecar (제한된 파드에서 Codex 샌드박스가 돌지 않는다). Mac·개발은 local. OpenSandbox 호스트는 opensandbox (README).
   runner: sidecar
   shared_dir: /work
   # sidecar 에서는 필수다. 없으면 시작하지 않는다 (내장 기본 모델은 도구 목록이 비어 파일을 못 읽는다).

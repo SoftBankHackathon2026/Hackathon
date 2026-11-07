@@ -41,10 +41,33 @@ Codex 는 `config/target.json`(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`)만 �
 | --- | --- | --- |
 | `local` | Mac·개발 | `--sandbox workspace-write` |
 | `sidecar` | 파드 | 비밀값 없는 옆 컨테이너에서 `--sandbox danger-full-access` |
+| `opensandbox` | OpenSandbox 서버가 있는 호스트 | 작업마다 gVisor 샌드박스를 새로 만들어 `--sandbox danger-full-access` 로 실행하고 지운다 |
 
 파드에서 샌드박스를 끈 이유: `workspace-write` 는 Linux 에서 bubblewrap, 비특권 user namespace, /proc 마운트가 필요하다.
 bwrap 을 설치해도 제한된 컨테이너에서는 시작하지 못하고, Codex 가 빈 제안을 낸다. 사이드카에는 `CODEX_API_KEY` 와 작업 폴더만
 있고 PID 네임스페이스도 나뉜다. 다만 네트워크는 막혀 있지 않다. 에이전트는 사이드카가 쓴 파일을 신뢰하지 않고 검사한다.
+
+### opensandbox 실행 방식
+
+[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) 서버에 작업마다 샌드박스를 하나 만든다.
+`config/target.json` 과 출력 스키마만 넣고, Codex 를 샌드박스 안 일반 사용자(`sandbox_uid`)로 실행한 뒤
+최종 메시지와 `config/target.json` 만 꺼내 온다. 꺼낸 파일은 다른 실행 방식과 똑같이 검사한다.
+
+- 샌드박스에 넘기는 환경변수는 `CODEX_API_KEY` 와 `HOME` 둘뿐이다. OpenBao 토큰·DB 비밀번호·OpenSandbox API 키는 넘기지 않는다.
+- 키는 샌드박스를 만들 때가 아니라 Codex 명령에만 준다. 컨테이너 설정에 남지 않는다.
+- 샌드박스는 성공·실패와 상관없이 지운다.
+- 샌드박스의 외부 통신 제한(OpenAI 도메인만)은 서버 호스트 쪽에서 건다. 에이전트 코드는 관여하지 않는다.
+
+```yaml
+codex:
+  runner: opensandbox
+  model: gpt-5.5
+  sandbox_url: http://127.0.0.1:8090
+  sandbox_api_key_env: OPENSANDBOX_API_KEY
+  sandbox_image: oneport/codex-sandbox:latest
+```
+
+`pip install -e '.[opensandbox]'` 로 SDK 를 함께 설치한다.
 
 ## 돌려 보기
 

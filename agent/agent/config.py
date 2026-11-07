@@ -47,6 +47,12 @@ class CodexSettings:
     # sidecar: 비밀값 없는 옆 컨테이너에 맡긴다 (파드). agent.codex_runner 참고.
     runner: str = "local"
     shared_dir: str | None = None
+    sandbox_url: str | None = None
+    sandbox_api_key_env: str = "OPENSANDBOX_API_KEY"
+    sandbox_image: str = "oneport/codex-sandbox:latest"
+    sandbox_cpu: str = "1"
+    sandbox_memory: str = "1Gi"
+    sandbox_uid: int = 10001
 
 
 @dataclass(frozen=True)
