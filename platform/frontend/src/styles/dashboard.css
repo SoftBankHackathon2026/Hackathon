@@ -3860,3 +3860,74 @@ body {
 .dm-basis {
   color: var(--sub);
 }
+
+.plan-phases {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+.plan-phase {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 14px 16px;
+  background: var(--card);
+}
+.plan-phase-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.plan-phase-head h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.plan-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plan-step {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+}
+.plan-step.muted {
+  opacity: 0.55;
+}
+.plan-step-index {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.plan-step-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plan-step-body p {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.plan-step-tool {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+.plan-step-body .plan-step-note {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}

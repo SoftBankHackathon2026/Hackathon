@@ -13,6 +13,7 @@ import { CutoverControls } from "./CutoverControls";
 import { DataMappingPanel, DataMappingStatus } from "./DataMappingPanel";
 import { EnvironmentGraphs, EnvironmentTable } from "./EnvironmentWrites";
 import { EventRail } from "./EventRail";
+import { TaskPlanPanel, TaskPlanRoute } from "./TaskPlanPanel";
 import { envShortName } from "./fleetView";
 import { headline } from "./headline";
 import {
@@ -196,6 +197,12 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
       <div className="detail-layout">
         <EventRail events={events.data} />
         <div className="detail-main">
+          <DashSection
+            title="작업 단계"
+            aside={<TaskPlanRoute jobId={jobId} />}
+          >
+            <TaskPlanPanel jobId={jobId} />
+          </DashSection>
           <DashSection
             title="데이터 자원 매핑"
             aside={<DataMappingStatus jobId={jobId} />}
