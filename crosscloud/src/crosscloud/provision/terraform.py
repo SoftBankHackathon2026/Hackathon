@@ -3,8 +3,10 @@
 루트 모듈 하나(작업 디렉토리)를 변수 파일 하나와 state 파일 하나로 돌린다.
 루트 모듈은 `terraform { backend "local" {} }` 를 선언해야 한다 — state 경로는
 init 때 -backend-config 로 넘긴다. provider 캐시·백엔드 설정(TF_DATA_DIR)과
-plan 파일은 state 파일 옆에 둬서, 같은 모듈을 실행(run)마다 따로 돌려도 서로
-섞이지 않는다.
+plan 파일은 state 파일 옆에 state 파일 이름 전체 + 접미사로 둬서, 같은 모듈을
+실행(run)마다 따로 돌려도 서로 섞이지 않는다. 셸에서 물려받은 TF_* 환경
+변수(TF_WORKSPACE·TF_CLI_ARGS·TF_VAR_* 등)는 실행을 다른 state·인자로 돌릴 수
+있어 넘기지 않는다.
 
   runner = terraform.Terraform(
       working_dir=module_dir, var_file=var_file, state_path=state_path)
@@ -15,8 +17,10 @@ plan 파일은 state 파일 옆에 둬서, 같은 모듈을 실행(run)마다 �
 
 비밀값을 밖으로 내지 않는다. terraform 의 표준 출력(plan 본문)과 `show -json`
 원문은 버리고, 자원 주소·종류·동작만 돌려준다. `output -json` 은 sensitive 로
-표시된 값을 빼고 돌려준다. 실패하면 표준 오류의 끝 몇 줄만 예외에 담는다.
-변수 값은 명령줄(-var)로 넘기지 않고 변수 파일로만 넘긴다.
+표시된 값을 빼고 돌려준다. 실패해도 표준 출력·표준 오류의 내용은 예외에 담지
+않는다 — provider 오류 문구에 비밀번호·토큰이 섞일 수 있어서다. 원인은 같은
+명령을 사람이 직접 돌려 확인한다. 변수 값은 명령줄(-var)로 넘기지 않고 변수
+파일로만 넘긴다.
 """
 
 import dataclasses
@@ -24,11 +28,12 @@ import json
 import os
 import pathlib
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any
 
-# 실패 예외에 담는 표준 오류 끝 줄 수. terraform 오류 본문은 대개 이 안에 든다.
-_STDERR_TAIL_LINES = 20
+# 셸에서 물려받아도 되는 TF_* 환경 변수. 실행 대상을 바꾸지 않고 provider
+# 내려받기 방식만 정한다. 그 밖의 TF_* 는 넘기지 않는다.
+_INHERITABLE_TF_ENV = frozenset({"TF_PLUGIN_CACHE_DIR", "TF_CLI_CONFIG_FILE"})
 
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -42,7 +47,7 @@ class TerraformError(RuntimeError):
     """
 
     def __init__(self, subcommand: str, returncode: int, detail: str) -> None:
-        """예외를 만든다. detail 에는 표준 출력 원문을 넣지 않는다."""
+        """예외를 만든다. detail 에는 terraform 출력 원문을 넣지 않는다."""
         super().__init__(
             f"terraform {subcommand} 실패(종료 코드 {returncode}): {detail}"
         )
@@ -95,21 +100,30 @@ class Terraform:
     def plan(self) -> tuple[ResourceChange, ...]:
         """계획(plan) 파일을 저장하고, 바뀔 자원의 주소·종류·동작을 돌려준다.
 
+        plan 이나 결과 읽기가 실패하면 plan 파일(변수 값 평문)을 지운다.
+
         Returns:
-            바뀔 자원 목록. 바뀔 것이 없으면 빈 tuple.
+            state 와 설정에 있는 자원마다 하나. 바뀌지 않는 자원도
+            actions=("no-op",) 으로 들어 있다. state·설정 모두 비었으면 빈
+            tuple.
 
         Raises:
             TerraformError: plan·show 가 실패했거나 show 결과를 읽지 못할 때.
         """
-        self._call(
-            "plan",
-            "-input=false",
-            "-no-color",
-            f"-var-file={self._var_file()}",
-            f"-out={self._plan_file()}",
-        )
-        shown = self._call("show", "-json", "-no-color", str(self._plan_file()))
-        document = _load_json("show", shown.stdout)
+        plan_file = self._plan_file()
+        try:
+            self._call(
+                "plan",
+                "-input=false",
+                "-no-color",
+                f"-var-file={self._var_file()}",
+                f"-out={plan_file}",
+            )
+            shown = self._call("show", "-json", "-no-color", str(plan_file))
+            document = _load_json("show", shown.stdout)
+        except TerraformError:
+            plan_file.unlink(missing_ok=True)
+            raise
         return tuple(
             ResourceChange(
                 address=change["address"],
@@ -172,7 +186,11 @@ class Terraform:
     def _call(self, *args: str) -> subprocess.CompletedProcess[str]:
         command = [self.binary, f"-chdir={self._working_dir()}", *args]
         env = {
-            **os.environ,
+            **{
+                name: value
+                for name, value in os.environ.items()
+                if not name.startswith("TF_") or name in _INHERITABLE_TF_ENV
+            },
             "TF_DATA_DIR": str(self._sibling(".terraform")),
             "TF_IN_AUTOMATION": "1",
         }
@@ -180,8 +198,11 @@ class Terraform:
             command, env=env, capture_output=True, text=True, check=False
         )
         if result.returncode != 0:
+            stderr_lines = len(result.stderr.strip().splitlines())
             raise TerraformError(
-                args[0], result.returncode, _tail(result.stderr)
+                args[0],
+                result.returncode,
+                f"표준 오류 {stderr_lines}줄(비밀값이 섞일 수 있어 싣지 않음)",
             )
         return result
 
@@ -198,8 +219,9 @@ class Terraform:
         return self._sibling(".tfplan")
 
     def _sibling(self, suffix: str) -> pathlib.Path:
-        """State 파일과 같은 자리·같은 이름에 확장자만 바꾼 경로."""
-        return self._state().with_suffix(suffix)
+        """State 파일 이름 전체 뒤에 접미사를 붙인 같은 자리의 경로."""
+        state = self._state()
+        return state.with_name(state.name + suffix)
 
 
 def _load_json(subcommand: str, text: str) -> dict[str, Any]:
@@ -213,8 +235,3 @@ def _load_json(subcommand: str, text: str) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise TerraformError(subcommand, 0, "JSON 객체가 아니다")
     return document
-
-
-def _tail(stderr: str) -> str:
-    lines: Sequence[str] = stderr.strip().splitlines()
-    return "\n".join(lines[-_STDERR_TAIL_LINES:])

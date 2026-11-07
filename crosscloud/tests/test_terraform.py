@@ -29,7 +29,7 @@ class FakeRun:
             and self.results.get("plan", _ok()).returncode == 0
         ):
             out = next(a for a in args if a.startswith("-out="))
-            pathlib.Path(out.removeprefix("-out=")).write_text("plan")
+            pathlib.Path(out.removeprefix("-out=")).write_text(_CANARY)
         return self.results.get(subcommand, _ok())
 
     def subcommands(self):
@@ -74,7 +74,9 @@ def test_init_points_local_backend_at_state_path(paths):
     assert args[:3] == ["terraform", f"-chdir={module}", "init"]
     assert f"-backend-config=path={state}" in args
     assert "-input=false" in args
-    assert env["TF_DATA_DIR"] == str(state.parent / "target_base.terraform")
+    assert env["TF_DATA_DIR"] == str(
+        state.parent / "target_base.tfstate.terraform"
+    )
     assert env["TF_IN_AUTOMATION"] == "1"
 
 
@@ -134,13 +136,13 @@ def test_plan_returns_only_addresses_types_and_actions(paths):
     plan_args = fake.calls[0][0]
     _, var_file, state = paths
     assert f"-var-file={var_file}" in plan_args
-    assert f"-out={state.parent / 'target_base.tfplan'}" in plan_args
+    assert f"-out={state.parent / 'target_base.tfstate.tfplan'}" in plan_args
     show_args = fake.calls[1][0]
     assert show_args[2:] == [
         "show",
         "-json",
         "-no-color",
-        str(state.parent / "target_base.tfplan"),
+        str(state.parent / "target_base.tfstate.tfplan"),
     ]
 
 
@@ -159,8 +161,8 @@ def test_plan_rejects_unreadable_show_output_without_echoing_it(paths):
     assert _CANARY not in str(excinfo.value)
 
 
-def test_failed_command_raises_with_stderr_tail_but_not_stdout(paths):
-    stderr = "\n".join(f"line {i}" for i in range(30))
+def test_failed_command_error_carries_no_stdout_or_stderr_text(paths):
+    stderr = f"Error: googleapi: 400 password={_CANARY}\nline 2\nline 3"
     fake = FakeRun({"plan": _fail(stderr)})
 
     with pytest.raises(terraform.TerraformError) as excinfo:
@@ -169,10 +171,98 @@ def test_failed_command_raises_with_stderr_tail_but_not_stdout(paths):
     error = excinfo.value
     assert error.subcommand == "plan"
     assert error.returncode == 1
-    assert "line 29" in str(error)
-    assert "line 0\n" not in str(error)
+    assert "3줄" in str(error)
     assert _CANARY not in str(error)
+    assert _CANARY not in repr(error)
+    assert error.__cause__ is None and error.__context__ is None
     assert fake.subcommands() == ["plan"]
+
+
+def test_inherited_terraform_env_cannot_redirect_the_run(paths, monkeypatch):
+    monkeypatch.setenv("TF_WORKSPACE", "dev")
+    monkeypatch.setenv("TF_CLI_ARGS_plan", "-state=/elsewhere.tfstate")
+    monkeypatch.setenv("TF_LOG_PATH", "/tmp/r2g_trace.log")
+    monkeypatch.setenv("TF_VAR_project_id", "someone-else")
+    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", "/cache")
+    monkeypatch.setenv("CLOUDSDK_CORE_PROJECT", "kept")
+    fake = FakeRun()
+
+    _runner(paths, fake).init()
+
+    ((_, env),) = fake.calls
+    for name in ("TF_WORKSPACE", "TF_CLI_ARGS_plan", "TF_LOG_PATH"):
+        assert name not in env
+    assert "TF_VAR_project_id" not in env
+    assert env["TF_PLUGIN_CACHE_DIR"] == "/cache"
+    assert env["CLOUDSDK_CORE_PROJECT"] == "kept"
+
+
+def test_state_paths_differing_only_in_suffix_do_not_share_files(tmp_path):
+    fakes = (FakeRun({"show": _ok("{}")}), FakeRun({"show": _ok("{}")}))
+    for state_name, fake in zip(
+        ("terraform.r1", "terraform.r2"), fakes, strict=True
+    ):
+        terraform.Terraform(
+            working_dir=tmp_path,
+            var_file=tmp_path / "v.tfvars.json",
+            state_path=tmp_path / state_name,
+            run=fake,
+        ).plan()
+
+    (_, env1), (_, env2) = fakes[0].calls[0], fakes[1].calls[0]
+    assert env1["TF_DATA_DIR"] != env2["TF_DATA_DIR"]
+    assert (tmp_path / "terraform.r1.tfplan").exists()
+    assert (tmp_path / "terraform.r2.tfplan").exists()
+
+
+def test_plan_passes_unchanged_resources_through_as_no_op(paths):
+    show = {
+        "resource_changes": [
+            {
+                "address": "google_sql_database.app",
+                "type": "google_sql_database",
+                "change": {"actions": ["no-op"]},
+            }
+        ]
+    }
+    fake = FakeRun({"show": _ok(json.dumps(show))})
+
+    changes = _runner(paths, fake).plan()
+
+    assert changes == (
+        terraform.ResourceChange(
+            address="google_sql_database.app",
+            resource_type="google_sql_database",
+            actions=("no-op",),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        {"show": _fail("Error: plan file corrupt")},
+        {"show": _ok("not json")},
+    ],
+)
+def test_plan_removes_saved_plan_when_reading_it_fails(paths, results):
+    fake = FakeRun(results)
+
+    with pytest.raises(terraform.TerraformError):
+        _runner(paths, fake).plan()
+
+    assert not (paths[2].parent / "target_base.tfstate.tfplan").exists()
+
+
+def test_failed_plan_removes_stale_plan_from_earlier_run(paths):
+    stale = paths[2].parent / "target_base.tfstate.tfplan"
+    stale.write_text(_CANARY)
+    fake = FakeRun({"plan": _fail("Error: x")})
+
+    with pytest.raises(terraform.TerraformError):
+        _runner(paths, fake).plan()
+
+    assert not stale.exists()
 
 
 def test_apply_without_saved_plan_is_refused(paths):
@@ -188,7 +278,7 @@ def test_apply_applies_saved_plan_and_removes_it(paths):
     fake = FakeRun({"show": _ok("{}")})
     runner = _runner(paths, fake)
     runner.plan()
-    plan_file = paths[2].parent / "target_base.tfplan"
+    plan_file = paths[2].parent / "target_base.tfstate.tfplan"
     assert plan_file.exists()
 
     runner.apply()
@@ -209,10 +299,10 @@ def test_apply_failure_still_removes_saved_plan(paths):
     runner = _runner(paths, fake)
     runner.plan()
 
-    with pytest.raises(terraform.TerraformError, match="quota"):
+    with pytest.raises(terraform.TerraformError, match="종료 코드 1"):
         runner.apply()
 
-    assert not (paths[2].parent / "target_base.tfplan").exists()
+    assert not (paths[2].parent / "target_base.tfstate.tfplan").exists()
 
 
 def test_destroy_returns_addresses_left_in_state(paths):
