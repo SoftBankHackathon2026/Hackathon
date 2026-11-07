@@ -3,13 +3,24 @@
 from types import SimpleNamespace
 
 import pytest
+from controlplane.api.deps import get_environments, optional_viewer
 from controlplane.api.errors import register_exception_handlers
-from controlplane.api.routes import connections
+from controlplane.api.routes import connections, environments
 from controlplane.core.config import AuthMode
 from controlplane.schemas.accounts import Identity
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from test_control import DEVICE, IP, OWNER, PUBLIC, approved, envelope, ready, report
+from test_control import (
+    DEVICE,
+    OWNER,
+    PUBLIC,
+    approved,
+    envelope,
+    issued,
+    proof,
+    ready,
+    report,
+)
 from test_control import svc as control_service_fixture
 
 svc = control_service_fixture
@@ -59,6 +70,76 @@ def test_no_session_or_bad_origin_cannot_issue(client):
     assert client.post("/api/v1/connections", json={}).status_code == 403
     del client.headers["Origin"]
     assert client.post("/api/v1/connections", json={}).status_code == 403
+
+
+def test_confirmation_accepts_hyphen_whitespace_and_lowercase(client, svc):
+    request_id = issued(svc)
+    proved = svc.prove(request_id, proof(svc, request_id))
+    code = proved["confirmation_code"].lower()
+    response = client.post(
+        f"/api/v1/connections/{request_id}/approve",
+        json={
+            "candidateDigest": proved["candidate_digest"],
+            "code": f" {code[:4]}-\t{code[4:]} ",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["device"] == "APPROVED"
+    assert response.json()["attemptsLeft"] == 5
+    assert svc.limiter.failures == 0
+
+
+def test_request_block_cannot_be_evaded_by_forwarded_headers_or_block_other_requests(
+    client, svc
+):
+    first = issued(svc)
+    for n in range(20):
+        body = proof(svc, first)
+        body["device_signature"] = "invalid"
+        response = client.post(
+            f"/api/v1/connections/{first}/prove",
+            json=body,
+            headers={"X-Forwarded-For": f"198.51.100.{n + 1}"},
+        )
+        assert response.status_code == 401
+    assert (
+        client.post(
+            f"/api/v1/connections/{first}/prove",
+            json=body,
+            headers={"X-Forwarded-For": "203.0.113.1"},
+        ).json()["code"]
+        == "AUTHENTICATION_BLOCKED"
+    )
+    created = client.post(
+        "/api/v1/connections",
+        json={"publicKey": PUBLIC, "operationId": "another_operation_123"},
+    )
+    assert created.status_code == 201
+    second = created.json()["id"]
+    assert (
+        client.post(
+            f"/api/v1/connections/{second}/prove", json=proof(svc, second)
+        ).status_code
+        == 200
+    )
+
+
+def test_legacy_environment_list_is_independent_of_connection_storage():
+    class BrokenConnections:
+        def environments(self, actor):
+            raise KeyError("target")
+
+    identity = Identity(email="owner@example.test", team="team", role="owner")
+    legacy = [{"id": "legacy", "runtime": "onprem_helm"}]
+    app = FastAPI()
+    app.state.container = SimpleNamespace(connections=BrokenConnections())
+    app.include_router(environments.router)
+    app.dependency_overrides[optional_viewer] = lambda: identity
+    app.dependency_overrides[get_environments] = lambda: SimpleNamespace(
+        overview=lambda _: legacy
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/v1/environments").json() == legacy
 
 
 @pytest.mark.parametrize(
@@ -240,7 +321,6 @@ def test_collection_pending_snapshot_does_not_expose_signed_task(client, svc, fi
                 "inventory",
                 {"job_id": task["job_id"], "report": value},
             ),
-            IP,
             through_tunnel=True,
         )
     assert client.get(path).json()["collectionPending"] is False

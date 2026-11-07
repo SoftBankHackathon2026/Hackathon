@@ -138,14 +138,21 @@ test("unsubscribed responses cannot repopulate a later view", async () => {
   assert.deepEqual(gateway.list(), []);
 });
 
-test("disabled service preserves its configuration reason when list is unavailable", async (t) => {
+test("disabled service skips the list and stops polling", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls: string[] = [];
   const gateway = createLiveConnections(async <T>(path: string): Promise<T> => {
+    calls.push(path);
     if (path.endsWith("capabilities"))
       return { available: false, reason: "배포 준비 필요" } as T;
     throw new Error("503 service unavailable");
   });
   t.after(gateway.subscribe(() => {}));
   await until(() => gateway.reason === "배포 준비 필요");
+  await setImmediate();
+  t.mock.timers.tick(15_000);
+  await setImmediate();
+  assert.deepEqual(calls, ["connections/capabilities"]);
   assert.equal(gateway.available, false);
   assert.deepEqual(gateway.list(), []);
 });

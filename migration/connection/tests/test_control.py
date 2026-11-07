@@ -39,15 +39,19 @@ class Crypto:
 
 class Limiter:
     def __init__(self):
-        self.failures = 0
+        self.failures_by_scope = {}
         self.runtime = True
 
-    def check(self, ip, now):
-        if self.failures >= 20:
+    @property
+    def failures(self):
+        return sum(self.failures_by_scope.values())
+
+    def check(self, scope, now):
+        if self.failures_by_scope.get(scope, 0) >= 20:
             raise ConnectionError("AUTHENTICATION_BLOCKED", 429)
 
-    def fail(self, ip, now):
-        self.failures += 1
+    def fail(self, scope, now):
+        self.failures_by_scope[scope] = self.failures_by_scope.get(scope, 0) + 1
 
     def ready(self):
         return True
@@ -83,7 +87,7 @@ def issued(svc):
 
 
 def proof(svc, request_id):
-    challenge = svc.challenge(request_id, CANDIDATE, IP)
+    challenge = svc.challenge(request_id, CANDIDATE)
     p = {
         "version": 1,
         "request_id": request_id,
@@ -107,7 +111,7 @@ def proof(svc, request_id):
 
 def approved(svc):
     request_id = issued(svc)
-    result = svc.prove(request_id, proof(svc, request_id), IP)
+    result = svc.prove(request_id, proof(svc, request_id))
     svc.browser(
         request_id,
         OWNER,
@@ -137,7 +141,7 @@ def ready(svc):
 
 
 def envelope(svc, request_id, action, data):
-    challenge = svc.challenge(request_id, CANDIDATE, IP, device=True)
+    challenge = svc.challenge(request_id, CANDIDATE, device=True)
     p = {
         "version": 1,
         "request_id": request_id,
@@ -164,7 +168,6 @@ def report(svc, request_id):
     svc.device(
         request_id,
         envelope(svc, request_id, "discovered", {"environments": found}),
-        IP,
         through_tunnel=True,
     )
     target = next(e["id"] for e in found if e["name"] == "prod")
@@ -196,7 +199,7 @@ def test_registration_expiry_server_time(svc):
     body = proof(svc, request_id)
     svc.test_now[0] += 60000
     with pytest.raises(ConnectionError, match="ENROLLMENT_UNAVAILABLE"):
-        svc.prove(request_id, body, IP)
+        svc.prove(request_id, body)
     assert svc.limiter.failures == 0
     assert svc.get(request_id, OWNER)["registration"] == "EXPIRED"
 
@@ -206,11 +209,11 @@ def test_bad_signature_consumes_challenge_but_not_enrollment(svc):
     body = proof(svc, request_id)
     body["device_signature"] = "bad"
     with pytest.raises(ConnectionError, match="INVALID_PROOF"):
-        svc.prove(request_id, body, IP)
+        svc.prove(request_id, body)
     assert svc.store.get(request_id)["registration"] == "ISSUED"
     assert svc.store.get(request_id)["challenges"] == {}
     assert svc.limiter.failures == 1
-    assert svc.prove(request_id, proof(svc, request_id), IP)["device_id"]
+    assert svc.prove(request_id, proof(svc, request_id))["device_id"]
 
 
 def test_concurrent_proof_only_one_consumes_request(svc):
@@ -219,7 +222,7 @@ def test_concurrent_proof_only_one_consumes_request(svc):
 
     def attempt(_):
         try:
-            svc.prove(request_id, body, IP)
+            svc.prove(request_id, body)
             return True
         except ConnectionError:
             return False
@@ -240,7 +243,7 @@ def test_snapshot_never_contains_public_proof_or_confirmation_secret(svc):
 
 def test_approval_failure_counter_persists_and_rejects(svc):
     request_id = issued(svc)
-    result = svc.prove(request_id, proof(svc, request_id), IP)
+    result = svc.prove(request_id, proof(svc, request_id))
     for left in range(4, -1, -1):
         with pytest.raises(ConnectionError, match="INVALID_CONFIRMATION_CODE"):
             svc.browser(
@@ -248,7 +251,6 @@ def test_approval_failure_counter_persists_and_rejects(svc):
                 OWNER,
                 "approve",
                 {"candidateDigest": result["candidate_digest"], "code": "WRONG"},
-                ip=IP,
             )
         assert svc.get(request_id, OWNER)["attemptsLeft"] == left
     assert svc.get(request_id, OWNER)["device"] == "REJECTED"
@@ -256,7 +258,7 @@ def test_approval_failure_counter_persists_and_rejects(svc):
 
 def test_cross_team_and_viewer_cannot_approve(svc):
     request_id = issued(svc)
-    result = svc.prove(request_id, proof(svc, request_id), IP)
+    result = svc.prove(request_id, proof(svc, request_id))
     body = {
         "candidateDigest": result["candidate_digest"],
         "code": result["confirmation_code"],
@@ -269,18 +271,18 @@ def test_cross_team_and_viewer_cannot_approve(svc):
 
 def test_response_loss_status_recovery_only_same_device(svc):
     request_id = issued(svc)
-    result = svc.prove(request_id, proof(svc, request_id), IP)
+    result = svc.prove(request_id, proof(svc, request_id))
     body = envelope(svc, request_id, "status", {})
-    recovered = svc.device(request_id, body, IP)
+    recovered = svc.device(request_id, body)
     assert recovered["device_id"] == result["device_id"]
     assert recovered["confirmation_code"] == result["confirmation_code"]
     with pytest.raises(ConnectionError, match="INVALID_CHALLENGE"):
-        svc.device(request_id, body, IP)
+        svc.device(request_id, body)
 
 
 def test_approval_expiry(svc):
     request_id = issued(svc)
-    result = svc.prove(request_id, proof(svc, request_id), IP)
+    result = svc.prove(request_id, proof(svc, request_id))
     svc.test_now[0] += 300000
     with pytest.raises(ConnectionError, match="APPROVAL_UNAVAILABLE"):
         svc.browser(
@@ -297,7 +299,7 @@ def test_approval_expiry(svc):
 def test_public_http_cannot_submit_inventory_even_with_signature(svc):
     request_id = ready(svc)
     with pytest.raises(ConnectionError, match="TUNNEL_TRANSPORT_REQUIRED"):
-        svc.device(request_id, envelope(svc, request_id, "poll", {}), IP)
+        svc.device(request_id, envelope(svc, request_id, "poll", {}))
 
 
 def test_lease_and_key_expiration_block_tasks(svc):
@@ -306,7 +308,7 @@ def test_lease_and_key_expiration_block_tasks(svc):
     assert svc.get(request_id, OWNER)["tunnel"] == "DEGRADED"
     with pytest.raises(ConnectionError, match="TUNNEL_NOT_READY"):
         svc.device(
-            request_id, envelope(svc, request_id, "poll", {}), IP, through_tunnel=True
+            request_id, envelope(svc, request_id, "poll", {}), through_tunnel=True
         )
 
 
@@ -335,7 +337,6 @@ def test_register_only_valid_selected_inventory_and_duplicate_rejected(svc):
         envelope(
             svc, request_id, "inventory", {"job_id": task["job_id"], "report": value}
         ),
-        IP,
         through_tunnel=True,
     )
     snapshot = svc.get(request_id, OWNER)
@@ -358,7 +359,7 @@ def test_register_only_valid_selected_inventory_and_duplicate_rejected(svc):
         svc.browser(request_id, OWNER, "register", bad)
     result = svc.browser(request_id, OWNER, "register", data)
     assert result["environmentId"]
-    assert svc.environments(OWNER)[0]["executable"] is False
+    assert svc.list(OWNER)[0]["environmentId"] == result["environmentId"]
     with pytest.raises(ConnectionError, match="ALREADY_REGISTERED"):
         svc.browser(request_id, OWNER, "register", data)
 
@@ -386,7 +387,6 @@ def test_rekey_discards_inflight_report(svc):
                 "inventory",
                 {"job_id": task["job_id"], "report": value},
             ),
-            IP,
             through_tunnel=True,
         )
 
@@ -403,7 +403,7 @@ def test_revoke_is_immediate_and_cleanup_separate(svc):
         "local": False,
     }
     svc.tunnel(request_id, {"state": "REVOKED"})
-    svc.device(request_id, envelope(svc, request_id, "cleanup", {"local": True}), IP)
+    svc.device(request_id, envelope(svc, request_id, "cleanup", {"local": True}))
     assert all(svc.get(request_id, OWNER)["cleanup"].values())
 
 
@@ -429,11 +429,11 @@ def test_runtime_token_cannot_cross_tenant_even_for_relay_status(svc):
     for call in (
         lambda: svc.authorize(request_id),
         lambda: svc.tunnel(request_id, {"state": "REVOKED"}),
-        lambda: svc.device(request_id, body, IP, through_tunnel=True),
+        lambda: svc.device(request_id, body, through_tunnel=True),
     ):
         with pytest.raises(ConnectionError, match="RUNTIME_TENANT_MISMATCH"):
             call()
-    assert svc.device(request_id, body, IP)["snapshot"]["device"] == "APPROVED"
+    assert svc.device(request_id, body)["snapshot"]["device"] == "APPROVED"
 
 
 @pytest.mark.parametrize("elapsed,accepted", [(90000, True), (120000, False)])
@@ -459,29 +459,29 @@ def test_collection_task_120_seconds_independent_of_lease(svc, elapsed, accepted
         svc, request_id, "inventory", {"job_id": task["job_id"], "report": value}
     )
     if accepted:
-        assert svc.device(request_id, body, IP, through_tunnel=True)["accepted"]
+        assert svc.device(request_id, body, through_tunnel=True)["accepted"]
     else:
         with pytest.raises(ConnectionError, match="STALE_COLLECTION"):
-            svc.device(request_id, body, IP, through_tunnel=True)
+            svc.device(request_id, body, through_tunnel=True)
 
 
 @pytest.mark.parametrize("expired", [False, True])
 def test_rejected_candidate_can_only_recover_status_and_report_cleanup(svc, expired):
     request_id = issued(svc)
-    svc.prove(request_id, proof(svc, request_id), IP)
+    svc.prove(request_id, proof(svc, request_id))
     if expired:
         svc.test_now[0] += 300000
     else:
         svc.browser(request_id, OWNER, "reject", {})
-    status = svc.device(request_id, envelope(svc, request_id, "status", {}), IP)
+    status = svc.device(request_id, envelope(svc, request_id, "status", {}))
     assert status["snapshot"]["device"] == "REJECTED"
     assert status["confirmation_code"] is None
     with pytest.raises(ConnectionError, match="TUNNEL_NOT_READY"):
         svc.device(
-            request_id, envelope(svc, request_id, "poll", {}), IP, through_tunnel=True
+            request_id, envelope(svc, request_id, "poll", {}), through_tunnel=True
         )
     assert svc.device(
-        request_id, envelope(svc, request_id, "cleanup", {"local": True}), IP
+        request_id, envelope(svc, request_id, "cleanup", {"local": True})
     )["accepted"]
     assert svc.get(request_id, OWNER)["cleanup"]["local"]
 

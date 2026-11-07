@@ -129,7 +129,8 @@ test("mocked API contract copies a command, confirms, collects, registers and re
         epoch: 0,
         events: [],
         deployment: {
-          bootstrapUrl: "https://connect.example.com/releases/live-e2e-1/bootstrap.sh",
+          bootstrapUrl:
+            "https://connect.example.com/releases/live-e2e-1/bootstrap.sh",
           releaseVersion: "test-v1",
         },
       };
@@ -187,7 +188,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   const secret = command.match(/\.([A-Za-z0-9_-]{43})'/)![1];
   expect(JSON.stringify(mutations)).not.toContain(secret);
   expect(await page.locator("body").innerText()).not.toContain(secret);
-  await page.getByLabel("터미널 확인 코드", { exact: true }).fill("ABCD2345");
+  await page.getByLabel("터미널 확인 코드", { exact: true }).fill("abcd-2345");
   await page
     .getByLabel("제가 실행한 단말이며, 환경정보 수집을 승인해요.")
     .check();
@@ -210,6 +211,12 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await expect(
     page.getByRole("button", { name: "다음: 앱 선택" }),
   ).toBeDisabled();
+  await expect(
+    page.getByText(/실제 연결에서는 환경 등록까지 지원해요/),
+  ).toBeVisible();
+  expect(mutations.find((item) => item.action === "approve")?.body.code).toBe(
+    "ABCD2345",
+  );
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),

@@ -9,12 +9,12 @@ from pathlib import Path
 import psycopg
 import pytest
 from migration_connection.control.errors import ConnectionError
-from migration_connection.control.limits import RedisLimiter
+from migration_connection.control.limits import LimitScope, RedisLimiter
 from migration_connection.control.store import PostgresStore
 from psycopg import sql
 from psycopg.rows import dict_row
 from redis import Redis
-from test_control import IP, OWNER, issued, proof
+from test_control import IP, OWNER, approved, envelope, issued, proof
 from test_control import svc as control_service_fixture
 
 svc = control_service_fixture
@@ -59,7 +59,7 @@ def test_postgres_concurrent_proof_atomicity_and_rejected_approval_persistence(
 
     def attempt(_):
         try:
-            return svc.prove(request_id, body, IP)
+            return svc.prove(request_id, body)
         except ConnectionError:
             return None
 
@@ -84,6 +84,33 @@ def test_postgres_create_idempotent_under_concurrency(pg_store, svc):
     with ThreadPoolExecutor(max_workers=8) as pool:
         ids = list(pool.map(lambda _: issued(svc), range(8)))
     assert len(set(ids)) == 1
+
+
+def test_postgres_consumes_nonce_on_malformed_enrollment_key(pg_store, svc):
+    svc.store = pg_store
+    request_id = issued(svc)
+    valid = proof(svc, request_id)
+    malformed = {**valid, "payload": {**valid["payload"], "wireguard_public_key": []}}
+    with pytest.raises(ConnectionError, match="INVALID_PROOF"):
+        svc.prove(request_id, malformed)
+    with pytest.raises(ConnectionError, match="INVALID_CHALLENGE"):
+        svc.prove(request_id, valid)
+    assert svc.prove(request_id, proof(svc, request_id))["device_id"]
+
+
+def test_postgres_consumes_nonce_on_malformed_signed_device_payload(pg_store, svc):
+    svc.store = pg_store
+    request_id = approved(svc)
+    valid = envelope(svc, request_id, "status", {})
+    malformed = {
+        **valid,
+        "payload": {**valid["payload"], "data": {"out_of_range": 2**53}},
+    }
+    with pytest.raises(ConnectionError, match="INVALID_DEVICE_REQUEST"):
+        svc.device(request_id, malformed)
+    with pytest.raises(ConnectionError, match="INVALID_CHALLENGE"):
+        svc.device(request_id, valid)
+    assert svc.device(request_id, envelope(svc, request_id, "status", {}))["device_id"]
 
 
 @pytest.fixture
@@ -135,6 +162,24 @@ def test_redis_runtime_expiry_and_release_binding(redis_limiter):
     assert redis_limiter.runtime_ready("v1", "hash", now + 1)
     assert not redis_limiter.runtime_ready("v2", "hash", now + 1)
     assert not redis_limiter.runtime_ready("v1", "hash", now + 60000)
+
+
+def test_redis_scopes_isolate_request_blocks_and_account_rate_limits(redis_limiter):
+    now = 1800000000000
+    request = LimitScope("enrollment", ("first",))
+    for _ in range(20):
+        redis_limiter.fail(request, now)
+    with pytest.raises(ConnectionError, match="AUTHENTICATION_BLOCKED"):
+        redis_limiter.check(request, now)
+    redis_limiter.check(LimitScope("enrollment", ("second",)), now)
+    redis_limiter.check(LimitScope("device", ("first",)), now)
+    redis_limiter.check(IP, now)
+    account = LimitScope("browser", ("team", "a@example.test"))
+    for _ in range(120):
+        redis_limiter.check(account, now)
+    with pytest.raises(ConnectionError, match="REQUEST_RATE_LIMITED"):
+        redis_limiter.check(account, now)
+    redis_limiter.check(LimitScope("browser", ("team", "b@example.test")), now)
 
 
 def test_redis_unavailable_never_allows_registration():

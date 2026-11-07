@@ -2,6 +2,8 @@
 
 import hashlib
 import ipaddress
+import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from migration_connection.control.errors import ConnectionError
@@ -26,12 +28,22 @@ return n
 """
 
 
+@dataclass(frozen=True)
+class LimitScope:
+    kind: str
+    parts: tuple[str, ...]
+
+
 class RedisLimiter:
     def __init__(self, client):
         self.client = client
 
-    def _keys(self, ip, now):
-        normalized = str(ipaddress.ip_address(ip))
+    def _keys(self, scope, now):
+        normalized = (
+            json.dumps((scope.kind, *scope.parts), separators=(",", ":"))
+            if isinstance(scope, LimitScope)
+            else str(ipaddress.ip_address(scope))
+        )
         hashed = hashlib.sha384(normalized.encode()).hexdigest()
         day = (
             datetime.fromtimestamp(now / 1000, timezone(timedelta(hours=9)))
@@ -40,9 +52,9 @@ class RedisLimiter:
         )
         return "connection:block:" + hashed, "connection:failure:" + hashed + ":" + day
 
-    def check(self, ip, now):
+    def check(self, scope, now):
         try:
-            block, _ = self._keys(ip, now)
+            block, _ = self._keys(scope, now)
             blocked = int(self.client.get(block) or 0)
             if blocked > now:
                 raise ConnectionError("AUTHENTICATION_BLOCKED", 429)
@@ -54,9 +66,9 @@ class RedisLimiter:
         except (RedisError, OSError, ValueError, TypeError):
             raise ConnectionError("REQUEST_LIMIT_UNAVAILABLE", 503) from None
 
-    def fail(self, ip, now):
+    def fail(self, scope, now):
         try:
-            return int(self.client.eval(FAILURE, 2, *self._keys(ip, now), now))
+            return int(self.client.eval(FAILURE, 2, *self._keys(scope, now), now))
         except (RedisError, OSError, ValueError, TypeError):
             raise ConnectionError("REQUEST_LIMIT_UNAVAILABLE", 503) from None
 
@@ -70,8 +82,6 @@ class RedisLimiter:
         runtime_key = (
             "connection:runtime:ready:" + hashlib.sha384(tenant.encode()).hexdigest()
         )
-        import json
-
         try:
             self.client.set(
                 runtime_key,
@@ -91,8 +101,6 @@ class RedisLimiter:
         runtime_key = (
             "connection:runtime:ready:" + hashlib.sha384(tenant.encode()).hexdigest()
         )
-        import json
-
         try:
             value = json.loads(self.client.get(runtime_key) or "{}")
             return (

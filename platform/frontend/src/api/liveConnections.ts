@@ -28,8 +28,7 @@ const MESSAGES: Record<string, string> = {
   INVENTORY_CHANGED:
     "수집 결과나 연결이 바뀌었어요. 환경정보를 다시 수집하세요.",
   INVALID_REGISTRATION: "등록할 조직·프로젝트·환경 정보를 확인하세요.",
-  AUTHENTICATION_BLOCKED:
-    "인증 실패가 반복되어 이 접속 주소가 일시 차단되었어요.",
+  AUTHENTICATION_BLOCKED: "인증 실패가 반복되어 연결 요청이 일시 차단되었어요.",
   REQUEST_RATE_LIMITED: "요청이 많아요. 잠시 후 다시 시도하세요.",
   REQUEST_LIMIT_UNAVAILABLE:
     "인증 상태를 확인할 수 없어요. 잠시 후 다시 시도하세요.",
@@ -87,6 +86,7 @@ export function createLiveConnections(
   let generation = 0;
   let lifecycle = 0;
   let writes = 0;
+  let paused = false;
   const emit = () => {
     items = [...items];
     listeners.forEach((listener) => listener());
@@ -103,16 +103,18 @@ export function createLiveConnections(
     controller = new AbortController();
     const signal = controller.signal;
     try {
-      const [capabilityResult, dataResult] = await Promise.allSettled([
-        transport<Capabilities>(`${PREFIX}/capabilities`, { signal }),
-        transport<unknown>(PREFIX, { signal }),
-      ]);
+      const capability = await transport<Capabilities>(
+        `${PREFIX}/capabilities`,
+        { signal },
+      );
       if (signal.aborted || current !== generation) return;
-      if (capabilityResult.status !== "fulfilled") throw new Error(OFFLINE);
-      const capability = capabilityResult.value;
       if (typeof capability?.available !== "boolean") throw new Error(OFFLINE);
-      if (dataResult.status === "fulfilled") apply(snapshots(dataResult.value));
-      else if (capability.available) throw new Error(OFFLINE);
+      paused = !capability.available;
+      if (capability.available) {
+        const data = await transport<unknown>(PREFIX, { signal });
+        if (signal.aborted || current !== generation) return;
+        apply(snapshots(data));
+      }
       gateway.available = capability.available;
       gateway.reason = capability.available
         ? undefined
@@ -128,11 +130,12 @@ export function createLiveConnections(
     }
   };
   const poll = () => {
+    if (paused) return;
     const current = lifecycle;
     void (writes ? Promise.resolve() : refresh())
       .catch(() => {})
       .finally(() => {
-        if (listeners.size && current === lifecycle)
+        if (!paused && listeners.size && current === lifecycle)
           timer = setTimeout(poll, pollMs);
       });
   };
@@ -179,6 +182,7 @@ export function createLiveConnections(
           generation++;
           lifecycle++;
           items = [];
+          paused = false;
           gateway.available = false;
           gateway.reason = "연결 서비스 상태를 확인하고 있어요.";
         }

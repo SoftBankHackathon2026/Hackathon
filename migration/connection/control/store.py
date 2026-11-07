@@ -103,5 +103,8 @@ class MemoryStore:
             row = deepcopy(self.rows[request_id])
             try:
                 yield row
-            finally:
+            except ConnectionError:
+                self.rows[request_id] = row
+                raise
+            else:
                 self.rows[request_id] = row

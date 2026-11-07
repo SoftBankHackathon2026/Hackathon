@@ -7,6 +7,7 @@ import hmac
 import re
 import secrets
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -19,6 +20,7 @@ from migration_connection.contracts.protocol import (
     unb64,
 )
 from migration_connection.control.errors import ConnectionError
+from migration_connection.control.limits import LimitScope
 
 PROOF_FIELDS = {
     "version",
@@ -71,6 +73,24 @@ def short_text(value, maximum=160):
         422,
     )
     return value
+
+
+@contextmanager
+def signed_input(error_code):
+    """Persist consumed nonces for malformed input, but roll back internal errors."""
+    try:
+        yield
+    except (ValueError, TypeError, RecursionError):
+        raise ConnectionError(error_code, 401) from None
+
+
+def actor_scope(actor):
+    return LimitScope("browser", (actor.team, actor.email))
+
+
+def request_scope(request_id, *, device=False, through_tunnel=False):
+    kind = "relay" if through_tunnel else "device" if device else "enrollment"
+    return LimitScope(kind, (identifier(request_id),))
 
 
 class ConnectionService:
@@ -246,6 +266,7 @@ class ConnectionService:
 
     def create(self, actor, public_key, operation_id):
         require(actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
+        self.limiter.check(actor_scope(actor), self.clock())
         require(
             self.capabilities(actor.team)["available"], "CONNECTION_UNAVAILABLE", 503
         )
@@ -286,11 +307,16 @@ class ConnectionService:
         require(row["public_key"] == public_key, "IDEMPOTENCY_CONFLICT")
         return self.snapshot(row, actor)
 
-    def challenge(self, request_id, candidate_id, ip, *, device=False):
+    def challenge(self, request_id, candidate_id, *, device=False):
         now = self.clock()
-        self.limiter.check(ip, now)
         identifier(candidate_id)
         with self.store.locked(identifier(request_id)) as row:
+            scope = (
+                LimitScope("device-challenge", (request_id,))
+                if device
+                else request_scope(request_id)
+            )
+            self.limiter.check(scope, now)
             self._expire(row)
             if device:
                 require(
@@ -320,7 +346,8 @@ class ConnectionService:
 
     def _nonce(self, row, payload, *, device=False):
         bucket = row["device_challenges" if device else "challenges"]
-        challenge = bucket.get(payload.get("challenge_id"))
+        challenge_id = payload.get("challenge_id")
+        challenge = bucket.get(challenge_id) if isinstance(challenge_id, str) else None
         require(
             challenge is not None
             and challenge["candidate_id"] == payload.get("candidate_id")
@@ -331,13 +358,15 @@ class ConnectionService:
             "INVALID_CHALLENGE",
             401,
         )
-        del bucket[payload["challenge_id"]]
+        del bucket[challenge_id]
 
-    def prove(self, request_id, body, ip):
+    def prove(self, request_id, body):
         now = self.clock()
-        self.limiter.check(ip, now)
+        scope = request_scope(request_id)
+        consumed = False
         try:
-            with self.store.locked(identifier(request_id)) as row:
+            with self.store.locked(request_id) as row:
+                self.limiter.check(scope, now)
                 self._expire(row)
                 require(row["registration"] == "ISSUED", "ENROLLMENT_UNAVAILABLE", 409)
                 p = body["payload"]
@@ -353,22 +382,24 @@ class ConnectionService:
                 )
                 identifier(p["candidate_id"])
                 self._nonce(row, p)
-                unb64(p["device_auth_public_key"], 1952)
-                unb64(p["wireguard_public_key"], 32)
-                require(
-                    self.crypto.verify(
-                        row["public_key"],
-                        body["enrollment_signature"],
-                        signed_bytes("enrollment", p),
+                consumed = True
+                with signed_input("INVALID_PROOF"):
+                    device_key = unb64(p["device_auth_public_key"], 1952)
+                    unb64(p["wireguard_public_key"], 32)
+                    require(
+                        self.crypto.verify(
+                            row["public_key"],
+                            body["enrollment_signature"],
+                            signed_bytes("enrollment", p),
+                        )
+                        and self.crypto.verify(
+                            p["device_auth_public_key"],
+                            body["device_signature"],
+                            signed_bytes("device-possession", p),
+                        ),
+                        "INVALID_PROOF",
+                        401,
                     )
-                    and self.crypto.verify(
-                        p["device_auth_public_key"],
-                        body["device_signature"],
-                        signed_bytes("device-possession", p),
-                    ),
-                    "INVALID_PROOF",
-                    401,
-                )
                 meta = body.get("metadata", {})
                 require(
                     isinstance(meta, dict) and set(meta) <= {"hostname", "os", "arch"},
@@ -378,9 +409,7 @@ class ConnectionService:
                 row["candidate"] = {
                     "id": p["candidate_id"],
                     "digest": digest(p),
-                    "fingerprint": hashlib.sha384(
-                        unb64(p["device_auth_public_key"], 1952)
-                    ).hexdigest(),
+                    "fingerprint": hashlib.sha384(device_key).hexdigest(),
                     "hostname": short_text(meta.get("hostname", "unknown")),
                     "os": short_text(meta.get("os", "unknown")),
                     "arch": short_text(meta.get("arch", "unknown")),
@@ -400,16 +429,13 @@ class ConnectionService:
                     "confirmation_code": row["code"],
                     "approval_expires_at_ms": row["approval_expires_at"],
                 }
-        except (ConnectionError, ValueError, KeyError, TypeError) as error:
-            if not isinstance(error, ConnectionError) or error.status == 401:
-                self.limiter.fail(ip, now)
-            if isinstance(error, ConnectionError):
-                raise
-            raise ConnectionError("INVALID_PROOF", 401) from None
+        except ConnectionError as error:
+            if consumed and error.status == 401:
+                self.limiter.fail(scope, now)
+            raise
 
-    def browser(self, request_id, actor, action, data, ip=None):
-        if ip is not None:
-            self.limiter.check(ip, self.clock())
+    def browser(self, request_id, actor, action, data):
+        self.limiter.check(actor_scope(actor), self.clock())
         with self.store.locked(identifier(request_id)) as row:
             self._access(row, actor, True)
             self._expire(row)
@@ -429,10 +455,15 @@ class ConnectionService:
                         data.get("candidateDigest") == row["candidate"]["digest"],
                         "CANDIDATE_CHANGED",
                     )
-                    code = str(data.get("code", "")).replace(" ", "").upper()
-                    if not hmac.compare_digest(code.encode(), row["code"].encode()):
-                        if ip is not None:
-                            self.limiter.fail(ip, self.clock())
+                    code = data.get("code")
+                    code = (
+                        re.sub(r"[\s-]", "", code).upper()
+                        if isinstance(code, str)
+                        else ""
+                    )
+                    if not re.fullmatch(
+                        r"[A-Z2-7]{8}", code
+                    ) or not hmac.compare_digest(code, row["code"]):
                         row["attempts_left"] -= 1
                         if row["attempts_left"] <= 0:
                             row["device"] = "REJECTED"
@@ -540,11 +571,13 @@ class ConnectionService:
             row["device"] == "APPROVED" and row["tunnel"] == "READY", "TUNNEL_NOT_READY"
         )
 
-    def device(self, request_id, body, ip, *, through_tunnel=False):
+    def device(self, request_id, body, *, through_tunnel=False):
         now = self.clock()
-        self.limiter.check(ip, now)
+        scope = request_scope(request_id, device=True, through_tunnel=through_tunnel)
+        consumed = False
         try:
-            with self.store.locked(identifier(request_id)) as row:
+            with self.store.locked(request_id) as row:
+                self.limiter.check(scope, now)
                 self._expire(row)
                 if through_tunnel:
                     require(
@@ -570,15 +603,17 @@ class ConnectionService:
                     403,
                 )
                 self._nonce(row, p, device=True)
-                require(
-                    self.crypto.verify(
-                        row["candidate"]["public_key"],
-                        body["signature"],
-                        signed_bytes("device-request", p),
-                    ),
-                    "INVALID_DEVICE_SIGNATURE",
-                    401,
-                )
+                consumed = True
+                with signed_input("INVALID_DEVICE_REQUEST"):
+                    require(
+                        self.crypto.verify(
+                            row["candidate"]["public_key"],
+                            body["signature"],
+                            signed_bytes("device-request", p),
+                        ),
+                        "INVALID_DEVICE_SIGNATURE",
+                        401,
+                    )
                 action, data = p["action"], p["data"]
                 require(isinstance(data, dict), "INVALID_DEVICE_DATA", 422)
                 actor = Actor(row["team"], row["owner"], False)
@@ -695,12 +730,9 @@ class ConnectionService:
                     self._touch(row, "선택한 환경정보 수집을 완료했습니다.")
                     return {"accepted": True, "inventory_digest": value}
                 raise ConnectionError("UNSUPPORTED_DEVICE_ACTION", 422)
-        except (KeyError, ValueError, TypeError):
-            self.limiter.fail(ip, now)
-            raise ConnectionError("INVALID_DEVICE_REQUEST", 401) from None
         except ConnectionError as error:
-            if error.status == 401:
-                self.limiter.fail(ip, now)
+            if consumed and error.status == 401:
+                self.limiter.fail(scope, now)
             raise
 
     def runtime_health(self, data):
@@ -823,28 +855,3 @@ class ConnectionService:
                 "accepted": True,
                 "authorization_expires_at_ms": row.get("lease_expires_at", 0),
             }
-
-    def environments(self, actor):
-        results = []
-        for row in self.store.list(actor.team):
-            if not row.get("environment_id"):
-                continue
-            snapshot = self.snapshot(row, actor)
-            results.append(
-                {
-                    "id": row["environment_id"],
-                    "name": row["target"]["name"],
-                    "runtime": "onprem_helm",
-                    "state": "registered",
-                    "executable": False,
-                    "connection_verified": snapshot["tunnel"] == "READY"
-                    and snapshot["device"] == "APPROVED",
-                    "connection_id": row["id"],
-                    "connection_state": snapshot["tunnel"],
-                    "project": row["target"]["project"],
-                    "role": row["target"]["role"],
-                    "inventory": row["collected"][0],
-                    "source": "device-connection",
-                }
-            )
-        return results

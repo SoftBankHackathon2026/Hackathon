@@ -64,12 +64,6 @@ def actor(request: Request, container: Container):
     return Actor(identity.team, identity.email, identity.can_deploy)
 
 
-def ip(request: Request):
-    # X-Forwarded-For is never parsed here. Only a deployment-configured trusted
-    # ASGI proxy may establish request.client; do not trust arbitrary headers.
-    return request.client.host if request.client else "127.0.0.1"
-
-
 async def document(request: Request, limit: int = 32768):
     raw = bytearray()
     async for chunk in request.stream():
@@ -95,7 +89,7 @@ async def document(request: Request, limit: int = 32768):
         if not isinstance(value, dict):
             raise ValueError("object required")
         return value
-    except (ValueError, UnicodeError):
+    except (ValueError, RecursionError):
         raise InvalidRequest("요청 자료 형식이 올바르지 않습니다.") from None
 
 
@@ -139,9 +133,6 @@ async def create_connection(request: Request, container: Container = Depends(get
     identity = actor(request, container)
     body = await document(request)
     fields(body, ("publicKey", "operationId"))
-    limited = await invoke(implementation.limiter.check, ip(request), implementation.clock())
-    if isinstance(limited, JSONResponse):
-        return limited
     return await invoke(implementation.create, identity, body["publicKey"], body["operationId"])
 
 
@@ -165,7 +156,6 @@ async def challenge(
         implementation.challenge,
         request_id,
         body["candidateId"],
-        ip(request),
         device=request.url.path.endswith("/device-challenge"),
     )
 
@@ -175,7 +165,7 @@ async def prove(request_id: str, request: Request, container: Container = Depend
     implementation = service(container)
     body = await document(request)
     fields(body, ("payload", "enrollment_signature", "device_signature"), ("metadata",))
-    return await invoke(implementation.prove, request_id, body, ip(request))
+    return await invoke(implementation.prove, request_id, body)
 
 
 @router.post(PUBLIC + "/{request_id}/device")
@@ -188,7 +178,7 @@ async def device(request_id: str, request: Request, container: Container = Depen
         not isinstance(body["payload"], dict) or body["payload"].get("action") != "status"
     ):
         raise InvalidRequest("복구 요청은 상태 확인만 허용합니다.")
-    return await invoke(implementation.device, request_id, body, ip(request))
+    return await invoke(implementation.device, request_id, body)
 
 
 @router.post(PUBLIC + "/{request_id}/{action}")
@@ -210,7 +200,7 @@ async def browser_action(
     if action not in requirements:
         raise InvalidRequest("지원하지 않는 연결 작업입니다.")
     fields(body, requirements[action])
-    return await invoke(implementation.browser, request_id, identity, action, body, ip=ip(request))
+    return await invoke(implementation.browser, request_id, identity, action, body)
 
 
 def runtime(request: Request, container: Container):
@@ -247,7 +237,7 @@ async def relay(request_id: str, request: Request, container: Container = Depend
     implementation = runtime(request, container)
     body = await document(request, 262144)
     fields(body, ("payload", "signature"))
-    return await invoke(implementation.device, request_id, body, ip(request), through_tunnel=True)
+    return await invoke(implementation.device, request_id, body, through_tunnel=True)
 
 
 @router.post(RUNTIME + "/health")

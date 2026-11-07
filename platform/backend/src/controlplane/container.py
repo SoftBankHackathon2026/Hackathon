@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 
@@ -39,6 +42,9 @@ from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
 
+if TYPE_CHECKING:
+    from migration_connection.control.service import ConnectionService
+
 
 @dataclass(frozen=True)
 class Container:
@@ -62,7 +68,7 @@ class Container:
     ingest_token: SecretStr | None
     costs: CostService
     enrollments: EnrollmentService | None = None
-    connections: object | None = None
+    connections: ConnectionService | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -117,7 +123,7 @@ def _fleet_source(config: FleetConfig, store: ReleaseStore | None) -> FleetSourc
     return SimulatedFleet(config)
 
 
-def _connections(store, mode):
+def _connections(store: ReleaseStore | None, mode: AuthMode) -> ConnectionService | None:
     # Optional package: unchanged legacy deployments do not require it.
     if mode != AuthMode.LOGIN:
         return None
