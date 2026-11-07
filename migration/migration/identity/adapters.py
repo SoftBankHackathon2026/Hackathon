@@ -354,6 +354,10 @@ class Targets:
             data = {k: v for k, v in p.items() if k != "client"}
             if kind == "kc_realm":
                 self.kc.request("POST", "/admin/realms", payload=data)
+                profile = self.kc.request("GET", self.realm + "/users/profile")
+                require(isinstance(profile, dict), "KEYCLOAK_RESPONSE_SHAPE")
+                profile["unmanagedAttributePolicy"] = "ADMIN_EDIT"
+                self.kc.request("PUT", self.realm + "/users/profile", payload=profile)
             elif kind in {"kc_user", "kc_group", "kc_client"}:
                 collection = {
                     "kc_user": "users",
