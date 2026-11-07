@@ -24,6 +24,8 @@ import {
   formatRatio,
   formatSeconds,
 } from "../../lib/format";
+import { fixView, hypotheses, sandbox } from "./evidence";
+import { FixDiff, HypothesisTree, SandboxSteps } from "./RunEvidence";
 import {
   agentScore,
   foldSteps,
@@ -187,7 +189,7 @@ function ScoreRow({ runs }: { runs: AgentRun[] }) {
             value: String(score.handedOff + score.waiting),
             unit: "건",
             tone: score.waiting > 0 ? "warn" : undefined,
-            note: `승인 대기 ${score.waiting} · 넘김 ${score.handedOff}`,
+            note: `승인 대기 ${score.waiting}건, 넘김 ${score.handedOff}건`,
           },
         ]}
       />
@@ -393,7 +395,12 @@ function DecisionControls({ run }: { run: AgentRunDetail }) {
 function RunBody({ run }: { run: AgentRunDetail }) {
   const result = verdict(run);
   const took = runSeconds(run);
-  const { shown, folded } = foldSteps(investigation(run), took !== null);
+  const steps = investigation(run);
+  const { shown, folded } = foldSteps(steps, took !== null);
+  const detectStep = steps[0];
+  const hyps = hypotheses(run.detail);
+  const fix = fixView(run.detail);
+  const box = sandbox(run.detail);
   return (
     <>
       <div className="agent-verdict" role="status">
@@ -403,6 +410,25 @@ function RunBody({ run }: { run: AgentRunDetail }) {
           <span className="sub">감지부터 끝까지 {formatSeconds(took)}</span>
         )}
       </div>
+      {hyps.length > 0 && (
+        <PanelGroup label="원인 가설" wide>
+          <HypothesisTree
+            items={hyps}
+            trigger={detectStep.text}
+            codes={detectStep.codes}
+          />
+        </PanelGroup>
+      )}
+      {fix && (
+        <PanelGroup label="수정 내용" wide>
+          <FixDiff fix={fix} />
+        </PanelGroup>
+      )}
+      {box && (
+        <PanelGroup label="샌드박스 작업" wide>
+          <SandboxSteps box={box} />
+        </PanelGroup>
+      )}
       <PanelGroup label="조사 단계">
         <ol className="agent-steps">
           {shown.map((item) => (
@@ -466,26 +492,6 @@ function StepItem({ item }: { item: Step }) {
           {item.codes.map((code) => (
             <li key={code} className="mono">
               {code}
-            </li>
-          ))}
-        </ul>
-      )}
-      {item.changes.length > 0 && (
-        <ul className="agent-changes">
-          {item.changes.map((change) => (
-            <li key={change.key}>
-              <span className="agent-change-key mono">{change.key}</span>
-              <span className="agent-change-value mono">
-                {change.before !== null && (
-                  <>
-                    <del className="sub">{change.before}</del>
-                    <span className="agent-arrow" aria-hidden="true">
-                      →
-                    </span>
-                  </>
-                )}
-                <ins>{change.after}</ins>
-              </span>
             </li>
           ))}
         </ul>
