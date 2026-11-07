@@ -114,8 +114,26 @@ fn remove(p: &Policy) -> Result<()> {
         }
     }
     nft(p, false, 0)?;
-    let _ = fs::remove_file(STATE);
-    Ok(())
+    match fs::remove_file(STATE) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+fn remove_expired_client_binding(p: &Policy, s: &State, now: u64) -> Result<()> {
+    if p.role != "client" || s.key_expires_at_ms > now {
+        return Err("another connection still owns the interface".into());
+    }
+    if Path::new("/sys/class/net").join(&p.interface).exists() {
+        let peers = cmd("/usr/bin/wg", &["show", &p.interface, "peers"], None)?;
+        if !std::str::from_utf8(&peers)?
+            .split_whitespace()
+            .eq(std::iter::once(s.public_key.as_str()))
+        {
+            return Err("expired binding does not own the current WireGuard peer".into());
+        }
+    }
+    remove(p)
 }
 fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
     p.validate()?;
@@ -162,10 +180,14 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             let peer = key(&r.public_key)?;
             let psk = key(&r.psk)?;
             if let Ok(s) = state() {
-                if s.connection_id != r.connection_id || r.epoch <= s.epoch {
-                    return Err("old epoch or other connection".into());
+                if s.connection_id != r.connection_id {
+                    remove_expired_client_binding(p, &s, now)?;
+                } else {
+                    if r.epoch <= s.epoch {
+                        return Err("old epoch".into());
+                    }
+                    remove(p)?;
                 }
-                remove(p)?;
             } else if Path::new(STATE).exists() {
                 return Err("invalid existing state".into());
             } else if cmd("/usr/sbin/ip", &["link", "show", "dev", &p.interface], None).is_ok() {
@@ -249,6 +271,10 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             }
             let s = state()?;
             if s.connection_id != r.connection_id || s.epoch != r.epoch {
+                if r.operation == "remove" && s.connection_id != r.connection_id {
+                    remove_expired_client_binding(p, &s, migration_connector::now_ms())?;
+                    return Ok(serde_json::json!({"removed":true}));
+                }
                 return Err("state mismatch".into());
             }
             if r.operation == "remove" {
