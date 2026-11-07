@@ -228,3 +228,11 @@ def test_changed_spec_does_not_reuse_candidate(rotation_case):
     with pytest.raises(StateError, match="PLAN_CHANGED"):
         invoke(s)
     assert s.server.alter_count == 0
+
+
+def test_copied_value_that_does_not_log_in_as_role_blocks_rotation(rotation_case):
+    s = rotation_case
+    s.server.password = "used-by-another-role"
+    with pytest.raises(SecretsError, match="CURRENT_CREDENTIAL_NOT_FOR_ROLE"):
+        invoke(s)
+    assert s.target.writes == 1 and s.server.alter_count == 0
