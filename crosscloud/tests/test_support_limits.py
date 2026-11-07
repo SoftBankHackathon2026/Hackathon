@@ -28,6 +28,9 @@ CREATE SEQUENCE public.orders_id_seq
 CREATE FUNCTION public.touch() RETURNS trigger
     LANGUAGE plpgsql
     AS $$ BEGIN NEW.note := 'x'; RETURN NEW; END; $$;
+ALTER SEQUENCE public.orders_id_seq OWNED BY public.orders.id;
+ALTER TABLE ONLY public.orders ALTER COLUMN id
+    SET DEFAULT nextval('public.orders_id_seq'::regclass);
 ALTER TABLE ONLY public.orders
     ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
 """
@@ -100,11 +103,12 @@ def test_pg_dump_primary_key_and_plain_sequence_are_supported():
         ),
         (
             "CREATE TABLE a (id int PRIMARY KEY);"
-            "CREATE SEQUENCE s INCREMENT BY 2;",
+            "CREATE SEQUENCE s INCREMENT BY 2 OWNED BY a.id;",
             ("sequence_unsupported", "public.s"),
         ),
         (
-            "CREATE TABLE a (id int PRIMARY KEY);CREATE SEQUENCE s CYCLE;",
+            "CREATE TABLE a (id int PRIMARY KEY);"
+            "CREATE SEQUENCE s CYCLE OWNED BY a.id;",
             ("sequence_unsupported", "public.s"),
         ),
         (
@@ -115,6 +119,61 @@ def test_pg_dump_primary_key_and_plain_sequence_are_supported():
 )
 def test_detects_support_limit(schema_sql, expected):
     assert expected in _kinds(schema_sql)
+
+
+@pytest.mark.parametrize(
+    ("schema_sql", "expected"),
+    [
+        (
+            "CREATE SEQUENCE ids;"
+            "CREATE TABLE t (id bigint DEFAULT nextval('ids') PRIMARY KEY);",
+            ("sequence_unsupported", "public.ids"),
+        ),
+        (
+            "CREATE TABLE t (id bigint PRIMARY KEY);"
+            "CREATE SEQUENCE s OWNED BY t.id;"
+            "ALTER SEQUENCE s OWNED BY NONE;",
+            ("sequence_unsupported", "public.s"),
+        ),
+        (
+            "CREATE EXTENSION IF NOT EXISTS hstore;"
+            "CREATE TABLE t (id int PRIMARY KEY);",
+            ("extension", "hstore"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY, attrs hstore);",
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY, ip inet);",
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY, at time with time zone);",
+            ("unsupported_column_type", "public.t"),
+        ),
+    ],
+)
+def test_detects_schema_outside_supported_scope(schema_sql, expected):
+    assert expected in _kinds(schema_sql)
+
+
+def test_supported_column_type_spellings_pass():
+    schema_sql = """
+    CREATE TABLE public.everything (
+        "Id" bigserial PRIMARY KEY,
+        a smallint, b integer, c int, d bigint, e serial,
+        f character varying(20), g varchar(10), h char(3), i text,
+        j boolean, k numeric(10, 2), l decimal, m real,
+        n double precision, o float8, p date,
+        q timestamp(3) without time zone, r timestamp with time zone,
+        s timestamptz, t time, u uuid, v json, w jsonb, x bytea,
+        CONSTRAINT everything_b_check CHECK (b > 0),
+        UNIQUE (u)
+    );
+    """
+
+    assert support_limits.find_support_limits(schema_sql) == ()
 
 
 def test_schema_without_tables_cannot_be_judged():

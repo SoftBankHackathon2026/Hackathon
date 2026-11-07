@@ -1,12 +1,14 @@
 """원가연 전환 도구(migration.cloud)의 지원 제한에 걸리는 스키마를 찾는다.
 
-근거는 migration/CLOUD_MIGRATION.md 「지원 범위와 사전 준비」 절이다. 그 도구는
-PRECHECK 에서 아래를 거절하는데, crosscloud 는 대상 인프라를 깔기 전 파악
-단계에서 미리 찾아 사람 결정(transition_support_limit)으로 올린다(계획 편차 E7).
+근거는 migration/CLOUD_MIGRATION.md 「지원 범위와 사전 준비」 절과 그 PRECHECK
+구현(migration/cloud/postgres.py 의 열 타입 허용 목록)이다. 그 도구는 PRECHECK
+에서 아래를 거절하는데, crosscloud 는 대상 인프라를 깔기 전 파악 단계에서 미리
+찾아 사람 결정(transition_support_limit)으로 올린다(계획 편차 E7).
 
   * 대상 FK · 사용자 트리거(테이블별 sink 순서가 달라서)
   * 파티션·상속 · RLS · 배열·사용자 타입 · generated/identity ALWAYS
-  * 소유 시퀀스의 increment≠1 · cycle
+  * 허용 목록 밖의 열 타입(확장 타입 포함) · 확장(CREATE EXTENSION)
+  * 소유 시퀀스의 increment≠1 · cycle, 어느 열에도 소유되지 않은 시퀀스
   * PK 없는 테이블(PK 기반 upsert·비교)
 
 입력은 `pg_dump --schema-only` 같은 DDL 문자열이다. SQL 을 완전히 해석하지
@@ -26,6 +28,8 @@ SupportLimitKind = Literal[
     "partition_or_inheritance",
     "row_level_security",
     "array_or_user_type",
+    "unsupported_column_type",
+    "extension",
     "generated_always",
     "sequence_unsupported",
     "missing_primary_key",
@@ -39,12 +43,33 @@ class SupportLimit:
 
     Attributes:
         kind: 걸린 제한 종류.
-        subject: 걸린 객체의 `schema.name`(소문자). 스키마 전체면 "schema".
+        subject: 걸린 객체의 `schema.name`(소문자). 확장이면 확장 이름,
+            스키마 전체면 "schema".
     """
 
     kind: SupportLimitKind
     subject: str
 
+
+# 원가연 PRECHECK 가 받는 열 타입(postgres.py 의 typname 목록)을 SQL 표기로
+# 옮긴 것. 길이·정밀도 수식어 `(...)` 는 지운 뒤 비교한다.
+_SUPPORTED_COLUMN_TYPES = frozenset(
+    {
+        "smallint", "int2", "smallserial", "serial2",
+        "integer", "int", "int4", "serial", "serial4",
+        "bigint", "int8", "bigserial", "serial8",
+        "text", "varchar", "character varying",
+        "char", "character", "bpchar",
+        "boolean", "bool",
+        "numeric", "decimal",
+        "real", "float4", "double precision", "float8", "float",
+        "date",
+        "timestamp", "timestamp without time zone",
+        "timestamptz", "timestamp with time zone",
+        "time", "time without time zone",
+        "uuid", "json", "jsonb", "bytea",
+    }
+)  # fmt: skip
 
 # 문자열·주석은 지운다. 그 안의 단어(예: DEFAULT 'REFERENCES')를 잡지 않게.
 _STRING_OR_COMMENT = re.compile(
@@ -66,8 +91,14 @@ _CREATE_TRIGGER = re.compile(
 )
 _CREATE_POLICY = re.compile(rf"^CREATE POLICY \S+ ON {_NAME}", re.I)
 _CREATE_TYPE = re.compile(rf"^CREATE (?:TYPE|DOMAIN) {_NAME}", re.I)
+_CREATE_EXTENSION = re.compile(
+    rf"^CREATE EXTENSION (?:IF NOT EXISTS )?{_NAME}", re.I
+)
 _CREATE_SEQUENCE = re.compile(
     rf"^CREATE SEQUENCE (?:IF NOT EXISTS )?{_NAME}(.*)$", re.I
+)
+_ALTER_SEQUENCE = re.compile(
+    rf"^ALTER SEQUENCE (?:IF EXISTS )?{_NAME}(.*)$", re.I
 )
 
 _FOREIGN_KEY = re.compile(r"\bREFERENCES\b|\bFOREIGN KEY\b", re.I)
@@ -82,6 +113,29 @@ _ROW_LEVEL_SECURITY = re.compile(
 )
 _INCREMENT = re.compile(r"\bINCREMENT (?:BY )?(-?\d+)", re.I)
 _CYCLE = re.compile(r"(?<!NO )\bCYCLE\b", re.I)
+_OWNED_BY = re.compile(r"\bOWNED BY (\S+)", re.I)
+# 테이블 본문의 원소 중 열이 아닌 것(테이블 제약·LIKE)의 첫 단어.
+_TABLE_ELEMENT_KEYWORDS = frozenset(
+    {"CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE", "LIKE"}
+)
+# 열 정의에서 타입이 끝나는 자리(열 제약의 첫 단어).
+_COLUMN_CONSTRAINT = re.compile(
+    r"\b(?:NOT|NULL|DEFAULT|PRIMARY|REFERENCES|UNIQUE|CHECK|COLLATE"
+    r"|GENERATED|CONSTRAINT)\b",
+    re.I,
+)
+
+
+@dataclasses.dataclass
+class _Scan:
+    """문장을 차례로 읽으며 모으는 상태. 이 모듈 안에서만 쓴다."""
+
+    found: dict[SupportLimit, None] = dataclasses.field(default_factory=dict)
+    tables: dict[str, bool] = dataclasses.field(default_factory=dict)
+    sequence_owned: dict[str, bool] = dataclasses.field(default_factory=dict)
+
+    def add(self, kind: SupportLimitKind, subject: str) -> None:
+        self.found[SupportLimit(kind, subject)] = None
 
 
 def find_support_limits(schema_sql: str) -> tuple[SupportLimit, ...]:
@@ -94,17 +148,18 @@ def find_support_limits(schema_sql: str) -> tuple[SupportLimit, ...]:
         찾은 제한(중복 없음, 처음 나온 순서). 걸리는 것이 없으면 빈 tuple.
         테이블이 하나도 없으면 판정할 수 없으므로 no_tables 를 더한다.
     """
-    found: dict[SupportLimit, None] = {}
-    tables: dict[str, bool] = {}
+    scan = _Scan()
     for statement in _statements(schema_sql):
-        for limit in _limits_in(statement, tables):
-            found[limit] = None
-    if not tables:
-        found[SupportLimit("no_tables", "schema")] = None
-    for table, has_primary_key in tables.items():
+        _read_statement(statement, scan)
+    if not scan.tables:
+        scan.add("no_tables", "schema")
+    for table, has_primary_key in scan.tables.items():
         if not has_primary_key:
-            found[SupportLimit("missing_primary_key", table)] = None
-    return tuple(found)
+            scan.add("missing_primary_key", table)
+    for sequence, owned in scan.sequence_owned.items():
+        if not owned:
+            scan.add("sequence_unsupported", sequence)
+    return tuple(scan.found)
 
 
 def _statements(schema_sql: str) -> list[str]:
@@ -117,28 +172,33 @@ def _statements(schema_sql: str) -> list[str]:
     ]
 
 
-def _limits_in(statement: str, tables: dict[str, bool]) -> list[SupportLimit]:
+def _read_statement(statement: str, scan: _Scan) -> None:
     if match := _CREATE_TABLE.match(statement):
-        table = _normalize(match.group(1))
-        tables[table] = bool(_PRIMARY_KEY.search(match.group(2)))
-        return _table_limits(table, match.group(2))
-    if match := _ALTER_TABLE.match(statement):
-        table = _normalize(match.group(1))
-        if _PRIMARY_KEY.search(match.group(2)):
-            tables[table] = True
-        return _table_limits(table, match.group(2))
-    if match := _CREATE_TRIGGER.match(statement):
-        return [SupportLimit("user_trigger", _normalize(match.group(1)))]
-    if match := _CREATE_POLICY.match(statement):
-        return [SupportLimit("row_level_security", _normalize(match.group(1)))]
-    if match := _CREATE_TYPE.match(statement):
-        return [SupportLimit("array_or_user_type", _normalize(match.group(1)))]
-    if match := _CREATE_SEQUENCE.match(statement):
-        return _sequence_limits(_normalize(match.group(1)), match.group(2))
-    return []
+        table, body = _normalize(match.group(1)), match.group(2)
+        scan.tables[table] = bool(_PRIMARY_KEY.search(body))
+        _check_table_body(table, body, scan)
+        if not _ARRAY.search(body) and _has_unsupported_column(body):
+            scan.add("unsupported_column_type", table)
+    elif match := _ALTER_TABLE.match(statement):
+        table, body = _normalize(match.group(1)), match.group(2)
+        if _PRIMARY_KEY.search(body):
+            scan.tables[table] = True
+        _check_table_body(table, body, scan)
+    elif match := _CREATE_TRIGGER.match(statement):
+        scan.add("user_trigger", _normalize(match.group(1)))
+    elif match := _CREATE_POLICY.match(statement):
+        scan.add("row_level_security", _normalize(match.group(1)))
+    elif match := _CREATE_TYPE.match(statement):
+        scan.add("array_or_user_type", _normalize(match.group(1)))
+    elif match := _CREATE_EXTENSION.match(statement):
+        scan.add("extension", match.group(1).strip('"').lower())
+    elif match := _CREATE_SEQUENCE.match(statement):
+        _read_sequence(_normalize(match.group(1)), match.group(2), scan)
+    elif match := _ALTER_SEQUENCE.match(statement):
+        _read_sequence(_normalize(match.group(1)), match.group(2), scan)
 
 
-def _table_limits(table: str, body: str) -> list[SupportLimit]:
+def _check_table_body(table: str, body: str, scan: _Scan) -> None:
     checks: tuple[tuple[re.Pattern[str], SupportLimitKind], ...] = (
         (_FOREIGN_KEY, "foreign_key"),
         (_PARTITION, "partition_or_inheritance"),
@@ -146,19 +206,73 @@ def _table_limits(table: str, body: str) -> list[SupportLimit]:
         (_ARRAY, "array_or_user_type"),
         (_GENERATED_ALWAYS, "generated_always"),
     )
-    limits = [
-        SupportLimit(kind, table)
-        for pattern, kind in checks
-        if pattern.search(body)
-    ]
-    return limits + _sequence_limits(table, body)
+    for pattern, kind in checks:
+        if pattern.search(body):
+            scan.add(kind, table)
+    if _has_unsupported_sequence_options(body):
+        scan.add("sequence_unsupported", table)
 
 
-def _sequence_limits(subject: str, body: str) -> list[SupportLimit]:
+def _read_sequence(sequence: str, body: str, scan: _Scan) -> None:
+    if _has_unsupported_sequence_options(body):
+        scan.add("sequence_unsupported", sequence)
+    owner = _OWNED_BY.search(body)
+    if owner is not None:
+        scan.sequence_owned[sequence] = owner.group(1).upper() != "NONE"
+    else:
+        scan.sequence_owned.setdefault(sequence, False)
+
+
+def _has_unsupported_sequence_options(body: str) -> bool:
     increments = [int(value) for value in _INCREMENT.findall(body)]
-    if any(value != 1 for value in increments) or _CYCLE.search(body):
-        return [SupportLimit("sequence_unsupported", subject)]
-    return []
+    return any(value != 1 for value in increments) or bool(_CYCLE.search(body))
+
+
+def _has_unsupported_column(body: str) -> bool:
+    return any(
+        column_type not in _SUPPORTED_COLUMN_TYPES
+        for column_type in _column_types(body)
+    )
+
+
+def _column_types(body: str) -> list[str]:
+    types = []
+    for element in _top_level_elements(body):
+        first_word = element.split(" ", 1)[0].upper()
+        if first_word in _TABLE_ELEMENT_KEYWORDS:
+            continue
+        name = re.match(r'"[^"]+"|\S+', element)
+        if name is None:
+            continue
+        definition = element[name.end() :]
+        definition = _COLUMN_CONSTRAINT.split(definition, maxsplit=1)[0]
+        definition = re.sub(r"\([^)]*\)", " ", definition)
+        definition = definition.lower().replace("pg_catalog.", "")
+        types.append(" ".join(definition.replace('"', "").split()))
+    return types
+
+
+def _top_level_elements(body: str) -> list[str]:
+    # CREATE TABLE 뒤 첫 괄호 안을 깊이 1 의 쉼표로 나눈다. 괄호가 없으면
+    # (PARTITION OF 등) 열이 없다.
+    start = body.find("(")
+    if start < 0:
+        return []
+    elements, depth, current = [], 0, []
+    for char in body[start + 1 :]:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif char == "," and depth == 0:
+            elements.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    elements.append("".join(current).strip())
+    return [element for element in elements if element]
 
 
 def _normalize(name: str) -> str:
