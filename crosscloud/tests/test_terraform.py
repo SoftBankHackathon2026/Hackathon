@@ -371,3 +371,25 @@ def test_plan_removes_saved_plan_when_show_cannot_even_start(paths):
         runner.plan()
 
     assert not (paths[2].parent / "target_base.tfstate.tfplan").exists()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        [{"type": "t", "change": {"actions": ["create"]}}],
+        [{"address": "a", "type": "t", "change": {}}],
+        ["not-an-object"],
+        {"address": "a"},
+    ],
+)
+def test_plan_rejects_malformed_resource_changes_and_removes_plan(
+    paths, changes
+):
+    show = json.dumps({"resource_changes": changes, "secret": _CANARY})
+    fake = FakeRun({"show": _ok(show)})
+
+    with pytest.raises(terraform.TerraformError) as excinfo:
+        _runner(paths, fake).plan()
+
+    assert _CANARY not in str(excinfo.value)
+    assert not (paths[2].parent / "target_base.tfstate.tfplan").exists()

@@ -122,19 +122,11 @@ class Terraform:
                 f"-out={plan_file}",
             )
             shown = self._call("show", "-json", "-no-color", str(plan_file))
-            document = _load_json("show", shown.stdout)
+            return _resource_changes(_load_json("show", shown.stdout))
         except BaseException:
             # 종료 코드 오류만이 아니라 실행 자체 실패(OSError 등)도 포함한다.
             plan_file.unlink(missing_ok=True)
             raise
-        return tuple(
-            ResourceChange(
-                address=change["address"],
-                resource_type=change["type"],
-                actions=tuple(change["change"]["actions"]),
-            )
-            for change in document.get("resource_changes", ())
-        )
 
     def apply(self) -> None:
         """직전 plan 이 저장한 plan 파일을 그대로 적용하고 그 파일을 지운다.
@@ -225,6 +217,23 @@ class Terraform:
         """State 파일 이름 전체 뒤에 접미사를 붙인 같은 자리의 경로."""
         state = self._state()
         return state.with_name(state.name + suffix)
+
+
+def _resource_changes(document: dict[str, Any]) -> tuple[ResourceChange, ...]:
+    """Show -json 문서의 resource_changes 를 읽는다. 값은 예외에 넣지 않는다."""
+    try:
+        return tuple(
+            ResourceChange(
+                address=change["address"],
+                resource_type=change["type"],
+                actions=tuple(change["change"]["actions"]),
+            )
+            for change in document.get("resource_changes", ())
+        )
+    except (KeyError, TypeError):
+        raise TerraformError(
+            "show", 0, "resource_changes 형식이 예상과 다르다"
+        ) from None
 
 
 def _inheritable(name: str) -> bool:
