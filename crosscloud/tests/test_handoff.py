@@ -1,10 +1,11 @@
 import dataclasses
 import datetime
+import json
 
 import pytest
 import yaml
 
-from crosscloud import handoff, model
+from crosscloud import control_adapter, handoff, model
 
 _NOW = datetime.datetime(2026, 11, 7, 15, 30, 0, tzinfo=datetime.UTC)
 _TABLES = (handoff.AppTable("public.requests", ("id",)),)
@@ -240,7 +241,9 @@ def test_render_refuses_when_any_readiness_item_is_not_ready(tmp_path):
 
 
 def test_render_refuses_when_a_readiness_item_is_missing(tmp_path):
-    with pytest.raises(handoff.NotReadyError, match="profile_secrets"):
+    with pytest.raises(
+        handoff.NotReadyError, match=handoff.READINESS_NAMES[-1]
+    ):
         handoff.render_cloud_config(_job(), _all_ready()[:-1], tmp_path)
 
 
@@ -280,3 +283,94 @@ def test_reverse_job_flips_labels_and_gets_new_job_id(
     assert (plan.config.job.source, plan.config.job.target) == ("gcp", "aws")
     assert "AWS_SINK_PASSWORD" in env_names
     assert "GCP_CDC_PASSWORD" in env_names
+
+
+_INGRESS_TARGETS = (
+    handoff.IngressTarget("aws", "http://ccx-alb.example"),
+    handoff.IngressTarget("gcp", "http://34.111.2.3"),
+)
+
+
+def test_ingress_env_lists_both_labels_and_source_alias(tmp_path):
+    path, secret_envs = handoff.render_ingress_env(
+        _job(), _INGRESS_TARGETS, "redis://redis:6379", tmp_path
+    )
+
+    values = dict(
+        line.split("=", 1)
+        for line in path.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    assert path.name == "ingress.env"
+    assert json.loads(values["INGRESS_TARGETS"]) == {
+        "aws": {"url": "http://ccx-alb.example"},
+        "gcp": {"url": "http://34.111.2.3"},
+        "onprem": {"url": "http://ccx-alb.example"},
+    }
+    assert values["REDIS_URL"] == "redis://redis:6379"
+    assert values["INGRESS_CONTROL_HOST"] == "0.0.0.0"
+    assert "INGRESS_CONTROL_TOKEN" not in values
+    assert secret_envs == ("INGRESS_CONTROL_TOKEN",)
+
+
+def test_ingress_env_includes_target_token_env_names(tmp_path):
+    targets = (
+        handoff.IngressTarget(
+            "aws", "https://a.example", "AWS_REQUEST_API_TOKEN"
+        ),
+        handoff.IngressTarget("gcp", "http://34.111.2.3"),
+    )
+
+    path, secret_envs = handoff.render_ingress_env(
+        _job(), targets, "redis://redis:6379", tmp_path
+    )
+
+    assert secret_envs == ("AWS_REQUEST_API_TOKEN", "INGRESS_CONTROL_TOKEN")
+    assert '"token_env":"AWS_REQUEST_API_TOKEN"' in path.read_text()
+
+
+def test_ingress_env_readable_by_control_adapter(tmp_path):
+    handoff.render_cloud_config(_job(), _all_ready(), tmp_path)
+    handoff.render_ingress_env(
+        _job(), _INGRESS_TARGETS, "redis://redis:6379", tmp_path
+    )
+
+    config = control_adapter.load_adapter_config(
+        tmp_path / "config.cloud.yaml", tmp_path / "ingress.env"
+    )
+
+    assert (config.source, config.target, config.port) == ("aws", "gcp", 18080)
+    assert config.target_app_url == "http://34.111.2.3"
+
+
+@pytest.mark.parametrize(
+    ("targets", "redis_url", "match"),
+    [
+        (_INGRESS_TARGETS[:1], "redis://r:6379", "gcp"),
+        (
+            (
+                handoff.IngressTarget("aws", "http://a", "AWS_TOKEN"),
+                _INGRESS_TARGETS[1],
+            ),
+            "redis://r:6379",
+            "https",
+        ),
+        (
+            (handoff.IngressTarget("aws", "http://u:p@a"), _INGRESS_TARGETS[1]),
+            "redis://r:6379",
+            "url",
+        ),
+        (
+            (handoff.IngressTarget("aws", "ftp://a"), _INGRESS_TARGETS[1]),
+            "redis://r:6379",
+            "url",
+        ),
+        (_INGRESS_TARGETS, "http://r:6379", "REDIS_URL"),
+    ],
+)
+def test_ingress_env_rejects_unsafe_settings(
+    tmp_path, targets, redis_url, match
+):
+    with pytest.raises(ValueError, match=match):
+        handoff.render_ingress_env(_job(), targets, redis_url, tmp_path)
+    assert not (tmp_path / "ingress.env").exists()

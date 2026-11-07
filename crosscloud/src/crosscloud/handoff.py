@@ -1,20 +1,28 @@
-"""원가연 전환 도구(migration.cloud)에 넘길 config.cloud.yaml 을 만든다.
+"""원가연 전환 도구에 넘길 인계 파일 — config.cloud.yaml 과 ingress.env.
 
-형식의 정본은 migration/config.cloud.example.yaml 과 migration/migration/
-config.py·cloud/plan.py 다. targets 라벨은 클라우드 이름(aws·gcp)이고, 방향마다
-새 job_id 를 쓴다(반대 방향은 새 job + 새 빈 대상 DB — CLOUD_MIGRATION.md).
+config.cloud.yaml 형식의 정본은 migration/config.cloud.example.yaml 과
+migration/migration/config.py·cloud/plan.py 다. targets 라벨은 클라우드
+이름(aws·gcp)이고, 방향마다 새 job_id 를 쓴다(반대 방향은 새 job + 새 빈
+대상 DB — CLOUD_MIGRATION.md).
 
 비밀번호는 쓰지 않는다. 각 로그인에는 env 이름(password_env)만 적고, 운영자
 셸이 Secret 에서 채울 env 이름 목록을 함께 돌려준다.
 
+ingress.env 는 원가연 durable-ingress(접수 큐, sample-app
+src/durable-ingress/server.js)를 운영자 PC compose 로 띄울 때 쓰는 env 파일이다
+(설계 0.1 S15). 대상 이름은 클라우드 라벨과 같고, 제어 토큰 값은 담지 않는다.
+
   job = handoff.build_job_config(inventory, instance_id=..., ...)
   path, env_names = handoff.render_cloud_config(job, readiness, out_dir)
+  path, env_names = handoff.render_ingress_env(job, targets, redis_url, out_dir)
 """
 
 import dataclasses
 import datetime
+import json
 import pathlib
 import re
+import urllib.parse
 from typing import Literal
 
 import yaml
@@ -27,19 +35,22 @@ ReadinessName = Literal[
     "replication_flags",
     "migration_logins",
     "target_schema_empty",
-    "target_app_on_source_db",
-    "routing_source_100",
     "profile_secrets",
+    "ingress_on_source",
 ]
 READINESS_NAMES: tuple[ReadinessName, ...] = (
     "replication_flags",
     "migration_logins",
     "target_schema_empty",
-    "target_app_on_source_db",
-    "routing_source_100",
     "profile_secrets",
+    "ingress_on_source",
 )
 CONFIG_FILE_NAME = "config.cloud.yaml"
+INGRESS_ENV_FILE_NAME = "ingress.env"
+INGRESS_CONTROL_TOKEN_ENV = "INGRESS_CONTROL_TOKEN"
+# durable-ingress 는 처음 뜰 때 'onprem' 대상이 있어야 한다(service.js
+# createIngress 의 initialTarget 기본값). 원본 앱 주소를 같은 이름으로 둔다.
+_INGRESS_INITIAL_TARGET = "onprem"
 
 # migration.cloud 가 쪽마다 실제로 접속하는 역할. 원본은 CDC 로 읽고 대상은
 # sink 로 쓴다. app 은 이름만 쓰고(소유자 검사·트리거) 비밀번호는 읽지 않는다.
@@ -88,6 +99,21 @@ class AppTable:
 
     name: str
     primary_key: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class IngressTarget:
+    """접수 큐가 요청을 전달할 앱 하나(INGRESS_TARGETS 한 항목).
+
+    Attributes:
+        cloud: 라벨. 접수 큐의 대상 이름으로도 쓴다.
+        url: 앱 요청 API 기준 주소(http·https, 인증 정보·쿼리 없음).
+        token_env: 앱 요청 API Bearer 토큰 env 이름. 쓰면 https 만 된다.
+    """
+
+    cloud: model.Cloud
+    url: str
+    token_env: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -348,3 +374,77 @@ def _require_ready(readiness: tuple[ReadinessItem, ...]) -> None:
             raise NotReadyError(f"readiness 항목이 없다: {name}")
         if not item.ready:
             raise NotReadyError(f"readiness 미충족: {name} ({item.detail})")
+
+
+def render_ingress_env(
+    job: CloudJobConfig,
+    targets: tuple[IngressTarget, ...],
+    redis_url: str,
+    out_dir: pathlib.Path,
+) -> tuple[pathlib.Path, tuple[str, ...]]:
+    """durable-ingress 실행용 env 파일(ingress.env)을 쓴다. 비밀값은 없다.
+
+    INGRESS_CONTROL_HOST 는 0.0.0.0 이다 — compose 컨테이너 안에서 듣고, 포트는
+    호스트 127.0.0.1 에만 공개한다. 그래서 제어 토큰을 함께 쓴다.
+
+    Args:
+        job: 라벨(원본·대상)을 정하는 job 설정.
+        targets: 두 라벨의 앱 주소.
+        redis_url: 접수 큐가 쓸 Redis 주소(redis:// 또는 rediss://).
+        out_dir: 파일을 둘 디렉토리.
+
+    Returns:
+        쓴 파일 경로와, 운영자 셸이 채워야 할 비밀 env 이름(정렬).
+
+    Raises:
+        ValueError: 라벨이 맞지 않거나 주소·토큰 전송이 안전하지 않을 때.
+    """
+    by_label = {target.cloud: target for target in targets}
+    for label in (job.source.cloud, job.target.cloud):
+        if label not in by_label:
+            raise ValueError(f"ingress 대상에 {label} 이 없다")
+    for target in targets:
+        _check_ingress_url(target)
+    if not redis_url.startswith(("redis://", "rediss://")):
+        raise ValueError("REDIS_URL 은 redis:// 또는 rediss:// 여야 한다")
+    entries = {label: _ingress_entry(by_label[label]) for label in by_label}
+    entries[_INGRESS_INITIAL_TARGET] = _ingress_entry(
+        by_label[job.source.cloud]
+    )
+    lines = (
+        "# crosscloud 가 렌더링한 durable-ingress env. 비밀값 없음.",
+        f"# {INGRESS_CONTROL_TOKEN_ENV} 는 운영자 셸 env 로 넘긴다.",
+        "INGRESS_TARGETS=" + json.dumps(entries, separators=(",", ":")),
+        f"REDIS_URL={redis_url}",
+        "INGRESS_CONTROL_HOST=0.0.0.0",
+    )
+    path = out_dir / INGRESS_ENV_FILE_NAME
+    path.write_text("\n".join(lines) + "\n")
+    secret_envs = {INGRESS_CONTROL_TOKEN_ENV}
+    secret_envs.update(t.token_env for t in targets if t.token_env)
+    return path, tuple(sorted(secret_envs))
+
+
+def _ingress_entry(target: IngressTarget) -> dict[str, str]:
+    entry = {"url": target.url}
+    if target.token_env:
+        entry["token_env"] = target.token_env
+    return entry
+
+
+def _check_ingress_url(target: IngressTarget) -> None:
+    # service.js createIngress 와 같은 규칙: http(s), 인증 정보·쿼리·조각 없음,
+    # 토큰을 쓰면 https.
+    parts = urllib.parse.urlsplit(target.url)
+    unsafe = (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.username
+        or parts.password
+        or parts.query
+        or parts.fragment
+    )
+    if unsafe:
+        raise ValueError(f"{target.cloud} ingress 대상 url 이 안전하지 않다")
+    if target.token_env and parts.scheme != "https":
+        raise ValueError(f"{target.cloud}: 토큰을 쓰는 대상은 https 만 된다")
