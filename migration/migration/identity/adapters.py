@@ -302,6 +302,8 @@ class Targets:
             expected = {k: v for k, v in p.items() if k != "client"}
             raw = self.kc.request("GET", path, missing=True)
             value = project(raw, expected)
+            if value is not None and isinstance(value.get("redirectUris"), list):
+                value["redirectUris"] = sorted(value["redirectUris"])
             if value is not None and "client" in p:
                 value["client"] = p["client"]
             return value

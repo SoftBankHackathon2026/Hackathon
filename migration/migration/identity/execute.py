@@ -165,6 +165,13 @@ def apply(config, plan, prepared, directory, targets):
         "migration_status": "pending_access_verification_and_handoffs",
     }
     with journal(directory, plan["plan_hash"]) as db:
+        require(
+            db.execute(
+                "SELECT 1 FROM operations WHERE state='rolled_back' LIMIT 1"
+            ).fetchone()
+            is None,
+            "ROLLED_BACK_PLAN_CANNOT_RESUME",
+        )
         for r in ordered(plan["resources"]):
             rid = r["id"]
             entry = db.execute("SELECT * FROM operations WHERE id=?", (rid,)).fetchone()
@@ -216,12 +223,15 @@ def apply(config, plan, prepared, directory, targets):
                 row = db.execute(
                     "SELECT state FROM operations WHERE id=?", (rid,)
                 ).fetchone()
-                state = (
-                    "unknown"
-                    if row and row[0] in {"applying", "unknown"}
-                    else "blocked"
-                )
-                record(db, rid, state, bool(entry and entry["created"]), error.code)
+                if row and row[0] in {"applied", "rolled_back"}:
+                    state = row[0]
+                else:
+                    state = (
+                        "unknown"
+                        if row and row[0] in {"applying", "unknown"}
+                        else "blocked"
+                    )
+                    record(db, rid, state, bool(entry and entry["created"]), error.code)
                 result["results"].append(
                     {"id": rid, "state": state, "reason": error.code}
                 )
@@ -267,7 +277,7 @@ def rollback_plan(config, plan, directory):
     revoke, retain = [], []
     for r in reversed(list(ordered(plan["resources"]))):
         entry = entries.get(r["id"])
-        if entry and entry["created"] and entry["state"] == "applied":
+        if entry and entry["created"] and entry["state"] != "rolled_back":
             (revoke if r["kind"] in revocable else retain).append(r["id"])
     return {
         "schema_version": 1,
@@ -308,5 +318,4 @@ def rollback(config, plan, directory, targets):
                 result["results"].append(
                     {"id": rid, "state": "unknown", "reason": error.code}
                 )
-                break
     return result
