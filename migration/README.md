@@ -268,3 +268,7 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 # Wazuh 온프레미스 감사로그 기반 준비
 
 `python -m migration.wazuh_infra`로 기존 환경 조사·점검, 선택한 Ubuntu 노드 한 대의 Wazuh 설치·전체 이벤트 검색 설정·원본 보관공간·용량 정보를 준비합니다. 실제 원본 파일 이관과 AWS 설정 변경은 수행하지 않습니다. [사용법과 플랫폼 연결](docs/wazuh-infra/README.md), [입력 예시](config.wazuh-infra.example.yaml), [검증 범위](docs/wazuh-infra/VALIDATION.md)를 참고하십시오.
+
+## 클라우드↔클라우드 일반 앱
+
+여러 PostgreSQL 테이블·복합키·UPDATE/DELETE를 사용하는 앱은 [일반 앱 전환 가이드](CLOUD_MIGRATION.md)와 [설정 예시](config.cloud.example.yaml)를 사용한다. 명령은 `python -m migration.cloud`이며 기존 데모와 별도 실행 경로다. 지원 범위·앱 제어 API·사전 스키마 준비 조건을 먼저 확인한다.

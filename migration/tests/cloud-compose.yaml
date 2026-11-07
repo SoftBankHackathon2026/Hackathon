@@ -1,0 +1,52 @@
+# Disposable localhost-only trust-auth test databases, never production credentials.
+services:
+  cloud-pg:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: [postgres, -c, wal_level=logical]
+    ports: ["127.0.0.1::5432"]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  cloud-kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://cloud-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@cloud-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  connect:
+    build: ../connect
+    environment:
+      BOOTSTRAP_SERVERS: cloud-kafka:9092
+      GROUP_ID: cloud-test
+      CONFIG_STORAGE_TOPIC: cloud_configs
+      OFFSET_STORAGE_TOPIC: cloud_offsets
+      STATUS_STORAGE_TOPIC: cloud_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 1000
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      # No passwords are used: the isolated PG container uses trust authentication.
+      MIGRATION_CDC_PASSWORD: unused-local-trust
+      MIGRATION_SINK_PASSWORD: unused-local-trust
+    ports: ["127.0.0.1::8083"]
+    depends_on:
+      cloud-pg: {condition: service_healthy}
+      cloud-kafka: {condition: service_started}
+    healthcheck:
+      test: [CMD-SHELL, 'curl --fail --silent http://localhost:8083/ >/dev/null']
+      interval: 5s
+      timeout: 5s
+      retries: 36
