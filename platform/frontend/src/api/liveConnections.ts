@@ -36,7 +36,7 @@ const MESSAGES: Record<string, string> = {
   REQUEST_RATE_LIMITED: "요청이 많아요. 잠시 후 다시 시도하세요.",
   REQUEST_LIMIT_UNAVAILABLE:
     "인증 상태를 확인할 수 없어요. 잠시 후 다시 시도하세요.",
-  PROVIDER_UNAVAILABLE: "이 환경 유형의 연결이 아직 활성화되지 않았어요.",
+  PROVIDER_UNAVAILABLE: "지원하지 않는 환경 유형이에요.",
   DISCOVERY_UNAVAILABLE: "대상을 확인하고 있어요. 잠시 후 다시 시도하세요.",
   CONNECTION_UNAVAILABLE:
     "연결 실행 환경이 준비되지 않았어요. 관리자에게 확인해 주세요.",

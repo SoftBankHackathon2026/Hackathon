@@ -56,11 +56,6 @@ export function CollectionStart({
             환경 유형을 바꾸려면 새 환경정보 수집을 시작하세요.
           </p>
         )}
-        {!s && available && providers.length === 1 && (
-          <p className="connection-note">
-            이 조직에서 AWS·GCP 연결을 아직 사용할 수 없어요.
-          </p>
-        )}
       </fieldset>
       <header className="connection-title">
         <h2>

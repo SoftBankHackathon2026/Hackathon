@@ -125,7 +125,6 @@ class ConnectionService:
         runtime_tenant_id="",
         runtime_gateway_id="",
         clock=None,
-        cloud_tenants=(),
     ):
         self.store, self.crypto, self.limiter = store, crypto, limiter
         self.bootstrap_url, self.release_version = bootstrap_url, release_version
@@ -133,7 +132,6 @@ class ConnectionService:
         self.bootstrap_sha384 = bootstrap_sha384
         self.runtime_tenant_id = runtime_tenant_id
         self.runtime_gateway_id = runtime_gateway_id
-        self.cloud_tenants = frozenset(cloud_tenants)
         self.clock = clock or (lambda: time.time_ns() // 1000000)
 
     def capabilities(self, team=None):
@@ -180,11 +178,7 @@ class ConnectionService:
             else "연결 실행 환경과 서명·요청 제한 설정을 확인해야 합니다.",
             "bootstrapUrl": self.bootstrap_url if ready else None,
             "releaseVersion": self.release_version if ready else None,
-            "providers": (
-                ["kubernetes", *(CLOUD_PROVIDERS if team in self.cloud_tenants else ())]
-                if ready
-                else []
-            ),
+            "providers": ["kubernetes", *CLOUD_PROVIDERS] if ready else [],
         }
 
     def _touch(self, row, message):

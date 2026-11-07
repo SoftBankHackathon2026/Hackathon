@@ -41,4 +41,4 @@ python -m migration_connection.inventory collect --request-id REQUEST --device-i
 
 수집에는 Kubernetes 명령줄 도구 `kubectl`과 클러스터의 읽기 권한이 필요합니다. GKE는 `gke-gcloud-auth-plugin`도 필요합니다. 단말 서비스가 실행되는 일반 사용자의 기본 인증 저장소를 사용합니다. 서비스 설치 시 AWS 프로필·리전 및 Google Cloud 설정 이름을 이어받으며, 터미널에만 있는 임시 인증 환경 변수는 서비스에 전달하지 않습니다. 수집용 Kubernetes 접속 설정은 임시 경로에만 생성합니다.
 
-사전 운영에서 승인된 실제 EKS·GKE 각각의 목록·상세 권한, 수집 권한과 네트워크 연결, 일부 거부 및 전부 거부를 확인합니다. 두 단말 아키텍처용 새 서명 배포본을 먼저 게시하고, 서버의 `ONEPORT_CONNECTION_CLOUD_TENANTS`를 시험 조직으로 제한해 켭니다. 문제가 생기면 목록에서 조직을 제거해 신규 클라우드 요청을 막을 수 있습니다.
+연결 서비스가 준비되면 AWS·GCP·온프레미스 연결을 기본으로 제공합니다. 플랫폼 배포 전에 두 단말 아키텍처용 새 서명 배포본을 게시합니다. 사전 운영에서 승인된 실제 EKS·GKE 각각의 목록·상세 권한, 수집 권한과 네트워크 연결, 일부 거부 및 전부 거부를 확인합니다.

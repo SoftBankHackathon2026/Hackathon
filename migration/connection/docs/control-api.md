@@ -9,7 +9,6 @@
 | 설정 | 의미 |
 | --- | --- |
 | `ONEPORT_CONNECTION_ENABLED=true` | 새 기능 명시 활성화 |
-| `ONEPORT_CONNECTION_CLOUD_TENANTS` | AWS·GCP 탐색을 허용할 조직 식별자 목록(쉼표 구분, 기본은 비어 있음). 지원하는 단말 배포본 게시와 실환경 검증 후 지정 |
 | `ONEPORT_CONNECTION_REDIS_URL` | 전용 Redis 연결. 장애 시 신규 인증 허용 금지 |
 | `ONEPORT_CONNECTION_OPENSSL` | 검증된 OpenSSL 3.5 실행 파일의 절대 경로 |
 | `ONEPORT_CONNECTION_JOB_SIGNING_KEY` | 작업 서명용 ML-DSA-65 개인키 보호 파일. 그룹·다른 사용자 읽기 금지 |

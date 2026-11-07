@@ -674,22 +674,28 @@ def test_offline_reconnect_times_out_and_requires_a_new_tunnel(svc):
     assert restored["lastTunnelActivityAt"] == svc.clock()
 
 
-def test_cloud_discovery_is_gated_and_partial_warnings_keep_tunnel_ready(svc):
-    with pytest.raises(ConnectionError, match="PROVIDER_UNAVAILABLE"):
-        svc.create(OWNER, PUBLIC, "operation_1234567890", "aws")
-    svc.cloud_tenants = {OWNER.team}
-    request_id = ready(svc, "aws")
+@pytest.mark.parametrize(
+    ("provider", "scope", "region"),
+    [
+        ("aws", "123456789012", "ap-northeast-2"),
+        ("gcp", "test-project", "asia-northeast3"),
+    ],
+)
+def test_default_cloud_discovery_keeps_tunnel_ready_with_warnings(
+    svc, provider, scope, region
+):
+    assert provider in svc.capabilities(OWNER.team)["providers"]
+    request_id = ready(svc, provider)
+    context = f"{scope}/{region}/allowed"
     candidate = {
         "id": "k8s-" + "0" * 48,
-        "kind": "aws",
+        "kind": provider,
         "name": "allowed",
-        "identity": "123456789012/ap-northeast-2/allowed",
-        "region": "ap-northeast-2",
-        "context": "123456789012/ap-northeast-2/allowed",
+        "identity": context,
+        "region": region,
+        "context": context,
     }
-    warnings = [
-        {"code": "PERMISSION_DENIED", "scope": "123456789012/ap-northeast-2/denied"}
-    ]
+    warnings = [{"code": "PERMISSION_DENIED", "scope": f"{scope}/{region}/denied"}]
 
     def submit(action, data):
         return svc.device(
