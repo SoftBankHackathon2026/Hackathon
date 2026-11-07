@@ -3,7 +3,7 @@ import pytest
 from botocore import exceptions
 from botocore.stub import Stubber
 
-from crosscloud.provision import residue_aws
+from crosscloud.provision import residue, residue_aws
 
 _PREFIX = "ccx-r1"
 _OTHER = "ccx-r10"
@@ -489,7 +489,7 @@ def test_scan_raises_scan_error_when_any_listing_fails(operation):
     with _Clients(expect_failure=True) as clients:
         clients.expect(errors={operation: "ThrottlingException"})
 
-        with pytest.raises(residue_aws.ResidueScanError):
+        with pytest.raises(residue.ResidueScanError):
             clients.scanner().scan(_PREFIX)
 
 
@@ -497,7 +497,7 @@ def test_scan_raises_scan_error_when_aws_is_unreachable():
     def client(service):
         raise exceptions.NoCredentialsError()
 
-    with pytest.raises(residue_aws.ResidueScanError):
+    with pytest.raises(residue.ResidueScanError):
         residue_aws.AwsResidueScanner(client).scan(_PREFIX)
 
 
@@ -508,7 +508,7 @@ def test_scan_raises_scan_error_on_malformed_response():
             {"describe_vpcs": [({"Vpcs": [{"VpcId": "vpc-1"}]}, _TAG_FILTER)]}
         )
 
-        with pytest.raises(residue_aws.ResidueScanError):
+        with pytest.raises(residue.ResidueScanError):
             clients.scanner().scan(_PREFIX)
 
 
@@ -537,7 +537,7 @@ def test_scan_raises_scan_error_when_secret_recheck_fails():
             expected_params={"SecretId": _SECRET_ARN},
         )
 
-        with pytest.raises(residue_aws.ResidueScanError):
+        with pytest.raises(residue.ResidueScanError):
             clients.scanner().scan(_PREFIX)
 
 

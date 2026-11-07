@@ -3785,3 +3785,55 @@ body {
 .fp #fp-title:focus-visible {
   outline: none;
 }
+
+/* ── 전환 제어(시작·승인 버튼) ───────────────────────── */
+.ctl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.shell .ctl-actions .pk-button:disabled,
+.shell .ctl-approve .pk-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ctl-approve {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.ctl-approve label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font: var(--type-body);
+}
+.shell .ctl-approve input[type="text"] {
+  min-width: 240px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-body);
+}
+.ctl-approve-actions {
+  display: flex;
+  gap: 8px;
+}
+.ctl-log {
+  max-height: 240px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+}

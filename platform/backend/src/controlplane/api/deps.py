@@ -11,6 +11,7 @@ from controlplane.repositories.accounts import SESSION_COOKIE
 from controlplane.schemas.accounts import Identity
 from controlplane.services.auth import AuthService
 from controlplane.services.builds import BuildService
+from controlplane.services.cutover_commands import CutoverCommandService
 from controlplane.services.deployments import DeploymentService
 from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
@@ -68,15 +69,36 @@ def get_costs(container: ContainerDep) -> CostService:
     return container.costs
 
 
-def require_ingest(
-    container: ContainerDep, authorization: str = Header(default="")
-) -> IngestService:
-    if container.ingest is None or container.ingest_token is None:
-        raise NotConfigured("마이그레이션 보고 수신이 설정되지 않았습니다.")
+INGEST_NOT_CONFIGURED = "마이그레이션 보고 수신이 설정되지 않았습니다."
+
+
+def _check_ingest_token(container: Container, authorization: str) -> None:
+    if container.ingest_token is None:
+        raise NotConfigured(INGEST_NOT_CONFIGURED)
     expected = "Bearer " + container.ingest_token.get_secret_value()
     if not secrets.compare_digest(authorization.encode(), expected.encode()):
         raise Unauthenticated("보고용 토큰이 필요합니다.")
+
+
+def require_ingest(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> IngestService:
+    if container.ingest is None:
+        raise NotConfigured(INGEST_NOT_CONFIGURED)
+    _check_ingest_token(container, authorization)
     return container.ingest
+
+
+def require_ingest_commands(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> CutoverCommandService:
+    """러너 Pod 의 보고기가 명령을 가져가고(claim) 결과를 올릴 때 쓰는 보고용 토큰 인증."""
+    _check_ingest_token(container, authorization)
+    return container.cutover_commands
+
+
+def get_cutover_commands(container: ContainerDep) -> CutoverCommandService:
+    return container.cutover_commands
 
 
 def get_enrollments(container: ContainerDep) -> EnrollmentService:
@@ -92,6 +114,8 @@ EnrollmentsDep = Annotated[EnrollmentService, Depends(get_enrollments)]
 FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
+IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]
+CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
@@ -172,17 +196,17 @@ def optional_viewer(
 ViewerIdentity = Annotated[Identity | None, Depends(optional_viewer)]
 
 
-def require_enroller(
-    request: Request, container: ContainerDep, authorization: str = Header(default="")
+def _require_commander(
+    request: Request, container: Container, authorization: str, purpose: str
 ) -> Identity | None:
-    """환경 연결 명령을 만드는 권한. 배포 Provider 가 없는 대시보드 전용 구성에서도 쓴다.
+    """화면에서 명령을 만드는 권한. 배포 Provider 가 없는 대시보드 전용 구성에서도 쓴다.
 
     operator 모드는 운영자 토큰이 설정돼 있어야 하고, demo·login 모드는 등록된 화면 Origin 이 필요하다.
     login 모드는 배포 권한(owner·member)이 있는 팀원만 만들 수 있다.
     """
     if container.auth_mode == AuthMode.OPERATOR:
         if container.operator_token is None:
-            raise AccessDenied("운영자 토큰이 설정되지 않아 환경 연결 명령을 만들 수 없습니다.")
+            raise AccessDenied(f"운영자 토큰이 설정되지 않아 {purpose}을 만들 수 없습니다.")
         _check_operator_token(container, authorization)
     check_browser_origin(
         request, container, required=container.auth_mode in {AuthMode.DEMO, AuthMode.LOGIN}
@@ -197,7 +221,20 @@ def require_enroller(
     return identity
 
 
+def require_enroller(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> Identity | None:
+    return _require_commander(request, container, authorization, "환경 연결 명령")
+
+
+def require_cutover_operator(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> Identity | None:
+    return _require_commander(request, container, authorization, "전환 명령")
+
+
 EnrollerIdentity = Annotated[Identity | None, Depends(require_enroller)]
+CutoverOperatorIdentity = Annotated[Identity | None, Depends(require_cutover_operator)]
 
 
 def require_login_mode(request: Request, container: ContainerDep) -> AuthService:

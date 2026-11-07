@@ -1,179 +1,252 @@
-"""전체 흐름. 정책은 실제 Rego 를 로컬 opa 로 평가한다."""
+"""복구 흐름: OPA allow/deny 분기, 범위 밖 사유, 거절, 탐침 실패, cas 충돌, 승인, 재검증."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import Any
 
 import pytest
 
-from agent import remediation as rm
-from agent.config import parse_config
-from agent.scope import Change
-from agent.stores import FileStore
-from migration import policy_client as pc
-from tests.conftest import GOOD_HOST, FakeProber, StaticProposer, raw_config, requires_opa, write_evidence_extra
-
-pytestmark = requires_opa
+from agent.fakes import GOOD_HOST, FakeEvaluator, FakeKv, FakeProber, FixHostProposer
+from agent.proposer import ProposalInvalid, ProposerError
+from agent.remediation import fixable
+from agent.restart import RestartError
+from agent.scope import Change, Proposal
+from migration.policy_client import digest_of
 
 
-def make(cfg, *, prober=None, proposer=None, notifier=None):
-    mig, rem = rm.build_evaluators(cfg)
-    from agent.notify import LogNotifier
+class StubProposer:
+    def __init__(self, proposal: Proposal | None = None, *, error: Exception | None = None, file_changes: dict | None = None) -> None:
+        self.proposal, self.error, self.file_changes, self.calls = proposal, error, file_changes, 0
 
-    return rm.Remediator(cfg, store=FileStore(cfg.store.path or ""), prober=prober or FakeProber(),
-                         proposer=proposer or StaticProposer(), notifier=notifier or LogNotifier(),
-                         migration_evaluator=mig, remediation_evaluator=rem)
-
-
-def test_full_cycle_auto_apply(cfg, notifier):
-    r = make(cfg, notifier=notifier)
-    rec = r.run()
-    assert rec.status == rm.RECHECK_PASSED, rec.as_dict()
-    assert rec.precheck_decision["outcome"] == "deny"
-    assert "APP-01-TARGET-DB-UNREACHABLE" in rec.precheck_decision["reason_codes"]
-    assert rec.remediation_decision["outcome"] == "allow"
-    assert rec.recheck_decision["outcome"] == "allow"
-    assert json.loads(Path(cfg.store.path).read_text())["DB_HOST"] == GOOD_HOST
-    # 비밀값은 어디에도 없어야 한다
-    dumped = json.dumps(rec.as_dict(), ensure_ascii=False) + "\n".join(notifier.messages)
-    assert "s3cret" not in dumped
-    assert rec.config_masked["DB_PASSWORD"] == "***"
-    # 보고 순서: 시작 → AI 수정 시작 → 수정안 → 적용 → 재검사
-    joined = "\n".join(notifier.messages)
-    assert "AI 수정 시작" in joined and "적용 완료" in joined and "재검사 통과" in joined
-    # 판정 기록 3건 (pre_cutover deny, remediation allow, pre_cutover allow)
-    hist = r.decisions.history("forward_001")
-    assert [d.stage for d in hist][::-1] == ["pre_cutover", "remediation", "pre_cutover"]
-    assert r.records.latest("forward_001")["status"] == rm.RECHECK_PASSED
+    def propose(self, **_: Any):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        assert self.proposal is not None
+        return self.proposal, self.proposal.values() if self.file_changes is None else self.file_changes
 
 
-def test_no_action_when_already_ok(cfg, target_values, notifier):
-    Path(cfg.store.path).write_text(json.dumps({**target_values, "DB_HOST": GOOD_HOST}), encoding="utf-8")
-    rec = make(cfg, notifier=notifier).run()
-    assert rec.status == rm.NO_ACTION
-    assert "고칠 것이 없다" in notifier.messages[-1]
+def good_kv() -> FakeKv:
+    return FakeKv({"DB_HOST": GOOD_HOST, "DB_PORT": "5432", "DB_NAME": "n", "DB_USER": "u"})
 
 
-def test_held_when_reason_not_fixable(tmp_path, target_values, notifier):
-    """다른 수집기 증거가 없으면 정책이 EVIDENCE-MISSING(hold) → AI 가 손대지 않는다."""
-    (tmp_path / "target.json").write_text(json.dumps(target_values), encoding="utf-8")
-    cfg = parse_config(raw_config(tmp_path, evidence_extra="none.json"), base_dir=tmp_path)
-    rec = make(cfg, notifier=notifier).run()
-    assert rec.status == rm.HELD and rec.proposal is None
-    assert "사람이 확인" in notifier.messages[-1]
+def test_fixed_loop_resolves(make_world) -> None:
+    w = make_world()
+    run = w.remediator.run()
+    assert run.state == "RESOLVED"
+    assert run.detail["pre_decision"]["outcome"] == "deny"
+    assert "APP-01-TARGET-DB-UNREACHABLE" in run.detail["pre_decision"]["reason_codes"]
+    assert run.detail["post_decision"]["outcome"] == "allow"
+    assert w.kv.data["DB_HOST"] == GOOD_HOST and w.kv.version == 2
+    assert w.restarter.count == 1
 
 
-def test_held_when_deny_mixed_with_unfixable(tmp_path, target_values, notifier):
-    (tmp_path / "target.json").write_text(json.dumps(target_values), encoding="utf-8")
-    checks = {
-        "target_db_exposure": pc.build_check("pass", {"public": True}, source="t"),
-        "target_location": pc.build_check("pass", {"location": "ap-northeast-2"}, source="t"),
-    }
-    (tmp_path / "evidence_extra.json").write_text(json.dumps(checks), encoding="utf-8")
-    cfg = parse_config(raw_config(tmp_path), base_dir=tmp_path)
-    rec = make(cfg, notifier=notifier).run()
-    assert rec.status == rm.HELD and rec.proposal is None
-    assert "SEC-01-PUBLIC-DB" in rec.precheck_decision["reason_codes"]
+def test_allow_reports_nothing_to_fix(make_world) -> None:
+    w = make_world(kv=good_kv())
+    run = w.remediator.run()
+    assert run.state == "NOTHING_TO_FIX"
+    assert w.proposer.calls == [] and w.kv.writes == [] and w.restarter.count == 0
 
 
-def test_out_of_scope_proposal_is_rejected_before_policy(cfg, notifier):
-    proposer = StaticProposer([Change("DB_NAME", "migration_demo", "other")])
-    rec = make(cfg, proposer=proposer, notifier=notifier).run()
-    assert rec.status == rm.HELD and rec.remediation_decision is None
-    assert "허용 범위를 벗어났다" in notifier.messages[-1]
-    assert json.loads(Path(cfg.store.path).read_text())["DB_NAME"] == "migration_demo"
+def test_http_200_with_non_allow_is_not_allow(make_world) -> None:
+    """앱이 멀쩡해도 OPA 가 hold 면 허용이 아니다."""
+    w = make_world(kv=good_kv(), evaluator=FakeEvaluator(extra_reason="EVIDENCE-MISSING", force_outcome="hold"))
+    assert w.remediator.run().state == "HANDED_OFF"
 
 
-def test_value_outside_plan_is_rejected(cfg, notifier):
-    proposer = StaticProposer([Change("DB_HOST", "wrong.internal", "attacker.example")])
-    rec = make(cfg, proposer=proposer, notifier=notifier).run()
-    assert rec.status == rm.HELD
-    assert json.loads(Path(cfg.store.path).read_text())["DB_HOST"] == "wrong.internal"
+def test_other_reason_mixed_with_app01_goes_to_human(make_world) -> None:
+    w = make_world(evaluator=FakeEvaluator(extra_reason="SEC-01-PUBLIC-DB"))
+    run = w.remediator.run()
+    assert run.state == "HANDED_OFF"
+    assert w.proposer.calls == [] and w.kv.writes == []
 
 
-def test_probe_fail_after_fix_holds(cfg, notifier):
-    """계획의 호스트가 맞아도 실제로 안 붙으면 적용하지 않는다 (REM-04)."""
-    prober = FakeProber(good_hosts=())
-    rec = make(cfg, prober=prober, notifier=notifier).run()
-    assert rec.status == rm.HELD
-    assert "REM-04-PROBE-FAILED" in rec.remediation_decision["reason_codes"]
-    assert json.loads(Path(cfg.store.path).read_text())["DB_HOST"] == "wrong.internal"
+def test_hold_on_app01_goes_to_human() -> None:
+    from migration.policy_client import Decision
+
+    def decision(outcome: str, codes: tuple[str, ...]) -> Decision:
+        return Decision("d", "j", "pre_cutover", outcome, codes, (), "p", "x", "s", "i", "t", "e")
+
+    assert fixable(decision("deny", ("APP-01-TARGET-DB-UNREACHABLE", "APP-01-ORDER-CHECK-FAILED")))
+    assert not fixable(decision("hold", ("APP-01-UNVERIFIED",)))
+    assert not fixable(decision("deny", ("APP-01-X", "SEC-02-UNAPPROVED-LOCATION")))
+    assert not fixable(decision("deny", ()))
+    assert not fixable(decision("error", ("POLICY-SERVICE-UNAVAILABLE",)))
+    assert not fixable(decision("allow", ()))
 
 
-def test_proposer_retry_then_success(cfg, notifier):
-    proposer = StaticProposer(errors=["codex 종료 코드 3"])
-    rec = make(cfg, proposer=proposer, notifier=notifier).run()
-    assert rec.status == rm.RECHECK_PASSED
-    assert [a.get("error") for a in rec.proposal_attempts] == ["codex 종료 코드 3", None]
+def test_opa_unreachable_never_touches_store(make_world) -> None:
+    class Down(FakeEvaluator):
+        def evaluate(self, policy_input):
+            from migration.policy_client import PolicyError
+            raise PolicyError("OPA 연결 실패")
+
+    w = make_world(evaluator=Down())
+    assert w.remediator.run().state == "HANDED_OFF"
+    assert w.kv.writes == []
 
 
-def test_proposer_exhausted(cfg, notifier):
-    proposer = StaticProposer(errors=["e1", "e2"])
-    rec = make(cfg, proposer=proposer, notifier=notifier).run()
-    assert rec.status == rm.PROPOSAL_FAILED and rec.error == "e2"
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ((), "S0-EMPTY"),
+        ((Change("DB_NAME", "other"),), "S1-KEY-NOT-ALLOWED"),
+        ((Change("DB_PASSWORD", "x"),), "S3-SECRET-KEY"),
+        ((Change("DB_HOST", "other.hackathon.svc"),), "S2-VALUE-NOT-IN-PLAN"),
+    ],
+)
+def test_static_rejection_stops_before_probe_and_write(make_world, changes, code) -> None:
+    w = make_world(proposer=StubProposer(Proposal(changes, "c", "i", "v")))
+    run = w.remediator.run()
+    assert run.state == "REJECTED" and code in run.detail["rejections"]
+    assert w.prober.seen == [] and w.kv.writes == [] and w.restarter.count == 0
 
 
-def test_cannot_fix(cfg, notifier):
-    proposer = StaticProposer(changes=[], cannot_fix="허용 값에 맞는 호스트 없음")
-    rec = make(cfg, proposer=proposer, notifier=notifier).run()
-    assert rec.status == rm.PROPOSAL_FAILED
-    assert "고칠 수 없다고 판단" in notifier.messages[-1]
+def test_rejected_value_not_recorded_or_reported(make_world) -> None:
+    w = make_world(proposer=StubProposer(Proposal((Change("DB_PASSWORD", "hunter2-value"),), "c", "i", "v")))
+    run = w.remediator.run()
+    assert "hunter2-value" not in json.dumps(run.detail) and "hunter2-value" not in " ".join(w.notes)
+    assert "hunter2-value" not in json.dumps(w.runs.events(run.run_id), ensure_ascii=False)
 
 
-def test_approval_flow(tmp_path, target_values, notifier):
-    (tmp_path / "target.json").write_text(json.dumps(target_values), encoding="utf-8")
-    write_evidence_extra(tmp_path / "evidence_extra.json")
-    raw = raw_config(tmp_path)
-    raw["plan"]["remediation"]["auto_apply"] = False
-    cfg = parse_config(raw, base_dir=tmp_path)
-    r = make(cfg, notifier=notifier)
-    rec = r.run()
-    assert rec.status == rm.WAITING_APPROVAL
-    assert "APPROVAL-REQUIRED" in rec.remediation_decision["reason_codes"]
-    assert json.loads(Path(cfg.store.path).read_text())["DB_HOST"] == "wrong.internal"
-    assert f"/migrate approve {rec.remediation_id}" in notifier.messages[-1]
-
-    rec2 = r.approve(rec.remediation_id, approver="gayeon")
-    assert rec2.status == rm.RECHECK_PASSED
-    assert rec2.approval["approver"] == "gayeon"
-    assert json.loads(Path(cfg.store.path).read_text())["DB_HOST"] == GOOD_HOST
+def test_file_mismatch_rejected(make_world) -> None:
+    good = Proposal((Change("DB_HOST", GOOD_HOST),), "c", "i", "v")
+    w = make_world(proposer=StubProposer(good, file_changes={"DB_HOST": GOOD_HOST, "DB_NAME": "x"}))
+    run = w.remediator.run()
+    assert run.state == "REJECTED" and run.detail["rejections"] == ["S7-FILE-MISMATCH"]
 
 
-def test_approval_invalid_if_store_changed(tmp_path, target_values, notifier):
-    (tmp_path / "target.json").write_text(json.dumps(target_values), encoding="utf-8")
-    write_evidence_extra(tmp_path / "evidence_extra.json")
-    raw = raw_config(tmp_path)
-    raw["plan"]["remediation"]["auto_apply"] = False
-    cfg = parse_config(raw, base_dir=tmp_path)
-    r = make(cfg, notifier=notifier)
-    rec = r.run()
-    Path(cfg.store.path).write_text(json.dumps({**target_values, "DB_PORT": "5433"}), encoding="utf-8")
-    rec2 = r.approve(rec.remediation_id, approver="gayeon")
-    assert rec2.status == rm.FAILED and "바뀌었다" in (rec2.error or "")
+def test_schema_violation_stops(make_world) -> None:
+    w = make_world(proposer=StubProposer(error=ProposalInvalid("출력이 JSON 이 아니다")))
+    run = w.remediator.run()
+    assert run.state == "REJECTED" and run.detail["rejections"] == ["S-SCHEMA"]
+    assert w.kv.writes == []
 
 
-def test_approve_requires_waiting_state(cfg):
-    r = make(cfg)
-    rec = r.run()
-    from agent.stores import StoreError
-
-    with pytest.raises(StoreError, match="승인 대기"):
-        r.approve(rec.remediation_id, approver="x")
+def test_codex_failure_stops(make_world) -> None:
+    w = make_world(proposer=StubProposer(error=ProposerError("codex 시간 초과")))
+    assert w.remediator.run().state == "REJECTED" and w.kv.writes == []
 
 
-def test_store_conflict_during_apply(cfg, notifier):
-    """정책 통과 뒤 쓰기 직전에 저장소가 바뀌면 적용하지 않는다."""
+def test_probe_failure_stops_before_write(make_world) -> None:
+    w = make_world(prober=FakeProber(fail=True))
+    run = w.remediator.run()
+    assert run.state == "PROBE_FAILED"
+    assert w.kv.writes == [] and w.restarter.count == 0
 
-    class Flaky(FileStore):
-        def write(self, values, *, expected_version):
-            Path(self.path).write_text(json.dumps({"DB_HOST": "someone-else", "DB_PORT": "5432"}), encoding="utf-8")
-            return super().write(values, expected_version=expected_version)
 
-    mig, rem = rm.build_evaluators(cfg)
-    from agent.notify import LogNotifier
+def test_probe_sees_proposed_value_not_current(make_world) -> None:
+    w = make_world()
+    w.remediator.run()
+    assert w.prober.seen[0]["DB_HOST"] == GOOD_HOST and w.prober.seen[0]["DB_NAME"] == "migration_demo"
 
-    r = rm.Remediator(cfg, store=Flaky(cfg.store.path or ""), prober=FakeProber(), proposer=StaticProposer(),
-                      notifier=notifier, migration_evaluator=mig, remediation_evaluator=rem)
-    rec = r.run()
-    assert rec.status == rm.FAILED and "바뀌었다" in (rec.error or "")
+
+def test_cas_conflict_stops_before_restart(make_world) -> None:
+    w = make_world()
+
+    class Racing(FixHostProposer):
+        def propose(self, **kwargs):
+            result = super().propose(**kwargs)
+            w.kv.version += 1  # 읽은 뒤 다른 사람이 값을 바꿨다
+            return result
+
+    w.remediator.d.proposer = Racing()
+    run = w.remediator.run()
+    assert run.state == "CAS_CONFLICT"
+    assert w.kv.writes == [] and w.restarter.count == 0
+
+
+def test_restart_failure_is_not_success(make_world) -> None:
+    w = make_world()
+
+    class Broken:
+        def restart_and_wait(self) -> None:
+            raise RestartError("Ready 대기 시간 초과")
+
+    w.remediator.d.restarter = Broken()
+    run = w.remediator.run()
+    assert run.state == "RESTART_FAILED" and "post_decision" not in run.detail
+
+
+def test_applied_but_verification_fails_is_unresolved(make_world) -> None:
+    """저장소에 잘 썼어도 재판정이 allow 가 아니면 성공이 아니다."""
+    w = make_world()
+
+    class NoReload:
+        count = 0
+
+        def restart_and_wait(self) -> None:
+            self.count += 1  # 재시작했다고 하지만 앱은 옛 값을 그대로 쓴다
+
+    w.remediator.d.restarter = NoReload()
+    run = w.remediator.run()
+    assert run.state == "UNRESOLVED"
+    assert w.kv.version == 2 and run.detail["post_decision"]["outcome"] == "deny"
+
+
+def test_no_auto_apply_waits_before_write_then_approve_resolves(make_world) -> None:
+    w = make_world(auto_apply=False)
+    run = w.remediator.run()
+    assert run.state == "WAITING_APPROVAL"
+    assert w.kv.writes == [] and w.restarter.count == 0
+    assert f"python -m agent approve {run.run_id}" in " ".join(w.notes)
+
+    approved = w.remediator.approve(run.run_id)
+    assert approved.state == "RESOLVED" and w.kv.version == 2
+
+
+def test_approve_twice_applies_once(make_world) -> None:
+    w = make_world(auto_apply=False)
+    run = w.remediator.run()
+    w.remediator.approve(run.run_id)
+    with pytest.raises(ValueError):
+        w.remediator.approve(run.run_id)
+    assert len(w.kv.writes) == 1
+
+
+def test_approve_unknown_run_raises(make_world) -> None:
+    with pytest.raises(ValueError):
+        make_world().remediator.approve("run-none")
+
+
+def test_approve_after_store_changed_is_conflict(make_world) -> None:
+    w = make_world(auto_apply=False)
+    run = w.remediator.run()
+    w.kv.version += 1
+    assert w.remediator.approve(run.run_id).state == "CAS_CONFLICT"
+    assert w.kv.writes == []
+
+
+def test_approve_reprobes(make_world) -> None:
+    w = make_world(auto_apply=False)
+    run = w.remediator.run()
+    w.prober.fail = True
+    assert w.remediator.approve(run.run_id).state == "PROBE_FAILED"
+    assert w.kv.writes == []
+
+
+def test_unexpected_exception_is_recorded(make_world) -> None:
+    w = make_world()
+
+    class Boom:
+        def read(self):
+            raise ZeroDivisionError
+
+    w.remediator.d.kv = Boom()
+    assert w.remediator.run().state == "ERROR"
+
+
+def test_run_history_persisted(make_world) -> None:
+    w = make_world()
+    run = w.remediator.run()
+    assert w.runs.get(run.run_id).state == "RESOLVED"
+    assert [e["state"] for e in w.runs.events(run.run_id)][0] == "CHECKING"
+    assert w.decisions.history("fake_001")[0].allowed is True
+
+
+def test_decisions_bound_to_plan_digest(make_world) -> None:
+    w = make_world()
+    w.remediator.run()
+    plan = {k: v for k, v in w.remediator.plan.items() if k != "digest"}
+    assert w.decisions.latest("fake_001", "pre_cutover").plan_digest == digest_of(plan)

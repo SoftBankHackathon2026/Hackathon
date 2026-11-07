@@ -9,6 +9,7 @@ import { RefreshStatus } from "../../components/RefreshStatus";
 import { StatTiles } from "../../components/StatTiles";
 import { formatCount, formatRatio, formatSeconds } from "../../lib/format";
 import { CdcPath } from "./CdcPath";
+import { CutoverControls } from "./CutoverControls";
 import { EnvironmentGraphs, EnvironmentTable } from "./EnvironmentWrites";
 import { EventRail } from "./EventRail";
 import { envShortName } from "./fleetView";
@@ -194,6 +195,20 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
       <div className="detail-layout">
         <EventRail events={events.data} />
         <div className="detail-main">
+          <DashSection
+            title="전환 제어"
+            aside={
+              fleet?.source === "simulated" ? (
+                <span className="tag">시뮬레이션</span>
+              ) : undefined
+            }
+          >
+            <CutoverControls
+              jobId={jobId}
+              detail={detail}
+              simulated={fleet?.source === "simulated"}
+            />
+          </DashSection>
           <DashSection title="전환 타임라인">
             {lifetime.data ? (
               <TransitionTimeline

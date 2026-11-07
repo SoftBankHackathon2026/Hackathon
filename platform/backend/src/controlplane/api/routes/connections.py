@@ -43,6 +43,8 @@ class PrivateConnectionRoute(APIRoute):
 
 router = APIRouter(tags=["connections"], route_class=PrivateConnectionRoute)
 PUBLIC = "/api/v1/connections"
+CONNECTION_MODES = {AuthMode.DEMO, AuthMode.LOGIN}
+DEMO_OWNER = "demo"
 RUNTIME = "/api/v1/connection-runtime"
 
 
@@ -53,14 +55,16 @@ def service(container: Container):
 
 
 def actor(request: Request, container: Container):
-    if container.auth_mode != AuthMode.LOGIN:
+    if container.auth_mode not in CONNECTION_MODES:
         raise AccessDenied("보안 연결에는 로그인한 사용자와 조직이 필요합니다.")
     check_browser_origin(request, container, required=True)
+    from migration_connection.control.service import Actor
+
+    if container.auth_mode == AuthMode.DEMO:
+        return Actor(service(container).runtime_tenant_id, DEMO_OWNER, True)
     identity = session_identity(request, container)
     if identity is None:
         raise Unauthenticated("로그인이 필요합니다.")
-    from migration_connection.control.service import Actor
-
     return Actor(identity.team, identity.email, identity.can_deploy)
 
 
@@ -109,16 +113,18 @@ async def invoke(call, *args, **kwargs):
 
 @router.get(PUBLIC + "/capabilities")
 async def capabilities(request: Request, container: Container = Depends(get_container)):
-    if container.connections is None or container.auth_mode != AuthMode.LOGIN:
+    if container.connections is None or container.auth_mode not in CONNECTION_MODES:
         return {
             "available": False,
             "reason": "보안 연결 실행 환경이 아직 준비되지 않았습니다.",
             "providers": [],
         }
-    identity = session_identity(request, container)
-    return await run_in_threadpool(
-        container.connections.capabilities, identity.team if identity else None
-    )
+    if container.auth_mode == AuthMode.DEMO:
+        team = container.connections.runtime_tenant_id
+    else:
+        identity = session_identity(request, container)
+        team = identity.team if identity else None
+    return await run_in_threadpool(container.connections.capabilities, team)
 
 
 @router.get(PUBLIC)

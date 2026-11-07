@@ -1,8 +1,11 @@
 """AWS 잔여 검사 — 우리 모듈이 만드는 자원 종류마다 서비스 API 를 직접 조회한다.
 
-terraform destroy 뒤에 부른다. ResidueScanner 계약(scan(name_prefix))을 따른다.
-잔여 0 의 근거는 실시간 조회여야 한다. Resource Groups Tagging API 는 색인이라
-변경을 늦게 반영해, 빈 결과를 0 근거로 쓸 수 없어 쓰지 않는다.
+residue.ResidueScanner 계약(scan(name_prefix))을 따른다. 잔여 검사는 보조
+확인이다 — 정리됐다는 1차 근거는 terraform destroy 뒤 state 가 빈 것이고, 이
+검사는 그 뒤 state 밖에 남은 자원(생성 응답 유실 등)을 찾는다. 서비스 API 를
+직접 부른다. Resource Groups Tagging API 는 색인이라 변경을 늦게 반영해 쓰지
+않는다. 서비스 목록 자체도 최종 일관성일 수 있어(예: Secrets Manager 목록),
+빈 결과가 잔여 0 을 보장하지는 않는다.
 
 crosscloud/terraform/aws 가 만드는 자원 종류와 조회 방법:
 
@@ -19,15 +22,14 @@ crosscloud/terraform/aws 가 만드는 자원 종류와 조회 방법:
 
 INACTIVE 작업 정의는 잔여로 세지 않는다. terraform destroy 는 작업 정의를 등록
 해제(INACTIVE)만 할 수 있고 지우지 못한다. 등록 해제된 정의는 과금되지 않고 새
-서비스·작업에 쓸 수 없다. 이것까지 세면 정상 해체 뒤에도 잔여 0 이 나오지
-않는다.
+서비스·작업에 쓸 수 없다. 이것까지 세면 정상 해체 뒤에도 늘 잔여가 보고된다.
 
-조회 하나라도 실패하거나 응답 형식이 어긋나면 ResidueScanError 다. 잔여 0 으로
-보지 않는다. 모듈에 새 자원 종류를 더하면 _SCANS 에도 더해야 한다 — 표에 없는
-종류는 잔여 검사가 보지 않는다.
+조회 하나라도 실패하거나 응답 형식이 어긋나면 residue.ResidueScanError 다.
+잔여 0 으로 보지 않는다. 모듈에 새 자원 종류를 더하면 _SCANS 에도 더해야
+한다 — 표에 없는 종류는 잔여 검사가 보지 않는다.
 
   scanner = residue_aws.AwsResidueScanner(boto3.Session().client)
-  residue = scanner.scan("ccx-r1")
+  items = scanner.scan("ccx-r1")
 """
 
 import dataclasses
@@ -37,51 +39,7 @@ from typing import Any
 
 from botocore import exceptions
 
-from crosscloud import model
-
-# TODO(rebase): 아래 네 정의는 R2g 의 crosscloud.provision.residue 와 같은
-# 이름·모양의 임시 사본이다. 합칠 때 지우고 residue 모듈을 쓴다.
-_NAME_PREFIX_PATTERN = re.compile(r"ccx-[a-z0-9]{1,16}")
-
-
-class ResidueScanError(RuntimeError):
-    """잔여 질의가 실패했거나 결과를 읽지 못했다. 잔여 0 으로 보지 않는다."""
-
-
-@dataclasses.dataclass(frozen=True)
-class ResidueItem:
-    """클라우드에 남은 자원 하나.
-
-    Attributes:
-        cloud: 자원이 있는 클라우드.
-        kind: 클라우드 고유 자원 종류(AWS 는 "서비스:자원 종류").
-        native_id: 클라우드 고유 식별자(AWS ARN).
-    """
-
-    cloud: model.Cloud
-    kind: str
-    native_id: str
-
-
-def check_name_prefix(name_prefix: str) -> None:
-    """실행 접두사 형식(`ccx-<run>`, run 은 [a-z0-9]{1,16})을 확인한다.
-
-    Raises:
-        ValueError: 형식이 아닐 때.
-    """
-    if not _NAME_PREFIX_PATTERN.fullmatch(name_prefix):
-        raise ValueError(
-            f"실행 접두사는 ccx-<영문 소문자·숫자 1–16자> 여야 한다: "
-            f"{name_prefix!r}"
-        )
-
-
-def is_named_with_prefix(name: str, name_prefix: str) -> bool:
-    """자원 이름이 실행 접두사 자체이거나 `접두사-` 로 시작하는지."""
-    return name == name_prefix or name.startswith(f"{name_prefix}-")
-
-
-# 위 TODO(rebase) 끝.
+from crosscloud.provision import residue
 
 _RUN_TAG_KEY = "crosscloud-run"
 
@@ -101,7 +59,7 @@ class AwsResidueScanner:
         """
         self._client = client
 
-    def scan(self, name_prefix: str) -> tuple[ResidueItem, ...]:
+    def scan(self, name_prefix: str) -> tuple[residue.ResidueItem, ...]:
         """이름이 name_prefix 이거나 `name_prefix-` 로 시작하는 자원을 찾는다.
 
         Args:
@@ -112,9 +70,9 @@ class AwsResidueScanner:
 
         Raises:
             ValueError: name_prefix 가 실행 접두사 형식이 아닐 때.
-            ResidueScanError: 조회가 실패했거나 응답 형식이 어긋났을 때.
+            residue.ResidueScanError: 조회가 실패했거나 응답 형식이 어긋났을 때.
         """
-        check_name_prefix(name_prefix)
+        residue.check_name_prefix(name_prefix)
         try:
             arns = {
                 arn
@@ -122,18 +80,20 @@ class AwsResidueScanner:
                 for arn in listing(self._client(service), name_prefix)
             }
         except exceptions.ClientError as error:
-            raise ResidueScanError(
+            raise residue.ResidueScanError(
                 f"AWS 잔여 조회 실패: {error.operation_name} "
                 f"{error.response['Error']['Code']}"
             ) from error
         except exceptions.BotoCoreError as error:
-            raise ResidueScanError(f"AWS 잔여 조회 실패: {error}") from error
+            raise residue.ResidueScanError(
+                f"AWS 잔여 조회 실패: {error}"
+            ) from error
         except (KeyError, TypeError, ValueError) as error:
-            raise ResidueScanError(
+            raise residue.ResidueScanError(
                 f"AWS 잔여 조회 응답 형식 오류: {error!r}"
             ) from error
         return tuple(
-            ResidueItem(cloud="aws", kind=_kind(arn), native_id=arn)
+            residue.ResidueItem(cloud="aws", kind=_kind(arn), native_id=arn)
             for arn in sorted(arns)
         )
 
@@ -162,7 +122,9 @@ def _named(client: Any, listing: _Named, name_prefix: str) -> Iterator[str]:
     paginator = client.get_paginator(listing.operation)
     for page in paginator.paginate(**params):
         for item in page.get(listing.list_key, []):
-            if is_named_with_prefix(item[listing.name_key], name_prefix):
+            if residue.is_named_with_prefix(
+                item[listing.name_key], name_prefix
+            ):
                 yield item[listing.arn_key]
 
 
@@ -229,7 +191,7 @@ def _secrets(client: Any, name_prefix: str) -> Iterator[str]:
     )
     for page in pages:
         for secret in page["SecretList"]:
-            if not is_named_with_prefix(secret["Name"], name_prefix):
+            if not residue.is_named_with_prefix(secret["Name"], name_prefix):
                 continue
             try:
                 client.describe_secret(SecretId=secret["ARN"])
@@ -254,7 +216,9 @@ def _ecr(client: Any, name_prefix: str) -> Iterator[str]:
 def _ecs(client: Any, name_prefix: str) -> Iterator[str]:
     for page in client.get_paginator("list_clusters").paginate():
         for cluster in page["clusterArns"]:
-            if not is_named_with_prefix(_last_segment(cluster), name_prefix):
+            if not residue.is_named_with_prefix(
+                _last_segment(cluster), name_prefix
+            ):
                 continue
             yield cluster
             services = client.get_paginator("list_services").paginate(
@@ -268,7 +232,7 @@ def _ecs(client: Any, name_prefix: str) -> Iterator[str]:
     for page in definitions:
         for arn in page["taskDefinitionArns"]:
             family = _last_segment(arn).rsplit(":", 1)[0]
-            if is_named_with_prefix(family, name_prefix):
+            if residue.is_named_with_prefix(family, name_prefix):
                 yield arn
 
 
@@ -276,7 +240,7 @@ def _elbv2(client: Any, name_prefix: str) -> Iterator[str]:
     for page in client.get_paginator("describe_load_balancers").paginate():
         for balancer in page["LoadBalancers"]:
             name = balancer["LoadBalancerName"]
-            if not is_named_with_prefix(name, name_prefix):
+            if not residue.is_named_with_prefix(name, name_prefix):
                 continue
             arn = balancer["LoadBalancerArn"]
             yield arn
