@@ -83,7 +83,12 @@ def access_report(config, plan, application, verification, checks):
                 # Upstream reports omit the original path: bind the check input explicitly.
                 if check["allowed"] is True and check.get("path") == path:
                     statuses.add(True)
-                elif check["allowed"] is False and check.get("path") != path:
+                elif (
+                    check["allowed"] is False
+                    and isinstance(check.get("path"), str)
+                    and check["path"].startswith(config["target"]["mount"] + "/data/")
+                    and check["path"] != path
+                ):
                     statuses.add(False)
             results.append(
                 {

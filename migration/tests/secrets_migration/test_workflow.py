@@ -319,3 +319,76 @@ def test_wrong_configuration_never_poison_another_verified_journal(scenario):
         with pytest.raises(SecretsError, match="CONFIG_CHANGED"):
             run(other, s.plan, s.prepared, s.source, s.target, state)
         assert state.status()["job"]["stage"] == "verified"
+
+
+def rotate_source(s):
+    s.source.values["v3"] = SecretValue(b"rotated-at-source", "string")
+    s.source.data["resources"][0]["versions"] = [
+        {"id": "v1", "stages": []},
+        {"id": "v2", "stages": ["AWSPREVIOUS"]},
+        {"id": "v3", "stages": ["AWSCURRENT"]},
+    ]
+    inv = s.source.inventory()
+    s.mapping["inventory_hash"] = inv["inventory_hash"]
+    return build_plan(s.config, inv, s.mapping)
+
+
+def test_replan_after_source_rotation_updates_its_own_earlier_copy(scenario, tmp_path):
+    s = scenario
+    with State(s.state) as state:
+        run(s.config, s.plan, s.prepared, s.source, s.target, state)
+    plan = rotate_source(s)
+    prepared = preflight(s.config, plan, s.source, s.target)
+    binding = plan["rows"][0]["binding_id"]
+    assert (prepared["status"], prepared["conflicts"], prepared["supersedes"]) == (
+        "ready",
+        [],
+        {binding: 1},
+    )
+    with State(tmp_path / "second.sqlite3") as state:
+        assert (
+            run(s.config, plan, prepared, s.source, s.target, state)["copy_status"]
+            == "verified"
+        )
+        run(s.config, plan, prepared, s.source, s.target, state)
+    doc, version = s.target.docs[PATH]
+    assert (version, s.target.writes) == (2, 2)
+    assert (doc["current"], doc["previous"]) == ("v3", "v2")
+    assert decode(doc["values"]["v3"]).data == b"rotated-at-source"
+
+
+def test_replan_never_supersedes_rotated_or_foreign_documents(scenario):
+    s = scenario
+    with State(s.state) as state:
+        run(s.config, s.plan, s.prepared, s.source, s.target, state)
+    plan = rotate_source(s)
+    doc, version = s.target.docs[PATH]
+    for change in (
+        {"rotation": {"phase": "complete"}},
+        {"pending": "op"},
+        {"owner": "other"},
+    ):
+        s.target.docs[PATH] = ({**doc, **change}, version)
+        prepared = preflight(s.config, plan, s.source, s.target)
+        assert (prepared["status"], prepared["supersedes"]) == ("blocked", {})
+    s.target.docs[PATH] = (
+        {**doc, "source": {**doc["source"], "arn": "other"}},
+        version,
+    )
+    assert preflight(s.config, plan, s.source, s.target)["status"] == "blocked"
+
+
+def test_superseded_version_must_match_preflight(scenario, tmp_path):
+    s = scenario
+    with State(s.state) as state:
+        run(s.config, s.plan, s.prepared, s.source, s.target, state)
+    plan = rotate_source(s)
+    prepared = preflight(s.config, plan, s.source, s.target)
+    doc, version = s.target.docs[PATH]
+    s.target.docs[PATH] = (doc, version + 1)
+    with (
+        State(tmp_path / "second.sqlite3") as state,
+        pytest.raises(SecretsError, match="NOT_OWNED_BY_JOURNAL"),
+    ):
+        run(s.config, plan, prepared, s.source, s.target, state)
+    assert s.target.writes == 1

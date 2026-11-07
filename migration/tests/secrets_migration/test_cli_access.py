@@ -173,3 +173,11 @@ def test_access_receipt_mismatch_is_blocked(scenario, change):
         v["access"][0]["index"] = -1
     with pytest.raises(SecretsError):
         access_report(s.config, s.plan, a, v, c)
+
+
+@pytest.mark.parametrize("path", [None, "", "sys/auth", "other/data/unrelated"])
+def test_deny_probe_must_target_another_secret_in_the_same_mount(scenario, path):
+    s = scenario
+    a, v, c = access_inputs(s)
+    c["checks"][1]["path"] = path
+    assert access_report(s.config, s.plan, a, v, c)["access_status"] == "incomplete"
