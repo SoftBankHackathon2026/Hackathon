@@ -49,3 +49,33 @@ checks:
 ## 검증 범위
 
 실제 OPA CLI로 allow/deny/만료/미래/누락 및 재조회 동작을 검사하고, 가짜 DB·워커·Connect 포트로 변경이 실행되지 않음을 검사한다. 운영 앱/클라우드 증거 수집, 실제 OPA 서버·GitOps 배포, 무중단 왕복 통합은 후속 검증이다.
+
+## AWS RDS 읽기전용 증거 수집기
+
+`python -m migration.cutover_evidence`는 AWS CLI의 DescribeDBInstances와 대상
+앱 `/api/info`를 읽어 위 파일을 원자적으로 교체한다. 인스턴스 ID·실행 설정의
+DB endpoint/port·ARN 리전이 일치해야 RDS 사실을 채택한다. PubliclyAccessible은
+실제 boolean을 OPA에 전달하므로 공개 DB는 정책에서 deny 된다. 조회 오류나
+누락을 pass로 바꾸지 않는다. 앱은 기대 environment·DB명·실제 테이블 count 조회를
+확인한다. API의 environment는 앱 실행 위치 라벨이며 DB 위치의 증명은 아니다.
+따라서 RDS에 연결된 온프렘 standby 앱은 local일 수 있다. 앱의 DB 호스트 자체는
+이 API가 노출하지 않으므로 연결 Secret/배포 참조 확인을 별도 수행해야 한다.
+
+필수 인수: `--config`, `--output`, `--rds-identifier`, `--region`,
+`--app-url`, `--app-environment`, `--approved-location`(반복 가능),
+`--evidence-ttl-seconds`, `--write-wait-max-seconds`. AWS profile은 선택 인수다.
+승인 위치와 시간 제한의 운영값은 기본값을 임의로 넣지 않는다.
+
+읽기 권한이 있는 AWS 실행 환경에서 돌리고, 전환 동안 TTL보다 짧은 간격으로
+증거를 갱신해야 한다. AWS 자격증명은 출력·파일에 포함하지 않는다. 수집기 성공은
+정책 허용과 다르다(공개 DB·미승인 위치도 정확히 수집될 수 있다). 실행 허용은
+항상 gate의 OPA 판정으로 결정한다. 실패 시 error 증거 또는 무효 표식을 쓰며,
+출력 파일 자체 쓰기가 실패하면 이전 증거는 TTL까지 남을 수 있으므로 수집기
+비정상 종료를 무시하고 전환을 실행하면 안 된다.
+
+현재 AWS RDS 대상만 지원한다. 온프렘 귀환의 네트워크 노출 증거 수집은 별도다.
+보안그룹·라우팅 전체를 PubliclyAccessible 한 필드로 감사했다고 주장하지 않는다.
+GitOps runner 배포·증거 공급 자동화와 실제 DB 전환 시험은 이 수집기 PR만으로
+완료되지 않는다. Mac에서 실제 AWS API·온프렘 standby 앱·운영 OPA에 읽기전용
+검사를 수행해 올바른 라벨 allow/다른 기대 라벨 deny를 확인했다. 시험용 TTL60초와
+대기300초는 운영 제한 확정이 아니며 DB 전환을 실행하지 않았다.
