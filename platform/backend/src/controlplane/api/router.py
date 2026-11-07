@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from controlplane.api.routes import (
+    agent,
     applications,
     auth,
     builds,
@@ -31,5 +32,6 @@ for module in (
     releases,
     costs,
     connections,
+    agent,
 ):
     api_router.include_router(module.router)

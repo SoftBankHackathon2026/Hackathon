@@ -27,6 +27,7 @@ from controlplane.integrations.live import JournalFleet
 from controlplane.integrations.simulator import SimulatedFleet
 from controlplane.providers.loader import load_platform
 from controlplane.providers.registry import ProviderRegistry
+from controlplane.repositories.agent import AgentJournal
 from controlplane.repositories.cutover_commands import (
     CommandRepository,
     CutoverCommandJournal,
@@ -40,6 +41,7 @@ from controlplane.repositories.data_mappings import (
 from controlplane.repositories.enrollments import EnrollmentStore
 from controlplane.repositories.fleet_journal import FleetJournal
 from controlplane.repositories.releases import ReleaseStore
+from controlplane.services.agent import AgentService
 from controlplane.services.auth import AuthService, LoginThrottle
 from controlplane.services.builds import BuildService
 from controlplane.services.cutover_commands import CutoverCommandService
@@ -83,6 +85,7 @@ class Container:
     data_mappings: DataMappingService
     enrollments: EnrollmentService | None = None
     connections: ConnectionService | None = None
+    agent: AgentService | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -209,4 +212,5 @@ def build_container(
         enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
         if store
         else None,
+        agent=AgentService(AgentJournal(store)) if store else None,
     )
