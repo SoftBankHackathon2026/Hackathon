@@ -396,7 +396,7 @@ function RunBody({ run }: { run: AgentRunDetail }) {
   const { shown, folded } = foldSteps(investigation(run), took !== null);
   return (
     <>
-      <div className={`agent-verdict tone-${result.tone}`} role="status">
+      <div className="agent-verdict" role="status">
         <StatusDot tone={result.tone}>{result.title}</StatusDot>
         {result.text && <p className="agent-text">{result.text}</p>}
         {took !== null && (
