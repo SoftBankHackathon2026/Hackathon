@@ -1,0 +1,45 @@
+[server]
+host = "127.0.0.1"
+port = 8090
+max_sandbox_timeout_seconds = 3600
+
+[proxy]
+resolve_internal = true
+
+[log]
+level = "INFO"
+
+[runtime]
+type = "docker"
+execd_image = "opensandbox/execd:release-@VERSION@"
+
+[storage]
+allowed_host_paths = []
+
+[store]
+type = "sqlite"
+path = "/var/lib/opensandbox/opensandbox.db"
+
+[docker]
+network_mode = "sandbox-net"
+port_range_min = 40000
+port_range_max = 40199
+publish_host = "127.0.0.1"
+drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+no_new_privileges = true
+apparmor_profile = ""
+pids_limit = 4096
+seccomp_profile = ""
+sandbox_env = { HTTPS_PROXY = "http://172.31.250.1:8888", HTTP_PROXY = "http://172.31.250.1:8888", https_proxy = "http://172.31.250.1:8888", http_proxy = "http://172.31.250.1:8888" }
+
+[ingress]
+mode = "direct"
+
+[egress]
+image = "opensandbox/egress:release-@VERSION@"
+mode = "dns"
+readiness_timeout_seconds = 30.0
+
+[secure_runtime]
+type = "gvisor"
+docker_runtime = "runsc"

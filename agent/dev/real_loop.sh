@@ -35,9 +35,9 @@ export SAMPLE_APP_DATABASE_URL="postgresql://migration_app:$PGPASSWORD_LOCAL@loc
 HOME_ARG=()
 [ -n "${CODEX_HOME_DIR:-}" ] && HOME_ARG=(--codex-home "$CODEX_HOME_DIR")
 status=0
-python dev/real_loop.py --opa-url http://127.0.0.1:18181 --bao-addr http://127.0.0.1:18200 --bao-token "$TOKEN" \
+"${PYTHON:-python}" dev/real_loop.py --opa-url http://127.0.0.1:18181 --bao-addr http://127.0.0.1:18200 --bao-token "$TOKEN" \
   ${HOME_ARG[@]+"${HOME_ARG[@]}"} "$@" || status=$?
 echo "--- OpenBao 최종 값"
 curl -fsS -H "X-Vault-Token: $TOKEN" http://127.0.0.1:18200/v1/secret/data/hackathon/sample-app/onprem \
-  | python -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(d["metadata"]["version"], d["data"])'
+  | "${PYTHON:-python}" -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(d["metadata"]["version"], d["data"])'
 exit $status
