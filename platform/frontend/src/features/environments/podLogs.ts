@@ -133,3 +133,31 @@ export function newLineCount(
   }
   return after.length;
 }
+
+type Scrollable = {
+  scrollHeight: number;
+  clientHeight: number;
+  scrollTop: number;
+};
+
+export function canScroll(el: Scrollable, deltaY: number) {
+  if (el.scrollHeight <= el.clientHeight) return false;
+  if (deltaY < 0) return el.scrollTop > 0;
+  return el.scrollTop + el.clientHeight < el.scrollHeight;
+}
+
+export function keepsWheel(target: Element, deltaY: number) {
+  for (
+    let el: Element | null = target;
+    el && !el.classList.contains("fp-wide");
+    el = el.parentElement
+  ) {
+    const style = getComputedStyle(el);
+    if (
+      /(auto|scroll)/.test(style.overflowY) &&
+      canScroll(el as HTMLElement, deltaY)
+    )
+      return true;
+  }
+  return false;
+}

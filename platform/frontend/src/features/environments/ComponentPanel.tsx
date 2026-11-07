@@ -246,7 +246,7 @@ function PodsGroup({
                   {onLogs && (
                     <button
                       type="button"
-                      className="cp-pod-logs"
+                      className="cp-ep-copy cp-pod-logs"
                       aria-label={`${pod.name} 로그 보기`}
                       onClick={() => onLogs(pod.name)}
                     >

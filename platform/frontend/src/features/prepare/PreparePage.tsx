@@ -273,7 +273,7 @@ export function PreparePage({
             />
           ) : (
             <LiveAppSelect
-              key={snapshot.id + ":" + snapshot.inventoryDigest}
+              key={snapshot.id}
               snapshot={snapshot}
               busy={busy}
               onSelect={setSelectedApps}

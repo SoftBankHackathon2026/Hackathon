@@ -7,7 +7,7 @@ import {
   type FleetEnvironment,
   type PodLogLine,
 } from "../../api/migrations";
-import { StatusLabel } from "../../components/PageKit";
+import { FilterSelect, StatusLabel } from "../../components/PageKit";
 import { Segmented } from "../../components/Segmented";
 import { SidePanel } from "../../components/SidePanel";
 import { errorMessage } from "../../api/client";
@@ -23,6 +23,7 @@ import {
   logText,
   logTime,
   matches,
+  keepsWheel,
   newLineCount,
 } from "./podLogs";
 
@@ -76,6 +77,7 @@ export function PodLogPanel({
     retry: false,
   });
   const lines = logs.data?.lines ?? [];
+  const refetch = logs.refetch;
   const visible = lines.filter((line) => matches(line.message, query));
   const counts = levelCounts(lines);
 
@@ -98,14 +100,34 @@ export function PodLogPanel({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.key !== "/" || target?.closest("input, select, textarea"))
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, select, textarea")
+      )
         return;
-      event.preventDefault();
-      search.current?.focus();
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "/") {
+        event.preventDefault();
+        search.current?.focus();
+      } else if (event.key === "r" || event.key === "R") {
+        event.preventDefault();
+        void refetch();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [refetch]);
+
+  useEffect(() => {
+    const onWheel = (event: WheelEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".fp-wide")) return;
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (!keepsWheel(target, event.deltaY)) event.preventDefault();
+    };
+    document.addEventListener("wheel", onWheel, { passive: false });
+    return () => document.removeEventListener("wheel", onWheel);
   }, []);
 
   const toBottom = () => {
@@ -146,7 +168,7 @@ export function PodLogPanel({
       onClose={onClose}
       title={
         <>
-          <span className="pl-pod">{pod.name}</span>
+          {pod.name}
           <StatusLabel tone={podTone(pod)}>{podLabel(pod)}</StatusLabel>
         </>
       }
@@ -163,35 +185,65 @@ export function PodLogPanel({
     >
       <div className="pl">
         <div className="pl-tools">
-          {(names.length > 1 || pod.restarts > 0) && (
-            <div className="pl-tool-row">
-              {names.length > 1 && (
-                <Segmented
-                  label="컨테이너"
-                  value={container}
-                  options={names.map((n) => ({ value: n, label: n }))}
-                  onChange={setContainer}
-                />
-              )}
-              {pod.restarts > 0 && (
-                <Segmented
-                  label="어느 실행의 로그"
-                  value={previous ? "previous" : "current"}
-                  options={[
-                    { value: "current", label: "지금" },
-                    { value: "previous", label: "재시작 전" },
-                  ]}
-                  onChange={(v) => setPrevious(v === "previous")}
-                />
-              )}
-            </div>
-          )}
-          <div className="pl-tool-row">
+          <div className="canvas-tools">
+            {pod.restarts > 0 && (
+              <Segmented
+                label="실행"
+                value={previous ? "previous" : "current"}
+                options={[
+                  { value: "current", label: "지금" },
+                  { value: "previous", label: "재시작 전" },
+                ]}
+                onChange={(v) => setPrevious(v === "previous")}
+              />
+            )}
+            {names.length > 1 && (
+              <FilterSelect
+                label="컨테이너"
+                value={container}
+                options={names.map((n) => ({ value: n, label: n }))}
+                onChange={setContainer}
+              />
+            )}
+            <FilterSelect
+              label="최근"
+              value={String(tail)}
+              options={TAIL_OPTIONS.map((n) => ({
+                value: String(n),
+                label: `${n}줄`,
+              }))}
+              onChange={(v) => setTail(Number(v))}
+            />
+            <button
+              type="button"
+              className={`tool-toggle${live ? " on" : ""}`}
+              aria-pressed={live}
+              disabled={previous}
+              title={
+                previous
+                  ? "재시작 전 로그는 더 늘지 않아요"
+                  : "5초마다 새 로그를 불러와요"
+              }
+              onClick={() => setFollow((v) => !v)}
+            >
+              <span className="tool-switch" aria-hidden="true" />
+              실시간
+            </button>
+            <button
+              type="button"
+              className={`tool-toggle${wrap ? " on" : ""}`}
+              aria-pressed={wrap}
+              onClick={() => setWrap((v) => !v)}
+            >
+              <span className="tool-switch" aria-hidden="true" />
+              줄바꿈
+            </button>
+          </div>
+          <div className="canvas-tools">
             <input
               ref={search}
               type="search"
-              className="pl-search"
-              placeholder="로그에서 찾기  /"
+              placeholder="로그에서 찾기 ( / )"
               aria-label="로그에서 찾기"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -208,68 +260,40 @@ export function PodLogPanel({
                 ? `${visible.length} / ${lines.length}줄`
                 : `${lines.length}줄`}
               {counts.error > 0 && (
-                <span className="text-bad"> · 오류 {counts.error}</span>
+                <span className="text-bad">, 오류 {counts.error}</span>
               )}
               {counts.warn > 0 && (
-                <span className="text-warn"> · 경고 {counts.warn}</span>
+                <span className="text-warn">, 경고 {counts.warn}</span>
               )}
             </span>
-            <span className="pl-spacer" />
-            <label className="tool-select">
-              최근
-              <select
-                value={tail}
-                onChange={(e) => setTail(Number(e.target.value))}
+            <span className="pl-actions">
+              <button
+                type="button"
+                className="cp-ep-copy"
+                disabled={logs.isFetching}
+                aria-busy={logs.isFetching}
+                title="지금 로그를 다시 불러와요 (R)"
+                onClick={() => void logs.refetch()}
               >
-                {TAIL_OPTIONS.map((n) => (
-                  <option key={n} value={n}>
-                    {n}줄
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="pl-toggle"
-              aria-pressed={live}
-              disabled={previous}
-              title={
-                previous
-                  ? "재시작 전 로그는 더 늘지 않아요"
-                  : "5초마다 새 로그를 불러와요"
-              }
-              onClick={() => setFollow((v) => !v)}
-            >
-              <i
-                className={live ? "pl-live on" : "pl-live"}
-                aria-hidden="true"
-              />
-              실시간
-            </button>
-            <button
-              type="button"
-              className="pl-toggle"
-              aria-pressed={wrap}
-              onClick={() => setWrap((v) => !v)}
-            >
-              줄바꿈
-            </button>
-            <button
-              type="button"
-              className="pl-action"
-              disabled={visible.length === 0}
-              onClick={copy}
-            >
-              {copied ? "복사했어요" : "복사"}
-            </button>
-            <button
-              type="button"
-              className="pl-action"
-              disabled={visible.length === 0}
-              onClick={download}
-            >
-              내려받기
-            </button>
+                {logs.isFetching ? "불러오는 중" : "새로 고침"}
+              </button>
+              <button
+                type="button"
+                className="cp-ep-copy"
+                disabled={visible.length === 0}
+                onClick={copy}
+              >
+                {copied ? "복사했어요" : "복사"}
+              </button>
+              <button
+                type="button"
+                className="cp-ep-copy"
+                disabled={visible.length === 0}
+                onClick={download}
+              >
+                내려받기
+              </button>
+            </span>
           </div>
         </div>
         <div
@@ -284,7 +308,15 @@ export function PodLogPanel({
           }}
         >
           {logs.isPending ? (
-            <p className="pl-empty">로그를 불러오는 중이에요…</p>
+            <div
+              className="skeleton pl-skeleton"
+              role="status"
+              aria-label="불러오는 중"
+            >
+              <span />
+              <span />
+              <span />
+            </div>
           ) : logs.isError && !logs.data ? (
             <div className="pl-empty">
               <p>{errorMessage(logs.error, "로그를 불러오지 못했어요.")}</p>
@@ -293,14 +325,14 @@ export function PodLogPanel({
                 className="pk-button weak"
                 onClick={() => logs.refetch()}
               >
-                다시 시도
+                다시 불러오기
               </button>
             </div>
           ) : lines.length === 0 ? (
             <p className="pl-empty">
               {previous
                 ? "재시작 전 실행이 남긴 로그가 없어요."
-                : "아직 남긴 로그가 없어요."}
+                : "아직 남긴 로그가 없어요. 실시간을 켜 두면 새 로그가 생길 때 보여요."}
             </p>
           ) : visible.length === 0 ? (
             <p className="pl-empty">“{query.trim()}”이 들어간 줄이 없어요.</p>
@@ -330,22 +362,24 @@ export function PodLogPanel({
           )}
         </div>
         {unseen > 0 && (
-          <button type="button" className="pl-jump" onClick={toBottom}>
-            새 로그 {unseen}줄 ↓
+          <button
+            type="button"
+            className="pk-button pl-jump"
+            onClick={toBottom}
+          >
+            새 로그 {unseen}줄
           </button>
         )}
         <p className="pl-status">
           {logs.data && (
             <>
               {logTime(logs.data.fetched_at, now)} 기준
-              {logs.data.redacted > 0 && (
-                <> · 비밀번호·토큰 같은 값 {logs.data.redacted}개를 가렸어요</>
-              )}
-              {logs.data.truncated && <> · 너무 길어 앞부분을 잘랐어요</>}
+              {logs.data.redacted > 0 &&
+                `, 비밀번호와 토큰 ${logs.data.redacted}개를 가렸어요`}
+              {logs.data.truncated && ", 길어서 앞부분을 잘랐어요"}
               {logs.isError && (
                 <span className="text-bad">
-                  {" "}
-                  · {errorMessage(logs.error, "새로 고치지 못했어요")}
+                  , {errorMessage(logs.error, "새로 고치지 못했어요")}
                 </span>
               )}
             </>
