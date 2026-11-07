@@ -14,7 +14,9 @@ services:
   kafka:
     image: apache/kafka:3.9.1
     environment:
-      CLUSTER_ID: ccx-connect-kraft-00001
+      # KRaft 는 16바이트 UUID 의 base64url(22자)만 받는다. 고정값이라
+      # 볼륨을 남긴 채 다시 up 해도 같은 클러스터로 이어진다.
+      CLUSTER_ID: MK0TP78MSLqyDpy80cOaPw
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093

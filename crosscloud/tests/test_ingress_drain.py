@@ -100,3 +100,41 @@ def test_unreachable_redis_and_ingress_block_cleanup():
 def test_rejects_non_redis_url():
     with pytest.raises(ValueError):
         _check("http://127.0.0.1:6379", "http://127.0.0.1:9")
+
+
+@pytest.mark.parametrize(
+    "redis_url",
+    [
+        "redis://127.0.0.1:6379/1",
+        "redis://:secret@127.0.0.1:6379",
+        "redis://user:secret@127.0.0.1:6379/0",
+        "redis://127.0.0.1:6379?db=2",
+    ],
+)
+def test_rejects_url_naming_other_db_or_auth(redis_url):
+    # SELECT·AUTH 없이 묻으면 DB 0 을 보고 미처리를 0 으로 오판한다.
+    with pytest.raises(ValueError) as caught:
+        _check(redis_url, "http://127.0.0.1:9")
+
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize("path", ["", "/", "/0"])
+def test_accepts_default_db_path(path):
+    fake = fake_ingress.FakeIngress()
+    with fake_redis.serve(_reply(_group(0, 0))) as (redis_url, _):
+        with fake.serve() as url:
+            problems = _check(redis_url + path, url)
+
+    assert problems == ()
+
+
+def test_bulk_string_without_crlf_after_length_blocks_cleanup():
+    # 길이 8 뒤에 CRLF 가 아니라 "XX" 가 오면 응답이 깨진 것이다.
+    broken = _group(0, 0).replace(_bulk("delivery"), b"$8\r\ndeliveryXX")
+    fake = fake_ingress.FakeIngress()
+    with fake_redis.serve(_reply(broken)) as (redis_url, _):
+        with fake.serve() as url:
+            problems = _check(redis_url, url)
+
+    assert any("XINFO" in p for p in problems)

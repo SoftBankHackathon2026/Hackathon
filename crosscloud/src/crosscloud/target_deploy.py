@@ -5,9 +5,9 @@ TLS env(PGSSLMODE·DB_SSL_CA)를 대상 DB 것으로 갈고 새 리비전을 띄
 이미지·나머지 env 는 그대로다. 클라우드 호출은 얇게 둔다.
 
   * Cloud Run: Admin API v2 로 서비스를 읽고 고쳐 PATCH, 작업(operation)이
-    끝날 때까지 기다린다. 트래픽은 서비스 설정(보통 최신 리비전 100%)을 따른다.
+    끝날 때까지 기다린다. 트래픽은 최신 리비전 100% 로 다시 쓴다.
   * ECS: 같은 family 로 새 작업 정의 리비전을 등록하고 update-service 뒤
-    services_stable 을 기다린다.
+    services_stable 을 기다린다. 그다음 PRIMARY 배포가 새 리비전인지 본다.
 
   spec = target_deploy.load_deploy_spec(path)
   deployer = target_deploy.make_deployer(spec)
@@ -27,6 +27,7 @@ _RUN_API = "https://run.googleapis.com/v2/"
 _HTTP_TIMEOUT_SECONDS = 30
 _POLL_SECONDS = 5.0
 _DEPLOY_TIMEOUT_SECONDS = 900.0
+_LATEST_ALL = {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}
 # describe_task_definition 결과 중 register_task_definition 이 받는 키.
 _REGISTERABLE = (
     "family",
@@ -47,6 +48,8 @@ _REGISTERABLE = (
 )
 
 Platform = Literal["cloud_run", "ecs"]
+# 플랫폼이 사는 클라우드 라벨(원가연 job.source·target).
+PLATFORM_CLOUD: dict[str, str] = {"cloud_run": "gcp", "ecs": "aws"}
 
 
 class DeployError(RuntimeError):
@@ -100,6 +103,9 @@ class DeploySpec:
 class TargetDeployer(Protocol):
     """대상 앱 배포 하나를 대상 프로필로 다시 배포한다."""
 
+    def service_urls(self) -> tuple[str, ...] | None:
+        """배포의 공개 주소들. None 이면 이 플랫폼은 주소를 대조하지 않는다."""
+
     def deploy(self, profile: TargetProfile) -> str:
         """다시 배포하고 새 리비전(작업 정의 ARN)을 돌려준다."""
 
@@ -124,6 +130,13 @@ class CloudRunDeployer:
         self._sleep = sleep
         self._clock = clock
         self._timeout = timeout_seconds
+
+    def service_urls(self) -> tuple[str, ...]:
+        """서비스의 uri 와 urls(결정적 주소 포함)."""
+        service = self._get(self._service)
+        return tuple(
+            url for url in (service.get("uri"), *service.get("urls", [])) if url
+        )
 
     def deploy(self, profile: TargetProfile) -> str:
         """Env 를 바꿔 PATCH 하고, 작업이 끝나면 최신 준비 리비전을 돌려준다.
@@ -152,6 +165,8 @@ class CloudRunDeployer:
             *({"name": n, "value": v} for n, v in profile.plain_env),
         ]
         container["env"] = _merge_by_name(container.get("env", []), env)
+        # 옛 리비전(A 프로필)에 남은 분할이 없게 새 리비전에 100% 를 준다.
+        service["traffic"] = [dict(_LATEST_ALL)]
         response = self._session.patch(
             _RUN_API + self._service,
             json=service,
@@ -200,11 +215,16 @@ class EcsDeployer:
         self._container = container
         self._waiter = {"Delay": waiter_delay, "MaxAttempts": waiter_attempts}
 
+    def service_urls(self) -> None:
+        """ALB 를 따라가야 해서 대조하지 않는다(신원 확인이 대신 잡는다)."""
+        return None
+
     def deploy(self, profile: TargetProfile) -> str:
         """같은 family 새 리비전을 등록하고 서비스를 갱신해 안정을 기다린다.
 
         Raises:
             ValueError: Secret 에 version 을 줬을 때(ECS 는 ARN 에 담는다).
+            DeployError: 안정 뒤 PRIMARY 배포가 새 작업 정의가 아닐 때.
         """
         if any(item.version for item in profile.secret_env):
             raise ValueError("ECS Secret env 는 version 대신 ARN 을 쓴다")
@@ -243,7 +263,24 @@ class EcsDeployer:
             services=[self._service],
             WaiterConfig=self._waiter,
         )
+        # 회로 차단기가 옛 작업 정의로 되돌려도 서비스는 안정이 된다.
+        primary = self._primary_task_definition()
+        if primary != new_arn:
+            raise DeployError(f"ECS 가 {primary} 로 되돌아갔다(새 {new_arn})")
         return new_arn
+
+    def _primary_task_definition(self) -> str | None:
+        (service,) = self._client.describe_services(
+            cluster=self._cluster, services=[self._service]
+        )["services"]
+        return next(
+            (
+                d.get("taskDefinition")
+                for d in service.get("deployments", [])
+                if d.get("status") == "PRIMARY"
+            ),
+            None,
+        )
 
 
 def load_deploy_spec(path: pathlib.Path) -> DeploySpec:

@@ -1,9 +1,12 @@
 """prepare-target · ingress-status · ingress-drain-check · render-handoff."""
 
+import dataclasses
 import json
 
+import botocore.exceptions
 import fake_ingress
 import fake_redis
+import psycopg
 import pytest
 import yaml
 
@@ -79,10 +82,17 @@ def _state(tmp_path, migration_module, stage):
 
 
 class _Fakes:
-    def __init__(self, identity_problems=()):
+    def __init__(
+        self,
+        identity_problems=(),
+        service_urls=("http://g",),
+        deploy_error=None,
+    ):
         self.logins = []
         self.deployed = []
         self.identity_problems = identity_problems
+        self.service_urls = service_urls
+        self.deploy_error = deploy_error
 
     def open_app_login(self, login, app_user):
         self.logins.append(
@@ -93,7 +103,12 @@ class _Fakes:
         fakes = self
 
         class _Deployer:
+            def service_urls(self):
+                return fakes.service_urls
+
             def deploy(self, profile):
+                if fakes.deploy_error is not None:
+                    raise fakes.deploy_error
                 fakes.deployed.append((spec, profile))
                 return "rev-2"
 
@@ -210,6 +225,114 @@ def test_prepare_target_fails_when_app_not_on_target_db(
 
     assert code == 1
     assert "database=shop" in json.loads(capsys.readouterr().out)["error"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        botocore.exceptions.ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "no"}},
+            "UpdateService",
+        ),
+        botocore.exceptions.WaiterError("ServicesStable", "Max attempts", {}),
+        psycopg.OperationalError("connection lost"),
+    ],
+)
+def test_prepare_target_failure_after_login_is_one_json_line(
+    tmp_path, capsys, migration_module, error
+):
+    cloud, env, deploy, ca = _handoff_files(tmp_path)
+    fakes = _Fakes(deploy_error=error)
+    state_dir = _state(tmp_path, migration_module, "READY")
+
+    code = cutover_cli.run(
+        _prepare_args(cloud, env, deploy, ca, state_dir), fakes.deps()
+    )
+
+    assert code == 1
+    out = json.loads(capsys.readouterr().out)
+    assert type(error).__name__ in out["error"]
+    assert out["app_login"] == "shop_app LOGIN"
+
+
+def test_prepare_target_identity_failure_reports_login_left_open(
+    tmp_path, capsys, migration_module
+):
+    cloud, env, deploy, ca = _handoff_files(tmp_path)
+    fakes = _Fakes(identity_problems=("database=shop (기대 shop_b)",))
+    state_dir = _state(tmp_path, migration_module, "READY")
+
+    cutover_cli.run(
+        _prepare_args(cloud, env, deploy, ca, state_dir), fakes.deps()
+    )
+
+    assert json.loads(capsys.readouterr().out)["app_login"] == "shop_app LOGIN"
+
+
+def test_prepare_target_deadline_without_problem_still_gives_reason(
+    tmp_path, capsys, migration_module
+):
+    # 성공 한 번 뒤 기한이 지나면 마지막 problems 가 비어 있다.
+    cloud, env, deploy, ca = _handoff_files(tmp_path)
+    fakes = _Fakes()
+    deps = dataclasses.replace(
+        fakes.deps(), sleep=lambda _: setattr(fakes, "now", 10**6)
+    )
+    state_dir = _state(tmp_path, migration_module, "READY")
+
+    code = cutover_cli.run(
+        _prepare_args(cloud, env, deploy, ca, state_dir), deps
+    )
+
+    assert code == 1
+    assert "연속" in json.loads(capsys.readouterr().out)["error"]
+
+
+def _reverse(cloud):
+    """귀환(GCP→AWS) 인계: 대상이 aws 가 되게 job·사용자를 맞바꾼다."""
+    document = yaml.safe_load(cloud.read_text())
+    targets = document["targets"]
+    targets["aws"]["users"] = targets["gcp"]["users"]
+    targets["gcp"]["users"] = {}
+    document["job"].update(source="gcp", target="aws")
+    cloud.write_text(yaml.safe_dump(document))
+
+
+def test_prepare_target_refuses_forward_spec_on_return_trip(
+    tmp_path, capsys, migration_module
+):
+    # 귀환인데 순방향 명세(cloud_run)를 넘기면 원본 서비스를 B 로 바꾼다.
+    cloud, env, deploy, ca = _handoff_files(tmp_path)
+    _reverse(cloud)
+    fakes = _Fakes(service_urls=("http://a",))
+    state_dir = _state(tmp_path, migration_module, "READY")
+
+    code = cutover_cli.run(
+        _prepare_args(cloud, env, deploy, ca, state_dir), fakes.deps()
+    )
+
+    assert code == 1
+    assert "platform" in json.loads(capsys.readouterr().out)["error"]
+    assert fakes.logins == []
+    assert fakes.deployed == []
+
+
+@pytest.mark.parametrize("urls", [("https://other.run.app",), ()])
+def test_prepare_target_refuses_service_not_at_target_app_url(
+    tmp_path, capsys, migration_module, urls
+):
+    cloud, env, deploy, ca = _handoff_files(tmp_path)
+    fakes = _Fakes(service_urls=urls)
+    state_dir = _state(tmp_path, migration_module, "READY")
+
+    code = cutover_cli.run(
+        _prepare_args(cloud, env, deploy, ca, state_dir), fakes.deps()
+    )
+
+    assert code == 1
+    assert "http://g" in json.loads(capsys.readouterr().out)["error"]
+    assert fakes.logins == []
+    assert fakes.deployed == []
 
 
 def _status_args(cloud, env, url, state_dir):

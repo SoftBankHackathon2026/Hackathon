@@ -35,7 +35,8 @@ def drain_problems(
     """지우면 안 되는 이유 목록. 빈 tuple 이면 지워도 된다.
 
     Raises:
-        ValueError: redis_url 이 redis:// 주소가 아닐 때.
+        ValueError: redis_url 이 redis:// 주소가 아니거나 DB 0·무인증이
+            아닐 때.
     """
     address = _address(redis_url)
     problems = []
@@ -68,9 +69,18 @@ def _group_problems(groups: list[dict[str, Any]]) -> list[str]:
 
 
 def _address(redis_url: str) -> tuple[str, int]:
+    """host·port 만 쓴다. SELECT·AUTH 를 안 보내므로 DB 0·무인증만 받는다.
+
+    다른 DB 번호나 비밀번호가 든 URL 을 그대로 물으면 DB 0 을 보고 미처리를
+    0 으로 오판한다. 그래서 그런 URL 은 거부한다(메시지에 URL 을 넣지 않는다).
+    """
     parts = urllib.parse.urlsplit(redis_url)
     if parts.scheme != "redis" or not parts.hostname:
         raise ValueError("redis_url 은 redis://<host>:<port> 여야 한다")
+    if parts.username or parts.password:
+        raise ValueError("redis_url 의 사용자·비밀번호는 지원하지 않는다")
+    if parts.path not in ("", "/", "/0") or parts.query:
+        raise ValueError("redis_url 은 DB 0 만 지원한다(경로·질의 없이)")
     return parts.hostname, parts.port or _DEFAULT_PORT
 
 
@@ -108,7 +118,10 @@ def _read_reply(stream: Any) -> Any:
         length = int(body)
         if length < 0:
             return None
-        return stream.read(length + 2)[:-2].decode("utf-8", "replace")
+        data = stream.read(length + 2)
+        if len(data) != length + 2 or not data.endswith(b"\r\n"):
+            raise ValueError("Redis bulk 응답 길이가 맞지 않는다")
+        return data[:-2].decode("utf-8", "replace")
     if kind == b"*":
         count = int(body)
         return (

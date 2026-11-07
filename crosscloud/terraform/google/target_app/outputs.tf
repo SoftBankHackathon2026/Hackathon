@@ -4,7 +4,7 @@ output "service_name" {
 }
 
 output "service_uri" {
-  description = "Cloud Run 기본 URL. ingress 가 닫혀 있으면 밖에서 닿지 않는다."
+  description = "Cloud Run 기본 URL. 운영자 PC 의 ingress 대상(INGRESS_TARGETS.gcp)이다."
   value       = google_cloud_run_v2_service.app.uri
 }
 

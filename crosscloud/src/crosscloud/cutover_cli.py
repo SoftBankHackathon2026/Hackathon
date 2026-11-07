@@ -23,6 +23,8 @@ import pathlib
 import time
 from typing import Any
 
+import botocore.exceptions
+import psycopg
 import yaml
 
 from crosscloud import (
@@ -53,12 +55,15 @@ _PREWARM_SUCCESSES = 3
 _PREWARM_DEADLINE_SECONDS = 300.0
 _PREWARM_INTERVAL_SECONDS = 5.0
 _APP_TIMEOUT_SECONDS = 5.0
-# cloud.lock 이나 입력 파일 문제처럼 사용자에게 한 줄로 알릴 실패.
+# cloud.lock·입력 파일·DB·클라우드 호출 실패처럼 사용자에게 한 줄로 알릴 실패.
 _REPORTED = (
     cutover_stage.CloudLockBusyError,
     cutover_stage.StageUnreadableError,
     handoff.NotReadyError,
     target_deploy.DeployError,
+    psycopg.Error,
+    botocore.exceptions.ClientError,
+    botocore.exceptions.WaiterError,
     ValueError,
     KeyError,
     OSError,
@@ -66,7 +71,15 @@ _REPORTED = (
 
 
 class RefusedError(Exception):
-    """명령을 진행하지 않는다. 메시지가 그 이유다."""
+    """명령을 진행하지 않는다. 메시지가 그 이유다.
+
+    details 는 출력 JSON 에 함께 남길 사실(예: 이미 켠 LOGIN)이다.
+    """
+
+    def __init__(self, message: str, **details: str) -> None:
+        """메시지와 함께 출력할 필드를 받는다."""
+        super().__init__(message)
+        self.details = details
 
 
 @dataclasses.dataclass(frozen=True)
@@ -156,7 +169,7 @@ def run(args: argparse.Namespace, deps: Deps | None = None) -> int:
     try:
         ok, body = handlers[args.command](args, deps)
     except RefusedError as error:
-        ok, body = False, {"error": str(error)}
+        ok, body = False, {"error": str(error), **error.details}
     except _REPORTED as error:
         ok, body = False, {"error": f"{type(error).__name__}: {error}"}
     print(json.dumps(body, ensure_ascii=False))
@@ -304,40 +317,94 @@ def _prepare_target(
         ),
     )
     admin, app_user = _target_admin(args.cloud_config, deps.environ)
+    deployer = deps.make_deployer(spec)
+    _check_deploy_target(spec, deployer, config)
     with cutover_stage.cloud_lock(args.state_dir):
         stage, failed = _stage(args, allow_missing=False)
         if stage != "READY":
             raise RefusedError(f"예열은 READY 에서만 한다(지금 {stage})")
         deps.open_app_login(admin, app_user)
-        revision = deps.make_deployer(spec).deploy(profile)
-        problems: tuple[str, ...] = ()
-
-        def identity_ok() -> bool:
-            nonlocal problems
-            problems = deps.inspect_app(
-                config.target_app_url,
-                database=config.target_database,
-                environment=config.target_environment,
-                timeout=_APP_TIMEOUT_SECONDS,
-            )
-            return not problems
-
-        streak = health_probe.consecutive_successes(
-            identity_ok,
-            needed=_PREWARM_SUCCESSES,
-            deadline_seconds=_PREWARM_DEADLINE_SECONDS,
-            interval=_PREWARM_INTERVAL_SECONDS,
-            clock=deps.clock,
-            sleep=deps.sleep,
-        )
-    if streak < _PREWARM_SUCCESSES:
-        raise RefusedError("대상 앱 신원 확인 실패: " + "; ".join(problems))
+        login = f"{app_user} LOGIN"
+        try:
+            revision = _redeploy_and_confirm(deployer, profile, config, deps)
+        except RefusedError as error:
+            raise RefusedError(str(error), app_login=login) from None
+        except _REPORTED as error:
+            raise RefusedError(
+                f"{type(error).__name__}: {error}", app_login=login
+            ) from error
     return True, {
         "stage": stage,
-        "app_login": f"{app_user} LOGIN",
+        "app_login": login,
         "revision": revision,
         "target_database": config.target_database,
     }
+
+
+def _redeploy_and_confirm(
+    deployer: target_deploy.TargetDeployer,
+    profile: target_deploy.TargetProfile,
+    config: control_adapter.AdapterConfig,
+    deps: Deps,
+) -> str:
+    """재배포하고 대상 앱이 B 에 붙었는지 연속으로 확인한다. 새 리비전을 준다.
+
+    Raises:
+        RefusedError: 기한 안에 신원 확인이 연속 성공하지 못했을 때.
+    """
+    revision = deployer.deploy(profile)
+    problems: tuple[str, ...] = ()
+
+    def identity_ok() -> bool:
+        nonlocal problems
+        problems = deps.inspect_app(
+            config.target_app_url,
+            database=config.target_database,
+            environment=config.target_environment,
+            timeout=_APP_TIMEOUT_SECONDS,
+        )
+        return not problems
+
+    streak = health_probe.consecutive_successes(
+        identity_ok,
+        needed=_PREWARM_SUCCESSES,
+        deadline_seconds=_PREWARM_DEADLINE_SECONDS,
+        interval=_PREWARM_INTERVAL_SECONDS,
+        clock=deps.clock,
+        sleep=deps.sleep,
+    )
+    if streak < _PREWARM_SUCCESSES:
+        reason = "; ".join(problems) or (
+            f"{_PREWARM_DEADLINE_SECONDS:.0f}초 안에"
+            f" {_PREWARM_SUCCESSES}회 연속 성공하지 못했다"
+        )
+        raise RefusedError(f"대상 앱 신원 확인 실패: {reason}")
+    return revision
+
+
+def _check_deploy_target(
+    spec: target_deploy.DeploySpec,
+    deployer: target_deploy.TargetDeployer,
+    config: control_adapter.AdapterConfig,
+) -> None:
+    """배포 명세가 이 job 의 대상 앱을 가리키는지. LOGIN 을 켜기 전에 본다.
+
+    귀환 때 순방향 명세를 넘기면 원본 앱을 B 프로필로 바꿔 버린다.
+    """
+    cloud = target_deploy.PLATFORM_CLOUD[spec.platform]
+    if cloud != config.target:
+        raise RefusedError(
+            f"배포 명세 platform={spec.platform}({cloud})가 대상"
+            f" {config.target} 와 다르다"
+        )
+    urls = deployer.service_urls()
+    if urls is None:
+        return
+    wanted = config.target_app_url.rstrip("/")
+    if wanted not in {url.rstrip("/") for url in urls}:
+        raise RefusedError(
+            f"배포 서비스 주소 {list(urls)} 에 대상 앱 주소 {wanted} 가 없다"
+        )
 
 
 def _ingress_status(

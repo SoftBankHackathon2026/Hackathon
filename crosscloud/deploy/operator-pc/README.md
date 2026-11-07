@@ -28,7 +28,8 @@ render-handoff 가 알려 주는 비밀번호 env 를 Secret 에서 채운다. �
 1.  인계 파일을 만든다. readiness 네 항목(`replication_flags` ·
     `migration_logins` · `target_schema_empty` · `profile_secrets`)이 모두
     준비돼야 쓴다. DB 주소는 `terraform output -json` 에서, 앱 DB 사용자는
-    인자로 받는다. 대상 DB 이름은 원본과 달라야 한다.
+    인자로 받는다. 대상 DB 이름은 원본과 달라야 한다. 앱 주소는 AWS 는 ALB
+    주소, GCP 는 Cloud Run 서비스 URL(`terraform output service_uri`)이다.
 
     ```shell
     crosscloud render-handoff --inventory discover.json \
@@ -38,8 +39,8 @@ render-handoff 가 알려 주는 비밀번호 env 를 Secret 에서 채운다. �
         --readiness readiness.json \
         --control-url http://127.0.0.1:18080 \
         --connect-url http://127.0.0.1:8083 \
-        --source-app-url http://<원본 앱 LB> \
-        --target-app-url http://<대상 앱 LB> \
+        --source-app-url http://<원본 앱 ALB> \
+        --target-app-url https://<대상 Cloud Run 서비스 URL> \
         --redis-url redis://redis:6379 --out-dir out
     ```
 
@@ -83,6 +84,13 @@ render-handoff 가 알려 주는 비밀번호 env 를 Secret 에서 채운다. �
     admin 비밀번호 env), 대상 앱을 B 프로필(접속 URL Secret·DB TLS env)로
     다시 배포한 뒤 `/readyz`·`/api/info` 가 대상 DB 이름으로 연속 3 회
     답하는지 본다. `target-deploy.yaml` 의 형식은 아래 절에 있다.
+
+    LOGIN 을 켜기 전에 배포 명세가 이 job 의 대상인지 본다. `platform` 이
+    대상 라벨과 맞아야 하고(`cloud_run`⇔`gcp`, `ecs`⇔`aws`), Cloud Run 은
+    서비스 URL 이 `--target-app-url` 과 같아야 한다. 귀환 때 순방향 명세를
+    넘기면 여기서 거부된다. Cloud Run 은 새 리비전에 트래픽 100% 를 주고,
+    ECS 는 안정 뒤 PRIMARY 배포가 새 작업 정의인지 본다(롤백이면 실패).
+    LOGIN 을 켠 뒤 실패하면 출력 JSON 의 `app_login` 이 그 사실을 알린다.
 
     ```shell
     crosscloud prepare-target --cloud-config out/config.cloud.yaml \
@@ -138,7 +146,8 @@ secret_env:
 1.  트래픽 봇을 멈춘다(새 접수 0).
 1.  미처리 0 을 확인한다. Redis `XINFO GROUPS ingress:inbox` 의 `delivery`
     그룹 pending=0·lag=0, 접수 큐 `in_flight`=0·`last_error` 없음이어야
-    종료 코드 0 이다.
+    종료 코드 0 이다. Redis 는 DB 0·무인증만 받는다. DB 번호(`/1`)나
+    비밀번호가 든 URL 은 오판을 막으려고 거부한다.
 
     ```shell
     crosscloud ingress-drain-check \
@@ -168,5 +177,10 @@ secret_env:
 *   대상 앱 요청 API 는 토큰 없이 연다(`REQUEST_API_TOKEN` 미설정 시 open).
     durable-ingress 는 토큰을 쓰는 대상에 https 만 허용하므로, http LB 대상은
     `token_env` 를 두지 않는다.
-*   compose 예시는 `docker compose config` 로 형식만 확인했고 실제로 띄워
-    보지는 않았다.
+*   compose 예시는 `docker compose config` 로 형식을, 시험으로 Kafka
+    `CLUSTER_ID`(16바이트 base64url 22자)를 확인했다. 실제로 띄워 보지는
+    않았다.
+*   GCP 앱 배포(`terraform/google/target_app`)의 Cloud Run 진입은 `all`
+    이다. 운영자 PC 의 접수 큐가 서비스 URL 로 직접 보내기 때문이다.
+*   ECS 는 배포 서비스 주소를 `--target-app-url` 과 대조하지 않는다(ALB 를
+    따라가야 한다). 재배포 뒤 대상 앱 DB 신원 확인이 대신 잡는다.

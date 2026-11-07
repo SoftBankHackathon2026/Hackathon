@@ -110,6 +110,36 @@ def test_cloud_run_swaps_secret_and_plain_env_into_new_revision():
     assert revision.endswith("ccx-app-2")
 
 
+def test_cloud_run_sends_all_traffic_to_new_revision():
+    # 옛 리비전(A 프로필)에 남은 분할이 있으면 일부 요청이 A 로 간다.
+    session = _FakeSession()
+    session.service["traffic"] = [
+        {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 90},
+        {
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+            "revision": "ccx-app-1",
+            "percent": 10,
+        },
+    ]
+
+    _cloud_run(session).deploy(_PROFILE)
+
+    assert session.patched["traffic"] == [
+        {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}
+    ]
+
+
+def test_cloud_run_service_urls_include_uri_and_deterministic_urls():
+    session = _FakeSession()
+    session.service["uri"] = "https://ccx-app-abc-du.a.run.app"
+    session.service["urls"] = ["https://ccx-app-123.asia-northeast3.run.app"]
+
+    assert _cloud_run(session).service_urls() == (
+        "https://ccx-app-abc-du.a.run.app",
+        "https://ccx-app-123.asia-northeast3.run.app",
+    )
+
+
 def test_cloud_run_operation_error_is_deploy_error():
     session = _FakeSession(op_error={"code": 9, "message": "boom"})
 
@@ -176,13 +206,20 @@ def _stable(task_definition):
                 "taskDefinition": task_definition,
                 "runningCount": 1,
                 "desiredCount": 1,
-                "deployments": [{"id": "d", "status": "PRIMARY"}],
+                "deployments": [
+                    {
+                        "id": "d",
+                        "status": "PRIMARY",
+                        "taskDefinition": task_definition,
+                    }
+                ],
             }
         ]
     }
 
 
-def test_ecs_registers_same_family_revision_and_waits_stable():
+def _ecs_deploy(settled_task_definition):
+    """재배포 한 번. 안정 뒤 서비스가 settled_task_definition 을 쓴다."""
     client = _ecs_client()
     profile = target_deploy.TargetProfile(
         secret_env=(target_deploy.SecretEnv("DATABASE_URL", _TGT_SECRET),),
@@ -235,17 +272,26 @@ def test_ecs_registers_same_family_revision_and_waits_stable():
                 "taskDefinition": _TD_NEW,
             },
         )
-        stubber.add_response(
-            "describe_services",
-            _stable(_TD_NEW),
-            {"cluster": _CLUSTER, "services": ["ccx-app"]},
-        )
+        for _ in range(2):  # services_stable 대기 + 롤백 확인
+            stubber.add_response(
+                "describe_services",
+                _stable(settled_task_definition),
+                {"cluster": _CLUSTER, "services": ["ccx-app"]},
+            )
 
-        revision = target_deploy.EcsDeployer(
+        return target_deploy.EcsDeployer(
             client, _CLUSTER, "ccx-app", waiter_delay=1
         ).deploy(profile)
 
-    assert revision == _TD_NEW
+
+def test_ecs_registers_same_family_revision_and_waits_stable():
+    assert _ecs_deploy(_TD_NEW) == _TD_NEW
+
+
+def test_ecs_rollback_to_old_revision_is_deploy_error():
+    # 배포 회로 차단기가 옛 작업 정의로 되돌려도 서비스는 안정이 된다.
+    with pytest.raises(target_deploy.DeployError, match="ccx-app:4"):
+        _ecs_deploy(_TD_OLD)
 
 
 def test_ecs_rejects_secret_version_field():
