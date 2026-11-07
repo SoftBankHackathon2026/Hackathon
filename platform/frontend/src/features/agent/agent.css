@@ -120,3 +120,108 @@
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
+.agent-strip li > * {
+  min-width: 0;
+}
+.agent-rerun {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-left: auto;
+}
+.agent-note {
+  overflow-wrap: anywhere;
+}
+.agent-settings-list {
+  display: grid;
+  gap: var(--sp-5);
+}
+.agent-settings {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.agent-settings h3 {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.agent-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: var(--sp-4) var(--sp-5);
+  margin: 0;
+}
+.agent-facts > div {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.agent-facts dt {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-facts dd {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-plan,
+.agent-change-list,
+.agent-pending ul {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-plan li {
+  overflow-wrap: anywhere;
+}
+.agent-pending {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.agent-pending li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-form {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 520px;
+}
+.agent-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  font: var(--type-body);
+}
+.agent-field > span:first-child {
+  min-width: 96px;
+  color: var(--text-secondary);
+}
+.shell .agent-field input {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-body);
+}
+.shell .agent-field .seg {
+  flex-wrap: wrap;
+}
+.agent-change-list li {
+  overflow-wrap: anywhere;
+}

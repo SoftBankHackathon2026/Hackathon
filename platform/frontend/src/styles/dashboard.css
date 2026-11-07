@@ -3520,7 +3520,8 @@ body {
 }
 .fp-facts {
   display: flex;
-  gap: 32px;
+  flex-wrap: wrap;
+  gap: 10px 32px;
   margin: 14px 0 0;
 }
 .fp-facts dt {

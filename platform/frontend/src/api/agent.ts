@@ -14,6 +14,21 @@ export type AgentRunState =
   | "RESTART_FAILED"
   | "ERROR";
 export type AgentDecision = "approve" | "reject";
+export type AgentCommandKind = "settings" | "rerun";
+
+export type AgentSettingsChange = {
+  auto_apply?: boolean;
+  interval_seconds?: number;
+  slack_enabled?: boolean;
+  slack_thread_ts?: string;
+};
+export type AgentCommand = {
+  id: number;
+  kind: AgentCommandKind;
+  payload: Record<string, unknown>;
+  requested_by: string;
+  requested_at: string;
+};
 
 export type AgentStatus = {
   agent_id: string;
@@ -23,7 +38,10 @@ export type AgentStatus = {
   observed_at: string;
   received_at: string;
   online: boolean;
+  config: Record<string, unknown> | null;
+  pending_commands: AgentCommand[];
 };
+export type AgentStatusList = { agents: AgentStatus[]; can_command: boolean };
 export type AgentChange = { key: string; value: string };
 export type AgentRunSummary = {
   reason_codes: string[];
@@ -51,10 +69,11 @@ export type AgentRunDetail = AgentRun & {
   events: AgentRunEvent[];
   pending_approval: AgentPendingApproval | null;
   can_decide: boolean;
+  can_rerun: boolean;
 };
 
 export function getAgentStatus(signal?: AbortSignal) {
-  return request<{ agents: AgentStatus[] }>("agent/status", { signal });
+  return request<AgentStatusList>("agent/status", { signal });
 }
 
 export function listAgentRuns(limit: number, signal?: AbortSignal) {
@@ -72,6 +91,27 @@ export function getAgentRun(runId: string, signal?: AbortSignal) {
 export function decideAgentRun(runId: string, decision: AgentDecision) {
   return request<{ id: number; decision: AgentDecision }>(
     `agent/runs/${encodeURIComponent(runId)}/${decision}`,
+    { method: "POST" },
+  );
+}
+
+function agentPath(agentId: string, action: string) {
+  return `agent/agents/${encodeURIComponent(agentId)}/${action}`;
+}
+
+export function changeAgentSettings(
+  agentId: string,
+  change: AgentSettingsChange,
+) {
+  return request<{ id: number; kind: AgentCommandKind }>(
+    agentPath(agentId, "settings"),
+    { method: "POST", body: change },
+  );
+}
+
+export function rerunAgent(agentId: string) {
+  return request<{ id: number; kind: AgentCommandKind }>(
+    agentPath(agentId, "rerun"),
     { method: "POST" },
   );
 }

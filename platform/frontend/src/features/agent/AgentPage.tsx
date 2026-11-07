@@ -39,6 +39,8 @@ import {
   agentStatusQueryOptions,
   useDecideAgentRun,
 } from "./queries";
+import { AgentSettings, RerunButton } from "./AgentSettings";
+import { hasPendingRerun } from "./settings";
 import "./agent.css";
 
 const CONFIRM_TEXT: Record<AgentDecision, string> = {
@@ -67,7 +69,15 @@ export function AgentPage({ runId }: { runId?: string }) {
         </p>
       ) : (
         <>
-          <AgentStrip agents={status.agents} />
+          <AgentStrip agents={status.agents} canCommand={status.can_command} />
+          {status.agents.length > 0 && (
+            <Section title="설정">
+              <AgentSettings
+                agents={status.agents}
+                canCommand={status.can_command}
+              />
+            </Section>
+          )}
           <ScopeFilterRow>
             <FilterSelect
               label="실행"
@@ -91,7 +101,13 @@ export function AgentPage({ runId }: { runId?: string }) {
   );
 }
 
-function AgentStrip({ agents }: { agents: AgentStatus[] }) {
+function AgentStrip({
+  agents,
+  canCommand,
+}: {
+  agents: AgentStatus[];
+  canCommand: boolean;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 5000);
@@ -118,6 +134,12 @@ function AgentStrip({ agents }: { agents: AgentStatus[] }) {
           <span className="sub" title={formatDateTime(agent.received_at)}>
             마지막 신호 {formatAgo(agent.received_at, now)}
           </span>
+          {(canCommand || hasPendingRerun(agent.pending_commands)) && (
+            <RerunButton
+              agentId={agent.agent_id}
+              pending={hasPendingRerun(agent.pending_commands)}
+            />
+          )}
         </li>
       ))}
     </ul>
@@ -192,7 +214,10 @@ function RunsTable({
 
 function RunPanel({ runId, onClose }: { runId: string; onClose: () => void }) {
   const query = useQuery(agentRunQueryOptions(runId));
+  const status = useQuery(agentStatusQueryOptions());
   const run = query.data;
+  const agent = status.data?.agents.find((a) => a.agent_id === run?.agent_id);
+  const rerunPending = agent ? hasPendingRerun(agent.pending_commands) : false;
   return (
     <SidePanel
       kind="에이전트 실행"
@@ -216,7 +241,16 @@ function RunPanel({ runId, onClose }: { runId: string; onClose: () => void }) {
             ]
           : undefined
       }
-      actions={run ? <DecisionControls run={run} /> : undefined}
+      actions={
+        run ? (
+          <>
+            <DecisionControls run={run} />
+            {(run.can_rerun || rerunPending) && (
+              <RerunButton agentId={run.agent_id} pending={rerunPending} />
+            )}
+          </>
+        ) : undefined
+      }
     >
       {query.isError ? (
         <p className="pk-alert" role="alert">
