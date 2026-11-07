@@ -190,7 +190,9 @@ export function PreparePage({
     (c) => c.id === snapshot.selectedEnvironmentId,
   );
   return (
-    <div className={`pk-page connection-page${apps ? " is-apps" : ""}`}>
+    <div
+      className={`pk-page connection-page${apps ? " is-apps" : ""}${apps && gateway.mode !== "preview" ? " is-live-apps" : ""}`}
+    >
       <PageHeader title="마이그레이션 준비" />
       {gateway.mode === "preview" && (
         <div className="connection-preview-banner">
