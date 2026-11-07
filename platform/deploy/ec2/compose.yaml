@@ -77,8 +77,10 @@ services:
       ONEPORT_COLLECTOR_HEARTBEAT: /tmp/collector-heartbeat
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
       ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
+      GOOGLE_APPLICATION_CREDENTIALS: /etc/oneport/gcp/credentials.json
     volumes:
       - ./secrets/database-url:/etc/oneport/secrets/database-url:ro
+      - ./secrets/gcp:/etc/oneport/gcp:ro
       - ./kube:/etc/oneport/kube:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro

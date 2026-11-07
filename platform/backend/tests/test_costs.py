@@ -740,3 +740,25 @@ def test_one_time_costs_follow_transfer_direction():
     egress_sheet = SHEET.model_copy(update={"transfer_gib": {"internet_egress": 0.1}})
     outbound, _ = one_time_costs(cloud, "onprem", egress_sheet, ["platform"], config, 0.0)
     assert {line.item: line.monthly for line in outbound.lines}["데이터 첫 복사"] == 1.0
+
+
+def test_gcp_client_requests_scope_accepted_by_managed_service_apis(monkeypatch):
+    import google.auth
+
+    from controlplane.cost import collect
+
+    requested = []
+
+    class Credentials:
+        token = "t"
+
+        def refresh(self, request):
+            pass
+
+    def default(scopes):
+        requested.extend(scopes)
+        return Credentials(), "p"
+
+    monkeypatch.setattr(google.auth, "default", default)
+    collect._gcp_client().close()
+    assert requested == ["https://www.googleapis.com/auth/cloud-platform"]
