@@ -124,13 +124,16 @@ fn remove_expired_client_binding(p: &Policy, s: &State, now: u64) -> Result<()> 
     if p.role != "client" || s.key_expires_at_ms > now {
         return Err("another connection still owns the interface".into());
     }
+    remove_owned(p, s)
+}
+fn remove_owned(p: &Policy, s: &State) -> Result<()> {
     if Path::new("/sys/class/net").join(&p.interface).exists() {
         let peers = cmd("/usr/bin/wg", &["show", &p.interface, "peers"], None)?;
         if !std::str::from_utf8(&peers)?
             .split_whitespace()
             .eq(std::iter::once(s.public_key.as_str()))
         {
-            return Err("expired binding does not own the current WireGuard peer".into());
+            return Err("binding does not own the current WireGuard peer".into());
         }
     }
     remove(p)
@@ -261,8 +264,9 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             result?;
             Ok(serde_json::json!({"configured":true}))
         }
-        "refresh" | "status" | "remove" => {
-            if r.operation == "remove" && !Path::new(STATE).exists() {
+        "refresh" | "status" | "remove" | "remove-exact" => {
+            let removing = matches!(r.operation.as_str(), "remove" | "remove-exact");
+            if removing && !Path::new(STATE).exists() {
                 if Path::new("/sys/class/net").join(&p.interface).exists() {
                     return Err("unowned interface exists".into());
                 }
@@ -277,8 +281,12 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
                 }
                 return Err("state mismatch".into());
             }
-            if r.operation == "remove" {
-                remove(p)?;
+            if removing {
+                if r.operation == "remove-exact" {
+                    remove_owned(p, &s)?;
+                } else {
+                    remove(p)?;
+                }
                 return Ok(serde_json::json!({"removed":true}));
             }
             if s.key_expires_at_ms <= migration_connector::now_ms() {

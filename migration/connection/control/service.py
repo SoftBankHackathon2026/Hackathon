@@ -172,6 +172,26 @@ class ConnectionService:
         require(row["team"] == actor.team, "CONNECTION_NOT_FOUND", 404)
         require(not write or actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
 
+    def _revoke(self, row):
+        row["device"], row["tunnel"] = "REVOKED", "NONE"
+        row["lease_expires_at"] = 0
+        row["task"] = None
+        row["cleanup"] = {
+            "server": True,
+            "gateway": False,
+            "resources": True,
+            "local": False,
+        }
+
+    def _replacement_gateway(self, replacement):
+        if not replacement["epoch"] or replacement.get("gateway_confirmed"):
+            return "ready"
+        previous = self.store.get(replacement["request_id"])
+        cleanup = previous.get("cleanup", {}) if previous else {}
+        if cleanup.get("gateway"):
+            return "ready"
+        return "blocked" if cleanup.get("gateway_blocked") else "pending"
+
     def _expire(self, row):
         now = self.clock()
         if row["registration"] == "ISSUED" and now >= row["expires_at"]:
@@ -179,15 +199,7 @@ class ConnectionService:
         if row["device"] == "PENDING_APPROVAL" and now >= row["approval_expires_at"]:
             row["device"] = "REJECTED"
         if row["device"] == "APPROVED" and now >= row.get("device_expires_at", 0):
-            row["device"], row["tunnel"] = "REVOKED", "NONE"
-            row["lease_expires_at"] = 0
-            row["task"] = None
-            row["cleanup"] = {
-                "server": True,
-                "gateway": False,
-                "resources": True,
-                "local": False,
-            }
+            self._revoke(row)
             row["issue"] = "단말 인증키 유효기간이 끝났습니다. 새로 등록하세요."
         if row["tunnel"] == "READY" and (
             now >= row.get("lease_expires_at", 0) or now >= row.get("key_expires_at", 0)
@@ -253,11 +265,20 @@ class ConnectionService:
         ]:
             if internal in row:
                 result[external] = row[internal]
+        if replacement := row.get("replacement"):
+            result["replacement"] = {
+                "previousRequestId": replacement["request_id"],
+                "gateway": self._replacement_gateway(replacement),
+                "client": replacement.get("client", "pending"),
+            }
         if row.get("candidate"):
             result["candidate"] = {
                 k: row["candidate"][k]
                 for k in ("id", "digest", "fingerprint", "hostname", "os", "arch")
             }
+            result["candidate"]["supportsReplacement"] = row["candidate"].get(
+                "supports_replacement", False
+            )
         return result
 
     def list(self, actor):
@@ -376,7 +397,14 @@ class ConnectionService:
                 p = body["payload"]
                 require(
                     isinstance(p, dict)
-                    and set(p) == PROOF_FIELDS
+                    and set(p) - {"replacement_version"} == PROOF_FIELDS
+                    and (
+                        "replacement_version" not in p
+                        or (
+                            type(p["replacement_version"]) is int
+                            and p["replacement_version"] == 1
+                        )
+                    )
                     and type(p["version"]) is int
                     and p["version"] == 1
                     and p["request_id"] == request_id
@@ -417,6 +445,7 @@ class ConnectionService:
                     "hostname": short_text(meta.get("hostname", "unknown")),
                     "os": short_text(meta.get("os", "unknown")),
                     "arch": short_text(meta.get("arch", "unknown")),
+                    "supports_replacement": p.get("replacement_version") == 1,
                     "public_key": p["device_auth_public_key"],
                     "wireguard_public_key": p["wireguard_public_key"],
                 }
@@ -440,8 +469,19 @@ class ConnectionService:
 
     def browser(self, request_id, actor, action, data):
         self.limiter.check(actor_scope(actor), self.clock())
-        with self.store.locked(identifier(request_id)) as row:
+        request_id = identifier(request_id)
+        replace_id = data.get("replaceId") if action == "approve" else None
+        if replace_id is not None:
+            replace_id = identifier(replace_id)
+            require(replace_id != request_id, "REPLACEMENT_UNAVAILABLE")
+        with self.store.locked_rows(
+            *([request_id, replace_id] if replace_id else [request_id])
+        ) as rows:
+            row = rows[request_id]
             self._access(row, actor, True)
+            previous = rows.get(replace_id)
+            if previous is not None:
+                self._access(previous, actor, True)
             self._expire(row)
             if action == "cancel":
                 require(
@@ -451,6 +491,13 @@ class ConnectionService:
                 row["registration"] = "CANCELLED"
                 row["challenges"] = {}
             elif action in ("approve", "reject"):
+                if (
+                    action == "approve"
+                    and previous is not None
+                    and row["device"] == "APPROVED"
+                    and row.get("replacement", {}).get("request_id") == replace_id
+                ):
+                    return self.snapshot(row, actor)
                 require(row["device"] == "PENDING_APPROVAL", "APPROVAL_UNAVAILABLE")
                 if action == "reject":
                     row["device"] = "REJECTED"
@@ -473,18 +520,36 @@ class ConnectionService:
                             row["device"] = "REJECTED"
                         self._touch(row, "단말 확인 코드가 일치하지 않습니다.")
                         raise ConnectionError("INVALID_CONFIRMATION_CODE", 422)
+                    if previous is not None:
+                        require(
+                            row["candidate"].get("supports_replacement"),
+                            "REPLACEMENT_CLIENT_UNSUPPORTED",
+                        )
+                        self._expire(previous)
+                        require(
+                            previous["device"] == "APPROVED"
+                            and (
+                                not previous.get("replacement")
+                                or previous["replacement"].get("client") == "ready"
+                            ),
+                            "REPLACEMENT_UNAVAILABLE",
+                        )
+                        row["replacement"] = {
+                            "request_id": previous["id"],
+                            "epoch": previous["epoch"],
+                            "connection_id": previous.get("connection_id"),
+                        }
+                        self._revoke(previous)
+                        if previous["epoch"] == 0:
+                            previous["cleanup"]["gateway"] = True
+                        self._touch(
+                            previous, "새 단말 연결 승인으로 기존 연결을 철회했습니다."
+                        )
                     row["device"], row["tunnel"] = "APPROVED", "CONNECTING"
                     row["device_expires_at"] = self.clock() + 90 * 86400000
             elif action == "revoke":
-                row["device"], row["tunnel"] = "REVOKED", "NONE"
-                row["lease_expires_at"] = 0
-                row["task"] = None
-                row["cleanup"] = {
-                    "server": True,
-                    "gateway": False,
-                    "resources": True,
-                    "local": False,
-                }
+                if row["device"] != "REVOKED":
+                    self._revoke(row)
             elif action == "reconnect":
                 require(
                     row["device"] == "APPROVED" and row["tunnel"] == "DEGRADED",
@@ -633,7 +698,33 @@ class ConnectionService:
                         "confirmation_code": row["code"]
                         if row["device"] == "PENDING_APPROVAL"
                         else None,
+                        "replacement": row.get("replacement")
+                        if row["device"] == "APPROVED"
+                        else None,
                     }
+                if action == "replacement-cleanup":
+                    replacement = row.get("replacement")
+                    require(
+                        row["device"] == "APPROVED"
+                        and replacement
+                        and set(data) == {"client"}
+                        and data["client"] in ("ready", "blocked"),
+                        "INVALID_CLEANUP",
+                        422,
+                    )
+                    require(
+                        self._replacement_gateway(replacement) == "ready",
+                        "REPLACEMENT_GATEWAY_PENDING",
+                    )
+                    if (
+                        replacement.get("client") != "ready"
+                        and replacement.get("client") != data["client"]
+                    ):
+                        replacement["client"] = data["client"]
+                        self._touch(
+                            row, "새 연결을 위한 단말 터널 정리 상태를 확인했습니다."
+                        )
+                    return {"accepted": True}
                 if action == "cleanup":
                     require(
                         row["device"] in ("REVOKED", "REJECTED")
@@ -788,6 +879,10 @@ class ConnectionService:
                 "epoch": row["epoch"],
                 "state": row["tunnel"],
                 "authorization_expires_at_ms": self.clock() + 60000,
+                "replacement": row.get("replacement")
+                if row.get("replacement")
+                and self._replacement_gateway(row["replacement"]) != "ready"
+                else None,
             }
 
     def tunnel(self, request_id, data):
@@ -796,10 +891,25 @@ class ConnectionService:
             require(
                 row["team"] == self.runtime_tenant_id, "RUNTIME_TENANT_MISMATCH", 403
             )
-            if data.get("state") == "REVOKED":
+            if data.get("state") in ("REVOKED", "REVOKE_BLOCKED"):
                 require(row["device"] == "REVOKED", "DEVICE_NOT_REVOKED")
-                row["cleanup"]["gateway"] = True
-                self._touch(row, "게이트웨이 터널 차단을 확인했습니다.")
+                if row["epoch"]:
+                    require(
+                        data.get("epoch") == row["epoch"]
+                        and data.get("connection_id") == row.get("connection_id"),
+                        "CONNECTION_BINDING_CHANGED",
+                    )
+                cleanup = row["cleanup"]
+                if not cleanup["gateway"]:
+                    if data["state"] == "REVOKED":
+                        cleanup["gateway"] = True
+                        cleanup.pop("gateway_blocked", None)
+                        self._touch(row, "게이트웨이 터널 차단을 확인했습니다.")
+                    elif not cleanup.get("gateway_blocked"):
+                        cleanup["gateway_blocked"] = True
+                        self._touch(
+                            row, "게이트웨이에서 기존 터널을 정리하지 못했습니다."
+                        )
                 return {"accepted": True}
             require(row["device"] == "APPROVED", "DEVICE_NOT_APPROVED", 403)
             now = self.clock()
@@ -815,6 +925,17 @@ class ConnectionService:
             require(
                 state in ("READY", "DEGRADED", "REKEYING"), "INVALID_TUNNEL_STATE", 422
             )
+            if replacement := row.get("replacement"):
+                require(
+                    self._replacement_gateway(replacement) == "ready",
+                    "REPLACEMENT_GATEWAY_PENDING",
+                )
+                replacement["gateway_confirmed"] = True
+                if state == "READY":
+                    require(
+                        replacement.get("client") == "ready",
+                        "REPLACEMENT_CLIENT_PENDING",
+                    )
             if epoch == row["epoch"]:
                 require(
                     data["connection_id"] == row.get("connection_id"),

@@ -14,7 +14,7 @@ from migration_connection.control.store import PostgresStore
 from psycopg import sql
 from psycopg.rows import dict_row
 from redis import Redis
-from test_control import IP, OWNER, approved, envelope, issued, proof
+from test_control import IP, OWNER, PUBLIC, approved, envelope, issued, proof, ready
 from test_control import svc as control_service_fixture
 
 svc = control_service_fixture
@@ -111,6 +111,39 @@ def test_postgres_consumes_nonce_on_malformed_signed_device_payload(pg_store, sv
     with pytest.raises(ConnectionError, match="INVALID_CHALLENGE"):
         svc.device(request_id, valid)
     assert svc.device(request_id, envelope(svc, request_id, "status", {}))["device_id"]
+
+
+def test_postgres_competing_replacements_have_one_winner(pg_store, svc):
+    svc.store = pg_store
+    previous = ready(svc)
+    pending = {}
+    for i in range(2):
+        request_id = svc.create(OWNER, PUBLIC, f"replacement_operation_{i}")["id"]
+        candidate = svc.prove(request_id, proof(svc, request_id, replacement=True))
+        pending[request_id] = {
+            "candidateDigest": candidate["candidate_digest"],
+            "code": candidate["confirmation_code"],
+            "replaceId": previous,
+        }
+
+    def approve(request_id):
+        try:
+            return svc.browser(request_id, OWNER, "approve", pending[request_id])[
+                "device"
+            ]
+        except ConnectionError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(approve, pending)) == [
+            "APPROVED",
+            "REPLACEMENT_UNAVAILABLE",
+        ]
+    assert svc.get(previous, OWNER)["device"] == "REVOKED"
+    assert sorted(svc.get(request_id, OWNER)["device"] for request_id in pending) == [
+        "APPROVED",
+        "PENDING_APPROVAL",
+    ]
 
 
 @pytest.fixture

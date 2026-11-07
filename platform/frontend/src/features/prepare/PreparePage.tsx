@@ -500,6 +500,20 @@ export function PreparePage({
                       key={snapshot.id}
                       snapshot={snapshot}
                       gateway={gateway}
+                      replacements={
+                        gateway.mode === "live" &&
+                        snapshot.candidate?.supportsReplacement
+                          ? snapshots.filter(
+                              (old) =>
+                                old.id !== snapshot.id &&
+                                old.organization === snapshot.organization &&
+                                old.device === "APPROVED" &&
+                                old.permissions.revoke &&
+                                (!old.replacement ||
+                                  old.replacement.client === "ready"),
+                            )
+                          : []
+                      }
                       now={now}
                       busy={busy || stale}
                       run={run}

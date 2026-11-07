@@ -276,6 +276,11 @@ def main():
             == 0
         ):
             raise RuntimeError("another request removed an unexpired key")
+        if helper_call(client, "remove-exact", check=False, epoch=2).returncode == 0:
+            raise RuntimeError("replacement removed a different key epoch")
+        helper(client, "remove-exact")
+        helper(client, "remove-exact")  # Retry after losing the cleanup response.
+        helper(client, "configure", **{**replacement, "connection_id": CONNECTION})
         mark_binding_expired(client)
         helper(client, "configure", **replacement)
         mark_binding_expired(client)

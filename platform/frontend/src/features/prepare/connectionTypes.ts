@@ -65,9 +65,15 @@ export type ConnectionSnapshot = {
     hostname: string;
     os: string;
     arch: string;
+    supportsReplacement?: boolean;
   };
   attemptsLeft: number;
   tunnelChecks: number;
+  replacement?: {
+    previousRequestId: string;
+    gateway: "pending" | "blocked" | "ready";
+    client: "pending" | "blocked" | "ready";
+  };
   epoch: number;
   keyExpiresAt?: number;
   cleanup?: {
@@ -100,6 +106,7 @@ export type ConnectionGateway = {
     id: string,
     candidateDigest: string,
     code: string,
+    replaceId?: string,
   ) => Promise<void>;
   reject: (id: string) => Promise<void>;
   collect: (id: string, discoveredId: string) => Promise<void>;

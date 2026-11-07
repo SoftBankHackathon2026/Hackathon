@@ -13,18 +13,23 @@ type Run = (action: () => Promise<void>, message?: string) => void;
 export function DeviceApproval({
   snapshot: s,
   gateway,
+  replacements,
   now,
   busy,
   run,
 }: {
   snapshot: ConnectionSnapshot;
   gateway: ConnectionGateway;
+  replacements: readonly ConnectionSnapshot[];
   now: number;
   busy: boolean;
   run: Run;
 }) {
   const [code, setCode] = useState(""),
-    [confirmed, setConfirmed] = useState(false);
+    [confirmed, setConfirmed] = useState(false),
+    [replaceId, setReplaceId] = useState("");
+  const replacement = replacements.find((old) => old.id === replaceId);
+  const canSubmit = !replaceId || Boolean(replacement);
   const eligible = canApproveDevice(s, now);
   return (
     <section>
@@ -69,15 +74,18 @@ export function DeviceApproval({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (eligible && confirmed && codeValid(code))
+            if (eligible && confirmed && codeValid(code) && canSubmit)
               run(
                 () =>
                   gateway.approveDevice(
                     s.id,
                     s.candidate!.digest,
                     normalizeCode(code),
+                    replacement?.id,
                   ),
-                "단말을 승인했어요. 보안 연결을 준비해요.",
+                replacement
+                  ? "이전 연결을 철회했어요. 터널 정리를 기다려 주세요."
+                  : "단말을 승인했어요. 보안 연결을 준비해요.",
               );
           }}
         >
@@ -110,6 +118,36 @@ export function DeviceApproval({
             />
             <span>제가 실행한 단말이며, 환경정보 수집을 승인해요.</span>
           </label>
+          {(replacements.length > 0 || replaceId) && (
+            <label className="connection-code-label">
+              교체할 연결
+              <select
+                value={replaceId}
+                onChange={(e) => setReplaceId(e.target.value)}
+                disabled={!eligible || busy}
+              >
+                <option value="">교체할 연결 없음</option>
+                {replaceId && !replacement && (
+                  <option value={replaceId}>
+                    선택한 연결을 교체할 수 없어요
+                  </option>
+                )}
+                {replacements.map((old) => (
+                  <option key={old.id} value={old.id}>
+                    {old.target?.name ??
+                      old.candidate?.hostname ??
+                      "등록 전 연결"}{" "}
+                    · {old.id.slice(0, 8)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {replacement && (
+            <p className="connection-note">
+              교체를 승인하면 선택한 연결과 진행 중인 환경정보 수집이 종료돼요.
+            </p>
+          )}
           {!s.permissions.approveDevice && (
             <p>이 단말을 승인할 권한이 없어요. 조직 관리자에게 문의하세요.</p>
           )}
@@ -120,9 +158,15 @@ export function DeviceApproval({
             <button
               type="submit"
               className="primary"
-              disabled={!eligible || !confirmed || !codeValid(code) || busy}
+              disabled={
+                !eligible ||
+                !confirmed ||
+                !codeValid(code) ||
+                !canSubmit ||
+                busy
+              }
             >
-              단말 연결 승인
+              {replacement ? "기존 연결을 종료하고 교체" : "단말 연결 승인"}
             </button>
             <button
               type="button"
@@ -146,6 +190,7 @@ export function TunnelProgress({
 }: {
   snapshot: ConnectionSnapshot;
 }) {
+  const replacement = s.replacement;
   return (
     <section>
       <header className="connection-title">
@@ -154,7 +199,17 @@ export function TunnelProgress({
             ? "보안 연결을 확인하지 못했어요"
             : "보안 연결을 준비하고 있어요"}
         </h2>
-        <p>승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요.</p>
+        <p>
+          {replacement?.gateway === "blocked"
+            ? "중계 서버에서 이전 터널을 정리하지 못했어요. 같은 요청으로 다시 시도해요."
+            : replacement && replacement.gateway !== "ready"
+              ? "중계 서버가 이전 터널을 정리할 때까지 기다려 주세요."
+              : replacement?.client === "blocked"
+                ? "단말에서 이전 터널을 정리하지 못했어요. 터미널의 실행 상태를 확인하세요."
+                : replacement && replacement.client !== "ready"
+                  ? "단말에서 이전 터널을 정리하고 있어요."
+                  : "승인된 단말과 암호화 통로를 만들고 양방향 통신을 확인해요."}
+        </p>
       </header>
       <ol className="connection-check-list">
         {TUNNEL_CHECKS.map((text, i) => (

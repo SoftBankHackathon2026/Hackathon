@@ -10,6 +10,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
 }) => {
   test.setTimeout(45000);
   const id = "a".repeat(22);
+  const oldId = "b".repeat(22);
   const source = {
     id: "cluster-one",
     kind: "kubernetes" as const,
@@ -99,7 +100,20 @@ test("mocked API contract copies a command, confirms, collects, registers and re
       }
       return route.fulfill({
         json: state
-          ? [{ ...state, serverNow: Date.now(), observedAt: Date.now() }]
+          ? [
+              { ...state, serverNow: Date.now(), observedAt: Date.now() },
+              ...(state.device === "PENDING_APPROVAL"
+                ? [
+                    {
+                      ...state,
+                      id: oldId,
+                      device: "APPROVED",
+                      tunnel: "READY",
+                      candidate: { ...state.candidate, hostname: "이전 단말" },
+                    },
+                  ]
+                : []),
+            ]
           : [],
       });
     }
@@ -149,6 +163,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
           hostname: "test",
           os: "Ubuntu",
           arch: "arm64",
+          supportsReplacement: true,
         },
       };
       return route.fulfill({ json: issued });
@@ -157,6 +172,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
       return route.fulfill({ status: 404, json: { detail: "missing" } });
     state.revision++;
     if (action === "approve") {
+      expect(body.replaceId).toBe(oldId);
       state.device = "APPROVED";
       state.tunnel = "READY";
       state.epoch = 1;
@@ -194,8 +210,12 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await page
     .getByLabel("제가 실행한 단말이며, 환경정보 수집을 승인해요.")
     .check();
+  await page.getByLabel("교체할 연결", { exact: true }).selectOption(oldId);
+  await expect(
+    page.getByText(/선택한 연결과 진행 중인 환경정보 수집이 종료/),
+  ).toBeVisible();
   await page
-    .getByRole("button", { name: "단말 연결 승인", exact: true })
+    .getByRole("button", { name: "기존 연결을 종료하고 교체", exact: true })
     .click();
   await page.getByRole("radio", { name: /시험 클러스터/ }).check();
   await page.getByRole("button", { name: "선택한 환경정보 수집" }).click();

@@ -35,6 +35,10 @@ const MESSAGES: Record<string, string> = {
   CONNECTION_UNAVAILABLE:
     "연결 실행 환경이 준비되지 않았어요. 관리자에게 확인해 주세요.",
   CONNECTION_PERMISSION_DENIED: "이 연결을 변경할 권한이 없어요.",
+  REPLACEMENT_CLIENT_UNSUPPORTED:
+    "새 단말 프로그램으로 다시 등록하면 연결을 교체할 수 있어요.",
+  REPLACEMENT_UNAVAILABLE:
+    "교체할 연결의 상태가 바뀌었어요. 목록을 다시 확인하세요.",
   CONNECTION_NOT_FOUND: "연결 요청을 찾을 수 없어요.",
   IDEMPOTENCY_CONFLICT: "요청 정보가 바뀌었어요. 새 명령을 복사해 주세요.",
   INVALID_TEXT: "등록할 이름과 프로젝트의 입력 길이를 확인하세요.",
@@ -213,8 +217,8 @@ export function createLiveConnections(
       }
     },
     cancel: (id) => mutate(id, "cancel"),
-    approveDevice: (id, candidateDigest, code) =>
-      mutate(id, "approve", { candidateDigest, code }),
+    approveDevice: (id, candidateDigest, code, replaceId) =>
+      mutate(id, "approve", { candidateDigest, code, replaceId }),
     reject: (id) => mutate(id, "reject"),
     collect: (id, discoveredId) => mutate(id, "collect", { discoveredId }),
     register: (id, collectedId, inventoryDigest, target) =>

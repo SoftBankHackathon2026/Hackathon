@@ -228,6 +228,7 @@ fn establish(
     s: &mut Local,
     key: &PKey<Private>,
     policy: &Policy,
+    replacement: Option<&network::Replacement>,
 ) -> std::result::Result<Binding, &'static str> {
     let stream = (c.broker_host.as_str(), c.broker_port)
         .to_socket_addrs()
@@ -292,6 +293,23 @@ fn establish(
     let commit: Value = protocol::recv(&mut tls).map_err(|_| "broker-commit")?;
     if commit["type"] != "COMMIT" || commit["epoch"] != binding.epoch {
         return Err("broker-commit");
+    }
+    if let Some(previous) = replacement.filter(|old| old.client.as_deref() != Some("ready")) {
+        let removed = previous
+            .removal()
+            .is_none_or(|request| network::helper(Path::new(&c.helper_path), &request).is_ok());
+        api::device(
+            &c.public_api_url,
+            &s.request_id,
+            &s.candidate_id,
+            key,
+            "replacement-cleanup",
+            json!({"client": if removed { "ready" } else { "blocked" }}),
+        )
+        .map_err(|_| "replacement-cleanup-report")?;
+        if !removed {
+            return Err("replacement-client-cleanup");
+        }
     }
     s.epoch = binding.epoch;
     s.connection_id = Some(binding.connection_id.clone());
@@ -611,7 +629,7 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
                 &json!({"candidateId":state.candidate_id}),
                 None,
             )?;
-            let payload = json!({"version":1,"request_id":request,"candidate_id":state.candidate_id,"challenge_id":challenge["challenge_id"],"challenge":challenge["challenge"],"device_auth_public_key":crypto::b64(&key.raw_public_key()?),"wireguard_public_key":state.wireguard_public,"audience":"migration-connector-enrollment","expires_at_ms":challenge["expires_at_ms"]});
+            let payload = json!({"version":1,"replacement_version":1,"request_id":request,"candidate_id":state.candidate_id,"challenge_id":challenge["challenge_id"],"challenge":challenge["challenge"],"device_auth_public_key":crypto::b64(&key.raw_public_key()?),"wireguard_public_key":state.wireguard_public,"audience":"migration-connector-enrollment","expires_at_ms":challenge["expires_at_ms"]});
             let enroll_key = crypto::seed_key(&seed)?;
             let body = json!({"payload":payload,"enrollment_signature":crypto::sign(&enroll_key,&protocol::signed_bytes("migration/enrollment/v1",&payload)?)?,"device_signature":crypto::sign(&key,&protocol::signed_bytes("migration/device-possession/v1",&payload)?)?,"metadata":{"hostname":"user-terminal","os":"linux","arch":std::env::consts::ARCH}});
             api::post(
@@ -704,7 +722,17 @@ fn run(config_path: &Path, resume: Option<&str>) -> Result<()> {
             Some("REVOKED" | "REJECTED") => return cleanup(&c, &dir, &state, &key),
             _ => return Err("unexpected device status".into()),
         }
-        let outcome = match establish(&c, base, &dir, &mut state, &key, &policy) {
+        let replacement: Option<network::Replacement> =
+            serde_json::from_value(status["replacement"].clone())?;
+        let outcome = match establish(
+            &c,
+            base,
+            &dir,
+            &mut state,
+            &key,
+            &policy,
+            replacement.as_ref(),
+        ) {
             Ok(binding) => {
                 println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
                 serve_tunnel(&c, base, &state, &key, &policy, &binding)

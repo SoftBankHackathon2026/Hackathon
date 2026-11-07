@@ -166,7 +166,18 @@ pub fn ensure(bundle: &Path, helper: &Path) -> Result<()> {
     }
     let uid = unsafe { libc::getuid() };
     if check(helper, uid).is_ok() {
-        return Ok(());
+        let manifest = release::verify_bundle(bundle)?;
+        if let Some(artifact) = manifest
+            .artifacts
+            .iter()
+            .find(|a| a.name == "migration-net-helper")
+        {
+            if crypto::digest(&read_regular(helper, 0, MAX_ARTIFACT)?) == artifact.sha384 {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
     }
     if uid == 0 {
         return Err("일반 사용자로 실행한 뒤 설치 단계에서 sudo 승인을 해 주세요.".into());
@@ -420,8 +431,11 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
             return Err("기존 관리자 권한 규칙과 충돌합니다.".into());
         }
     }
-    if fs::symlink_metadata("/run/migration-connector-network.json").is_ok() {
-        return Err("활성 연결이 있어 네트워크 보조 프로그램을 교체할 수 없습니다.".into());
+    // A signed helper can be atomically replaced under the network lock while
+    // retaining the existing policy and the current interface.
+    let existing_install = old_policy.is_some() && old_helper.is_some();
+    if !existing_install && fs::symlink_metadata("/run/migration-connector-network.json").is_ok() {
+        return Err("활성 연결의 기존 보조 프로그램과 정책을 확인할 수 없습니다.".into());
     }
     let sudo_stage = stage.0.join("sudoers");
     create(&sudo_stage, sudo_rule.as_bytes(), 0o440)?;
@@ -455,7 +469,7 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
     {
         return Err("다른 네트워크 설정 작업이 진행 중입니다. 다시 시도해 주세요.".into());
     }
-    if fs::symlink_metadata("/run/migration-connector-network.json").is_ok()
+    if (!existing_install && fs::symlink_metadata("/run/migration-connector-network.json").is_ok())
         || existing(Path::new(HELPER))? != old_helper
         || existing(Path::new(POLICY))? != old_policy
         || existing(Path::new(FLOOR))? != old_floor
