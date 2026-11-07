@@ -20,6 +20,10 @@ crosscloud/terraform/aws 가 만드는 자원 종류와 조회 방법:
 
 이름 거르기는 이름이 접두사 자체이거나 `접두사-` 로 시작하는지 본다.
 
+리전은 호출자가 명시한다. 운영자 기본 리전을 따르면 다른 리전에 남은 자원을
+"잔여 0" 으로 판정하기 때문이다. 만든 클라이언트의 리전이 기대와 다르면(생성
+함수가 리전 인자를 무시한 경우) 오류다. IAM 은 전역 서비스라 예외다.
+
 INACTIVE 작업 정의는 잔여로 세지 않는다. terraform destroy 는 작업 정의를 등록
 해제(INACTIVE)만 할 수 있고 지우지 못한다. 등록 해제된 정의는 과금되지 않고 새
 서비스·작업에 쓸 수 없다. 이것까지 세면 정상 해체 뒤에도 늘 잔여가 보고된다.
@@ -28,7 +32,8 @@ INACTIVE 작업 정의는 잔여로 세지 않는다. terraform destroy 는 작�
 잔여 0 으로 보지 않는다. 모듈에 새 자원 종류를 더하면 _SCANS 에도 더해야
 한다 — 표에 없는 종류는 잔여 검사가 보지 않는다.
 
-  scanner = residue_aws.AwsResidueScanner(boto3.Session().client)
+  scanner = residue_aws.AwsResidueScanner(
+      boto3.Session().client, region="ap-northeast-2")
   items = scanner.scan("ccx-r1")
 """
 
@@ -43,21 +48,33 @@ from crosscloud.provision import residue
 
 _RUN_TAG_KEY = "crosscloud-run"
 
-# boto3 클라이언트를 서비스 이름으로 만드는 함수(예: boto3.Session().client).
-ClientFactory = Callable[[str], Any]
+# boto3 클라이언트를 서비스 이름과 리전으로 만드는 함수
+# (예: boto3.Session().client — client(service, region_name=...)).
+ClientFactory = Callable[..., Any]
+
+# 리전과 무관한 전역 서비스. 이 클라이언트는 리전을 확인하지 않는다.
+_GLOBAL_SERVICES = frozenset({"iam"})
 
 
 class AwsResidueScanner:
     """한 AWS 계정·리전에서 실행 접두사 자원을 찾는다(ResidueScanner 구현)."""
 
-    def __init__(self, client: ClientFactory) -> None:
-        """질의에 쓸 클라이언트 생성 함수를 받는다.
+    def __init__(self, client: ClientFactory, *, region: str) -> None:
+        """질의에 쓸 클라이언트 생성 함수와 조회 리전을 받는다.
 
         Args:
-            client: 서비스 이름으로 boto3 클라이언트를 만드는 함수. 리전 자원은
-                이 클라이언트의 리전에서 찾는다.
+            client: `client(service, region_name=...)` 로 boto3 클라이언트를
+                만드는 함수.
+            region: 리전 자원을 찾을 리전(예: ap-northeast-2). Terraform 루트
+                출력 `region` 과 같은 값을 넘긴다.
+
+        Raises:
+            ValueError: region 이 비었을 때.
         """
+        if not region.strip():
+            raise ValueError("잔여 검사 리전이 비었다")
         self._client = client
+        self._region = region
 
     def scan(self, name_prefix: str) -> tuple[residue.ResidueItem, ...]:
         """이름이 name_prefix 이거나 `name_prefix-` 로 시작하는 자원을 찾는다.
@@ -77,8 +94,12 @@ class AwsResidueScanner:
             arns = {
                 arn
                 for service, listing in _SCANS
-                for arn in listing(self._client(service), name_prefix)
+                for arn in listing(self._regional_client(service), name_prefix)
             }
+            return tuple(
+                residue.ResidueItem(cloud="aws", kind=_kind(arn), native_id=arn)
+                for arn in sorted(arns)
+            )
         except exceptions.ClientError as error:
             raise residue.ResidueScanError(
                 f"AWS 잔여 조회 실패: {error.operation_name} "
@@ -92,10 +113,17 @@ class AwsResidueScanner:
             raise residue.ResidueScanError(
                 f"AWS 잔여 조회 응답 형식 오류: {error!r}"
             ) from error
-        return tuple(
-            residue.ResidueItem(cloud="aws", kind=_kind(arn), native_id=arn)
-            for arn in sorted(arns)
-        )
+
+    def _regional_client(self, service: str) -> Any:
+        """조회 리전의 클라이언트를 만들고, 리전이 맞는지 확인한다."""
+        made = self._client(service, region_name=self._region)
+        actual = made.meta.region_name
+        if service not in _GLOBAL_SERVICES and actual != self._region:
+            raise residue.ResidueScanError(
+                f"AWS 잔여 조회 리전 불일치: {service} 클라이언트가 {actual}"
+                f" 리전이다(기대 {self._region})"
+            )
+        return made
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,7 +149,7 @@ def _named(client: Any, listing: _Named, name_prefix: str) -> Iterator[str]:
     params = {listing.prefix_param: name_prefix} if listing.prefix_param else {}
     paginator = client.get_paginator(listing.operation)
     for page in paginator.paginate(**params):
-        for item in page.get(listing.list_key, []):
+        for item in page[listing.list_key]:
             if residue.is_named_with_prefix(
                 item[listing.name_key], name_prefix
             ):
@@ -300,7 +328,13 @@ def _last_segment(arn: str) -> str:
 
 
 def _kind(arn: str) -> str:
-    """ARN 에서 "서비스:자원 종류"를 뽑는다(예: ec2:security-group)."""
+    """ARN 에서 "서비스:자원 종류"를 뽑는다(예: ec2:security-group).
+
+    Raises:
+        ValueError: ARN 형식이 아닐 때.
+    """
+    if not arn.startswith("arn:"):
+        raise ValueError(f"ARN 이 아니다: {arn!r}")
     _, _, service, _, _, resource = arn.split(":", 5)
     resource_type = re.match(r"[^:/]*", resource).group(0)
     return f"{service}:{resource_type}"

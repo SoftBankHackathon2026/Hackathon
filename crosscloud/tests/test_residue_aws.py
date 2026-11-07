@@ -26,6 +26,15 @@ def _arn(service, resource):
     return f"arn:aws:{service}:{_REGION}:{_ACCOUNT}:{resource}"
 
 
+def _client(service, region):
+    return boto3.client(
+        service,
+        region_name=region,
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+    )
+
+
 _CLUSTER_ARN = _arn("ecs", f"cluster/{_PREFIX}")
 _LB_ARN = _arn("elasticloadbalancing", f"loadbalancer/app/{_PREFIX}-alb/1")
 _SECRET_ARN = _arn("secretsmanager", "secret:ccx-r1-database-url-AbCdEf")
@@ -70,7 +79,12 @@ _CALLS = (
     ("elbv2", "describe_listeners", None, None),
     ("elbv2", "describe_target_groups", {}, {"TargetGroups": []}),
     ("iam", "list_roles", {}, {"Roles": [], "IsTruncated": False}),
-    ("logs", "describe_log_groups", {"logGroupNamePrefix": _PREFIX}, {}),
+    (
+        "logs",
+        "describe_log_groups",
+        {"logGroupNamePrefix": _PREFIX},
+        {"logGroups": []},
+    ),
 )
 
 
@@ -81,23 +95,24 @@ class _Clients:
     않는다(expect_failure=True).
     """
 
-    def __init__(self, expect_failure=False):
+    def __init__(self, expect_failure=False, regions=None):
         self.expect_failure = expect_failure
+        regions = regions or {}
         self.clients = {
-            service: boto3.client(
-                service,
-                region_name=_REGION,
-                aws_access_key_id="testing",
-                aws_secret_access_key="testing",
-            )
+            service: _client(service, regions.get(service, _REGION))
             for service in _SERVICES
         }
+        self.requested_regions = []
         self.stubs = {
             service: Stubber(client) for service, client in self.clients.items()
         }
 
+    def factory(self, service, region_name):
+        self.requested_regions.append((service, region_name))
+        return self.clients[service]
+
     def scanner(self):
-        return residue_aws.AwsResidueScanner(self.clients.__getitem__)
+        return residue_aws.AwsResidueScanner(self.factory, region=_REGION)
 
     def expect(self, overrides=None, errors=None):
         """_CALLS 순서로 응답을 넣는다.
@@ -160,6 +175,41 @@ def test_scan_returns_empty_when_nothing_remains():
         clients.expect()
 
         assert clients.scanner().scan(_PREFIX) == ()
+
+
+def test_scan_builds_every_client_in_the_requested_region():
+    with _Clients() as clients:
+        clients.expect()
+
+        clients.scanner().scan(_PREFIX)
+
+    assert {region for _, region in clients.requested_regions} == {_REGION}
+    assert {service for service, _ in clients.requested_regions} == set(
+        _SERVICES
+    )
+
+
+def test_scan_raises_scan_error_when_a_regional_client_is_in_another_region():
+    # 운영자 기본 리전(us-east-1)을 따르는 생성 함수가 리전 인자를 무시한 경우.
+    with _Clients(expect_failure=True, regions={"rds": "us-east-1"}) as clients:
+        clients.expect()
+
+        with pytest.raises(residue.ResidueScanError, match="us-east-1"):
+            clients.scanner().scan(_PREFIX)
+
+
+def test_scan_accepts_global_iam_client_in_any_region():
+    with _Clients(regions={"iam": "us-east-1"}) as clients:
+        clients.expect()
+
+        assert clients.scanner().scan(_PREFIX) == ()
+
+
+def test_scanner_rejects_empty_region():
+    with pytest.raises(ValueError):
+        residue_aws.AwsResidueScanner(
+            lambda service, region_name: None, region=" "
+        )
 
 
 def test_scan_reports_tagged_network_resources_from_ec2_describe():
@@ -475,7 +525,9 @@ def test_scan_rechecks_listed_secrets_by_id_and_keeps_planned_deletion():
 
 @pytest.mark.parametrize("prefix", ["", "ccx-", "ccx-R1", "team-ccx-r1"])
 def test_scan_rejects_malformed_prefix_before_querying(prefix):
-    scanner = residue_aws.AwsResidueScanner(lambda service: None)
+    scanner = residue_aws.AwsResidueScanner(
+        lambda service, region_name: None, region=_REGION
+    )
 
     with pytest.raises(ValueError):
         scanner.scan(prefix)
@@ -494,11 +546,11 @@ def test_scan_raises_scan_error_when_any_listing_fails(operation):
 
 
 def test_scan_raises_scan_error_when_aws_is_unreachable():
-    def client(service):
+    def client(service, region_name):
         raise exceptions.NoCredentialsError()
 
     with pytest.raises(residue.ResidueScanError):
-        residue_aws.AwsResidueScanner(client).scan(_PREFIX)
+        residue_aws.AwsResidueScanner(client, region=_REGION).scan(_PREFIX)
 
 
 def test_scan_raises_scan_error_on_malformed_response():
@@ -506,6 +558,40 @@ def test_scan_raises_scan_error_on_malformed_response():
         # OwnerId 가 빠진 VPC — ARN 을 만들 수 없다.
         clients.expect(
             {"describe_vpcs": [({"Vpcs": [{"VpcId": "vpc-1"}]}, _TAG_FILTER)]}
+        )
+
+        with pytest.raises(residue.ResidueScanError):
+            clients.scanner().scan(_PREFIX)
+
+
+def test_scan_raises_scan_error_on_malformed_arn():
+    with _Clients(expect_failure=True) as clients:
+        clients.expect(
+            {
+                "describe_repositories": [
+                    (
+                        {
+                            "repositories": [
+                                {
+                                    "repositoryName": f"{_PREFIX}-app",
+                                    "repositoryArn": "not-an-arn",
+                                }
+                            ]
+                        },
+                        {},
+                    )
+                ]
+            }
+        )
+
+        with pytest.raises(residue.ResidueScanError):
+            clients.scanner().scan(_PREFIX)
+
+
+def test_scan_raises_scan_error_when_list_key_is_missing():
+    with _Clients(expect_failure=True) as clients:
+        clients.expect(
+            {"describe_log_groups": [({}, {"logGroupNamePrefix": _PREFIX})]}
         )
 
         with pytest.raises(residue.ResidueScanError):
@@ -548,6 +634,6 @@ def test_scanner_accepts_session_client_factory_without_calling_aws():
         aws_secret_access_key="testing",
     )
 
-    scanner = residue_aws.AwsResidueScanner(session.client)
+    scanner = residue_aws.AwsResidueScanner(session.client, region=_REGION)
 
     assert isinstance(scanner, residue_aws.AwsResidueScanner)
