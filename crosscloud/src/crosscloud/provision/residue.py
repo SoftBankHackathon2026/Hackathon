@@ -16,7 +16,7 @@ from typing import Protocol
 
 from crosscloud import model
 
-# 실행 접두사 형식. run 은 영문 소문자·숫자 1~16자다. 클라우드별 이름 길이
+# 실행 접두사 형식. run 은 영문 소문자·숫자 1–16자다. 클라우드별 이름 길이
 # 제한(Cloud Run 서비스 49자, ALB·대상 그룹 32자, 서비스 계정 30자)에 접미사를
 # 붙여도 들어가게 짧게 잡는다. 하이픈을 run 안에 두지 않아, 접두사 뒤 첫
 # 하이픈이 곧 접두사의 끝이다(ccx-r1 이 ccx-r12-app 을 잡지 않는다).
@@ -71,7 +71,7 @@ def check_name_prefix(name_prefix: str) -> None:
     """
     if not NAME_PREFIX_PATTERN.fullmatch(name_prefix):
         raise ValueError(
-            f"실행 접두사는 ccx-<영문 소문자·숫자 1~16자> 여야 한다: "
+            f"실행 접두사는 ccx-<영문 소문자·숫자 1–16자> 여야 한다: "
             f"{name_prefix!r}"
         )
 
