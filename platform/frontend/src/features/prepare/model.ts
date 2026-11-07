@@ -52,6 +52,21 @@ export function stepFor(s: ConnectionSnapshot | null) {
     ? 1
     : 0;
 }
+export function isListedConnection(s: ConnectionSnapshot) {
+  if (
+    s.registration === "EXPIRED" ||
+    s.registration === "CANCELLED" ||
+    s.device === "REJECTED" ||
+    s.device === "REVOKED"
+  )
+    return false;
+  return Boolean(
+    s.environmentId ||
+    s.registration === "ISSUED" ||
+    s.device === "PENDING_APPROVAL" ||
+    s.device === "APPROVED",
+  );
+}
 export function connectionStatus(s: ConnectionSnapshot): {
   label: string;
   tone: "ok" | "running" | "warn" | "bad" | "idle";
