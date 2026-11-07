@@ -4,7 +4,7 @@ import type {
   AgentRunEvent,
 } from "../../api/agent.ts";
 import type { Tone } from "../migrations/stages.ts";
-import { type ChangeRow, changeRows, gateView } from "./model.ts";
+import { changeRows, gateView } from "./model.ts";
 
 export type StepKey =
   "detect" | "diagnose" | "propose" | "approve" | "probe" | "apply" | "verify";
@@ -18,7 +18,6 @@ export type Step = {
   reached: boolean;
   text: string;
   codes: string[];
-  changes: ChangeRow[];
   notes: StepNote[];
   at: string | null;
 };
@@ -65,7 +64,6 @@ function step(key: StepKey, fields: Partial<Step> = {}): Step {
     reached: false,
     text: SKIPPED,
     codes: [],
-    changes: [],
     notes: [],
     at: null,
     ...fields,
@@ -138,14 +136,8 @@ function diagnose(run: AgentRunDetail): Step {
 }
 
 function propose(run: AgentRunDetail, approved: boolean): Step {
-  const proposal = record(run.detail.proposal);
   const changes = changeRows(run.detail);
   const rejections = strings(run.detail.rejections);
-  const notes: StepNote[] = [];
-  const impact = text(proposal.impact);
-  const checked = text(proposal.verification);
-  if (impact) notes.push({ label: "영향", text: impact });
-  if (checked) notes.push({ label: "샌드박스 확인", text: checked });
   if (rejections.length > 0 && !approved) {
     const last = run.events.at(-1);
     return step("propose", {
@@ -153,17 +145,13 @@ function propose(run: AgentRunDetail, approved: boolean): Step {
       tone: "bad",
       text: last?.message ?? "정적 검사에서 제안을 거절했어요.",
       codes: rejections,
-      changes,
-      notes,
     });
   }
   if (changes.length === 0) return step("propose");
   return step("propose", {
     reached: true,
     tone: "ok",
-    text: text(proposal.cause) ?? "원인 설명이 없어요.",
-    changes,
-    notes,
+    text: `${changes.map((change) => change.key).join(", ")} 값을 바꾸자고 제안했어요.`,
     at: find(run.events, (e) => e.state === "WAITING_APPROVAL")?.at ?? null,
   });
 }
@@ -262,7 +250,7 @@ function apply(run: AgentRunDetail): Step {
   return step("apply", {
     reached: true,
     tone: "ok",
-    text: `설정 저장소를 v${String(from)} → v${String(to)} 로 바꾸고 앱을 다시 시작했어요.`,
+    text: `설정 저장소 버전을 v${String(from)}에서 v${String(to)}로 올리고 앱을 다시 시작했어요.`,
     at: written?.at ?? null,
   });
 }
@@ -301,8 +289,8 @@ export function investigation(run: AgentRunDetail): Step[] {
     detect(run),
     diagnose(run),
     propose(run, approved),
-    approval,
     probe(run),
+    approval,
     apply(run),
     verify(run),
   ];

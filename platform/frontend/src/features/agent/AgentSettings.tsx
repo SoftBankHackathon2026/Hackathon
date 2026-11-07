@@ -176,7 +176,7 @@ function ConfigFacts({ config }: { config: ConfigView }) {
       </ConfigGroup>
       <ConfigGroup title="Slack 알림">
         <ConfigRow label="연결">
-          {config.slack.mode} · {onOffLabel(config.slack.enabled)}
+          {config.slack.mode}, {onOffLabel(config.slack.enabled)}
         </ConfigRow>
         {config.slack.channel && (
           <ConfigRow label="채널" mono>
