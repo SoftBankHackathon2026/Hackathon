@@ -1,0 +1,7 @@
+- name: Check selected node prerequisites without modification
+  hosts: wazuh_nodes
+  gather_facts: false
+  vars:
+    wi_operation: preflight
+  tasks:
+  - ansible.builtin.import_tasks: ../tasks/cluster.yml

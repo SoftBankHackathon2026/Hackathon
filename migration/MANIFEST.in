@@ -2,4 +2,8 @@ include config.openbao-infra.example.yaml
 recursive-include docs/openbao-infra *.md
 recursive-include tests/openbao_infra *.py
 recursive-include migration/openbao_infra/ansible *.cfg *.json *.py *.yml *.j2
+include config.wazuh-infra.example.yaml
+recursive-include docs/wazuh-infra *.md *.json
+recursive-include tests/wazuh_infra *.py
+recursive-include migration/wazuh_infra/ansible *.cfg *.yml *.py
 global-exclude *.py[cod]

@@ -264,3 +264,7 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 # OpenBao 온프레미스 준비
 
 `python -m migration.openbao_infra`로 기존 OpenBao 탐색·점검, 선택한 Ubuntu 노드 한 대의 운영체제 서비스 설치, 인증·접근 권한과 고정 키 인계를 수행합니다. 실제 비밀값 이관과 Keycloak 서버 설치는 포함하지 않습니다. [사용법과 플랫폼 연동](docs/openbao-infra/README.md), [검증 범위](docs/openbao-infra/VALIDATION.md), [예시 설정](config.openbao-infra.example.yaml)을 참고하십시오.
+
+# Wazuh 온프레미스 감사로그 기반 준비
+
+`python -m migration.wazuh_infra`로 기존 환경 조사·점검, 선택한 Ubuntu 노드 한 대의 Wazuh 설치·전체 이벤트 검색 설정·원본 보관공간·용량 정보를 준비합니다. 실제 원본 파일 이관과 AWS 설정 변경은 수행하지 않습니다. [사용법과 플랫폼 연결](docs/wazuh-infra/README.md), [입력 예시](config.wazuh-infra.example.yaml), [검증 범위](docs/wazuh-infra/VALIDATION.md)를 참고하십시오.
