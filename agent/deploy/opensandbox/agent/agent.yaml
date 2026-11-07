@@ -61,3 +61,6 @@ restart:
   api_server: "@K8S_API_SERVER@"
   token_file: /etc/oneport-agent/kube-token
   ca_file: /etc/oneport-agent/kube-ca.crt
+
+slack:
+  channel: ""

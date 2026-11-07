@@ -35,6 +35,7 @@ chmod 0640 /etc/oneport-agent/agent.yaml /etc/oneport-agent/forward-*.env
 
 install -m 0644 "$here/oneport-forward@.service" /etc/systemd/system/oneport-forward@.service
 install -m 0644 "$here/oneport-agent.service" /etc/systemd/system/oneport-agent.service
+install -m 0755 "$here/oneport-agent" /usr/local/bin/oneport-agent
 systemctl daemon-reload
 
 missing=()

@@ -60,3 +60,20 @@ sudo -u oneport-agent /opt/oneport-agent/venv/bin/python -m agent --config /etc/
 
 - 포트 포워드가 끊기면 systemd 가 5초 뒤 다시 잇는다. 그동안의 판정은 `ERROR`/hold 로 끝나고 다음 주기에 다시 한다.
 - 이 호스트가 클러스터에 하는 일은 ServiceAccount `ai-agent` 권한(Rollout 재시작, 파드 조회·포트 포워드) 안이다. OpenBao 쓰기는 에이전트 토큰 정책(한 경로)으로 막는다.
+
+## 시연 (이전 전 설정이 남은 상황)
+
+AWS → 온프렘으로 옮겼는데 앱 설정이 아직 AWS RDS 주소를 가리켜 대상 DB 에 붙지 못하는 상황을 만든다.
+공용 sample-app 이 잠깐 내려가므로 팀과 시간을 맞춘다.
+
+```sh
+oneport-agent fault inject --host "$OLD_RDS_ENDPOINT"   # 주소는 저장소에 두지 않고 그때 넣는다
+journalctl -u oneport-agent -f                         # 다음 주기에 APP-01 → Codex(샌드박스) 제안
+oneport-agent status                                   # 실행 기록
+oneport-agent approve <run_id>                         # auto_apply: false 일 때 사람이 승인
+oneport-agent fault restore                            # 에이전트가 못 고쳤을 때 계획서 값으로 되돌림
+```
+
+- 승인 시연: `/etc/oneport-agent/agent.yaml` 의 `auto_apply: false` 로 두면 제안·검사·탐침까지 하고 멈춘다. 승인하면 쓰기·재시작·재판정을 한다.
+- Slack: `agent.env` 에 `SLACK_BOT_TOKEN=xoxb-...`, `agent.yaml` 의 `slack.channel` 에 채널 ID 를 넣으면 시작·제안·반영·결과가 채널에 올라간다. 봇은 그 채널에 초대돼 있어야 한다(`chat:write`).
+- `oneport-agent` 는 서비스와 같은 사용자·환경변수로 `python -m agent` 를 부른다. `fault` 는 `agent.demo_fault` 다.

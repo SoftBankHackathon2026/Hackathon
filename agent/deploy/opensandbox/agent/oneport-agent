@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+module=agent
+if [[ "${1:-}" == fault ]]; then
+  module=agent.demo_fault
+  shift
+fi
+exec sudo -u oneport-agent bash -c '
+set -a
+. /etc/oneport-agent/agent.env
+. /etc/oneport-agent/codex.env
+. /etc/opensandbox/server.env
+set +a
+cd /var/lib/oneport-agent
+exec /opt/oneport-agent/venv/bin/python -m "$0" --config /etc/oneport-agent/agent.yaml "$@"
+' "$module" "$@"
