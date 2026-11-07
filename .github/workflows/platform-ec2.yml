@@ -208,7 +208,7 @@ jobs:
       - name: Render release
         run: |
           mkdir -p release
-          cp platform/deploy/ec2/compose.yaml platform/deploy/ec2/Caddyfile platform/deploy/ec2/deploy.sh platform/deploy/aws/cost.json release/
+          cp platform/deploy/ec2/compose.yaml platform/deploy/ec2/Caddyfile platform/deploy/ec2/deploy.sh platform/deploy/ec2/check-connection.sh platform/deploy/aws/cost.json release/
           jq '.environments |= map(if .id == "aws"
                 then del(.in_cluster) + {kubeconfig: "/etc/oneport/kube/aws.kubeconfig", context: "oneaction-eks"}
                 else . end)' platform/deploy/aws/fleet.json > release/fleet.json

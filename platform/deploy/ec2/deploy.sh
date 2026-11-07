@@ -3,12 +3,15 @@
 #   deploy.sh <release 폴더> <레지스트리> <이미지 태그> [중계 이미지 태그]
 # 중계 이미지 태그가 있고 /opt/oneport/connection 에 서버·중계 설정이 있으면 환경 연결(profile connection)도 띄운다.
 # 새 버전이 pull·up --wait·/healthz 중 하나라도 실패하면 직전 태그와 설정 파일로 되돌려 다시 띄우고 0 이 아닌 값으로 끝난다.
+# 환경 연결을 켠 배포는 /healthz 뒤에 연결 기능(check-connection.sh)도 확인한다. 이 배포 전에는 쓸 수 있었는데 이 배포 뒤에 못 쓰면 되돌리고,
+# 이 배포 전에도 못 쓰던 상태면 경고만 남긴다(배포와 상관없는 문제로 플랫폼 배포를 막지 않는다).
 set -euo pipefail
 release=${1:?release 폴더}
 registry=${2:?레지스트리}
 tag=${3:?이미지 태그}
 broker_tag=${4:-}
-root=/opt/oneport
+root=${ONEPORT_ROOT:-/opt/oneport}
+check="$release/check-connection.sh"
 
 for f in secrets/postgres-password secrets/database-url secrets/ingest-token settings.env; do
   [[ -s "$root/$f" ]] || { echo "$root/$f 가 없습니다. platform/deploy/ec2/README.md 의 처음 한 번 준비를 먼저 합니다." >&2; exit 1; }
@@ -22,9 +25,15 @@ install -d -m 0755 "$root/connection" "$root/connection/public"
 install -d -m 0700 -o 10001 -g 10001 "$root/connection/server"
 install -d -m 0700 "$root/connection/broker"
 profiles=""
+config_hash=none
 if [[ -n "$broker_tag" && -s "$root/connection/server.env" && -s "$root/connection/broker/broker.json" ]]; then
   profiles=connection
   modprobe wireguard
+  config_hash=$(find "$root/connection/broker" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+fi
+connection_before=0
+if [[ -n "$profiles" && -f "$check" ]] && bash "$check" "$root" "$domain" 0 >/dev/null 2>&1; then
+  connection_before=1
 fi
 
 # 레지스트리 로그인은 설정을 바꾸기 전에 한다. 여기서 실패하면 돌던 버전이 그대로 남는다.
@@ -59,8 +68,8 @@ install -m 0644 "$release/compose.yaml" "$root/compose.yaml"
 install -m 0644 "$release/Caddyfile" "$root/Caddyfile"
 install -m 0644 "$release/fleet.json" "$root/fleet.json"
 install -m 0644 "$release/cost.json" "$root/cost.json"
-printf 'ONEPORT_REGISTRY=%s\nONEPORT_TAG=%s\nONEPORT_BROKER_TAG=%s\nONEPORT_DOMAIN=%s\nCOMPOSE_PROFILES=%s\n' \
-  "$registry" "$tag" "${broker_tag:-none}" "$domain" "$profiles" >"$root/.env"
+printf 'ONEPORT_REGISTRY=%s\nONEPORT_TAG=%s\nONEPORT_BROKER_TAG=%s\nONEPORT_DOMAIN=%s\nCOMPOSE_PROFILES=%s\nONEPORT_CONNECTION_CONFIG_HASH=%s\n' \
+  "$registry" "$tag" "${broker_tag:-none}" "$domain" "$profiles" "$config_hash" >"$root/.env"
 
 cd "$root"
 if ! docker compose pull --quiet; then
@@ -78,6 +87,16 @@ if ! curl -fsS -o /dev/null --retry 12 --retry-delay 5 --retry-all-errors --reso
   echo "배포 실패: $tag 에서 https://$domain/healthz 가 응답하지 않습니다." >&2
   rollback
   exit 1
+fi
+if [[ -n "$profiles" && -f "$check" ]]; then
+  if ! reason=$(bash "$check" "$root" "$domain" 120 2>&1); then
+    if [[ $connection_before -eq 1 ]]; then
+      echo "배포 실패: $tag 배포 뒤 환경 연결을 쓸 수 없게 됐습니다: $reason" >&2
+      rollback
+      exit 1
+    fi
+    echo "경고: 환경 연결을 쓸 수 없습니다(이 배포 전에도 같은 상태였습니다): $reason" >&2
+  fi
 fi
 docker image prune -af --filter "until=168h" >/dev/null
 echo "배포 완료: $tag${profiles:+ (환경 연결 중계 $broker_tag)}"
