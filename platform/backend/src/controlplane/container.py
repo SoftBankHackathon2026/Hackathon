@@ -32,12 +32,18 @@ from controlplane.repositories.cutover_commands import (
     CutoverCommandJournal,
     MemoryCutoverCommands,
 )
+from controlplane.repositories.data_mappings import (
+    DataMappingJournal,
+    MappingRepository,
+    MemoryDataMappings,
+)
 from controlplane.repositories.enrollments import EnrollmentStore
 from controlplane.repositories.fleet_journal import FleetJournal
 from controlplane.repositories.releases import ReleaseStore
 from controlplane.services.auth import AuthService, LoginThrottle
 from controlplane.services.builds import BuildService
 from controlplane.services.cutover_commands import CutoverCommandService
+from controlplane.services.data_mapping import DataMappingService
 from controlplane.services.deployments import DeploymentService
 from controlplane.services.enrollments import EnrollmentService, aws_principal_from_environment
 from controlplane.services.environments import EnvironmentService
@@ -74,6 +80,7 @@ class Container:
     ingest_token: SecretStr | None
     costs: CostService
     cutover_commands: CutoverCommandService
+    data_mappings: DataMappingService
     enrollments: EnrollmentService | None = None
     connections: ConnectionService | None = None
 
@@ -128,6 +135,10 @@ def _command_store(store: ReleaseStore | None) -> CommandRepository:
     return CutoverCommandJournal(store) if store is not None else MemoryCutoverCommands()
 
 
+def _mapping_store(store: ReleaseStore | None) -> MappingRepository:
+    return DataMappingJournal(store) if store is not None else MemoryDataMappings()
+
+
 def _fleet_source(config: FleetConfig, store: ReleaseStore | None) -> FleetSource:
     if config.mode == "live" and store is not None:
         return JournalFleet(config, FleetJournal(store))
@@ -164,6 +175,8 @@ def build_container(
     fleet_config = load_fleet_config()
     source = _fleet_source(fleet_config, store)
     migrations = MigrationService(source)
+    inventory = CostStore(store).get if store else (lambda env_id: None)
+    data_mappings = DataMappingService(fleet_config, inventory, _mapping_store(store))
     return Container(
         auth_mode=mode,
         http=http_settings or HttpSettings.from_environment(),
@@ -186,10 +199,13 @@ def build_container(
         costs=CostService(
             fleet_config,
             load_cost_config(),
-            CostStore(store).get if store else (lambda env_id: None),
+            inventory,
         ),
         connections=_connections(store, mode),
-        cutover_commands=CutoverCommandService(fleet_config, _command_store(store)),
+        cutover_commands=CutoverCommandService(
+            fleet_config, _command_store(store), blocker=data_mappings.blocker
+        ),
+        data_mappings=data_mappings,
         enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
         if store
         else None,

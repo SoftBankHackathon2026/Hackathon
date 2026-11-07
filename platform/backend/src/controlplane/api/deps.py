@@ -12,6 +12,7 @@ from controlplane.schemas.accounts import Identity
 from controlplane.services.auth import AuthService
 from controlplane.services.builds import BuildService
 from controlplane.services.cutover_commands import CutoverCommandService
+from controlplane.services.data_mapping import DataMappingService
 from controlplane.services.deployments import DeploymentService
 from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
@@ -101,6 +102,10 @@ def get_cutover_commands(container: ContainerDep) -> CutoverCommandService:
     return container.cutover_commands
 
 
+def get_data_mappings(container: ContainerDep) -> DataMappingService:
+    return container.data_mappings
+
+
 def get_enrollments(container: ContainerDep) -> EnrollmentService:
     if container.enrollments is None:
         raise NotConfigured(
@@ -116,6 +121,7 @@ SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
 IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]
 CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
+DataMappingsDep = Annotated[DataMappingService, Depends(get_data_mappings)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
