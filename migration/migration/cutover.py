@@ -24,6 +24,7 @@ from .config import Config, ConfigError, load_config
 from .state import CutoverJob, CutoverStore, RequestStore
 from .cutover_policy import CutoverPolicyGate
 from .ingress_client import HttpIngressClient, IngressClientError, check_app_ready
+from .traffic_client import HttpTrafficClient
 from .policy_client import build_check
 from .worker_client import HttpWorkerClient, WorkerClientError
 
@@ -90,6 +91,11 @@ class DbPort(Protocol):
 
 class VerifyPort(Protocol):
     def run(self, mode: str, label: str) -> dict[str, Any]: ...
+
+
+class TrafficPort(Protocol):
+    def status(self) -> dict[str, Any]: ...
+    def switch(self, target: str) -> dict[str, Any]: ...
 
 
 class IngressPort(Protocol):
@@ -295,6 +301,7 @@ class Ports:
     verify: VerifyPort
     request_store: RequestStore | None = None
     ingress: IngressPort | None = None   # None 이면 접수 큐는 운영자가 수동으로 제어한다
+    traffic: TrafficPort | None = None
 
 
 class Cutover:
@@ -395,6 +402,9 @@ class Cutover:
         st = self.ingress.status()  # type: ignore[union-attr]
         return {k: st.get(k) for k in ("mode", "target", "epoch", "in_flight", "last_error")}
 
+    def _route_name(self, job_target: str) -> str:
+        return self.config.traffic.route_target(job_target)
+
     # ---- 단계 -----
 
     def stage_precheck(self) -> None:
@@ -433,10 +443,20 @@ class Cutover:
             if ingress_info.get("target") != src_name:
                 problems.append(f"접수 서비스 target={ingress_info.get('target')} 이 원본({src_name}) 이 아니다")
             ingress_info["expected"] = {"source": src_name, "target": tgt_name}
+        traffic_info: dict[str, Any] | None = None
+        if self.p.traffic is not None:
+            try:
+                src_route, tgt_route = self._route_name(self.source), self._route_name(self.target)
+            except ConfigError as exc:
+                raise CutoverError(f"PRECHECK 실패: {exc}") from exc
+            traffic_info = {"target": self.p.traffic.status().get("target"),
+                            "expected": {"source": src_route, "target": tgt_route}}
+            if traffic_info["target"] not in (None, src_route):
+                problems.append(f"공개 도메인 경로={traffic_info['target']} 이 원본({src_route}) 이 아니다")
         if problems:
             raise CutoverError("PRECHECK 실패: " + "; ".join(problems))
         self._save(COPYING, precheck={"source": src, "target": tgt, "worker": {k: ws.get(k) for k in ("state", "target", "phase", "counters")},
-                                     "connectors": connectors, "ingress": ingress_info})
+                                     "connectors": connectors, "ingress": ingress_info, "traffic": traffic_info})
 
     def stage_copying(self) -> None:
         self._policy_guard("pre_start")
@@ -608,9 +628,27 @@ class Cutover:
             raise CutoverError(f"워커가 붙은 DB 가 기대와 다르다: {ident}")
         self._step("worker_resume", lambda: {"state": self.p.worker.resume().get("state")})
         ingress_switch = self._switch_ingress() if self.ingress is not None else None
+        traffic_switch = self._switch_traffic() if self.p.traffic is not None else None
         before = int((ws.get("committed_by_target") or {}).get(self.target, 0))
         self._save(VERIFYING, switched=switched, committed_on_target_before=before,
-                   switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ingress=ingress_switch)
+                   switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ingress=ingress_switch,
+                   traffic=traffic_switch)
+
+    def _switch_traffic(self) -> dict[str, Any]:
+        desired = self._route_name(self.target)
+
+        def switch() -> dict[str, Any]:
+            current = self.p.traffic.status().get("target")  # type: ignore[union-attr]
+            if current == desired:
+                return {"already": True, "target": current}
+            res = self.p.traffic.switch(desired)  # type: ignore[union-attr]
+            return {"already": False, "from": current, "target": res.get("target"), "changed_at": res.get("changed_at")}
+
+        switched = self._step("public_traffic_target", switch)
+        current = self.p.traffic.status().get("target")  # type: ignore[union-attr]
+        if current != desired:
+            raise CutoverError(f"공개 도메인 경로가 {desired} 가 아니다: {current}")
+        return switched
 
     def _switch_ingress(self) -> dict[str, Any]:
         """대상 앱이 준비됐는지 확인한 뒤 접수 큐를 대상으로 돌리고 재개한다. 대상 GRANT 이후에만 호출된다."""
@@ -669,6 +707,11 @@ class Cutover:
             if snap.get("mode") != "running" or snap.get("target") != self._ingress_name(self.target):
                 raise CutoverError(f"접수 서비스가 대상으로 돌아가고 있지 않다: {snap}")
             info["ingress"] = snap
+        if self.p.traffic is not None:
+            route = self.p.traffic.status().get("target")
+            if route != self._route_name(self.target):
+                raise CutoverError(f"공개 도메인이 대상으로 가고 있지 않다: {route}")
+            info["traffic"] = {"target": route}
         result = self.p.verify.run("post", "final")
         if not result["passed"]:
             raise CutoverError(f"전환 후 검증 실패: {result}")
@@ -700,6 +743,7 @@ class Cutover:
             (SYNC_CONFIRMED, "전체 비교(pre) → 커넥터 증거 보관·삭제 → 재검증"),
             (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume"
              + (" → 대상 앱 readiness → 접수 큐 /target → /resume" if self.config.ingress.enabled else "")
+             + (" → 공개 도메인 경로 전환" if self.config.traffic.enabled else "")
              + "  [여기부터 자동 원복 없음]"),
             (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 전체 비교(post)"),
             (COMPLETED, "완료"),
@@ -828,6 +872,7 @@ def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | Non
         verify=VerifyAdapter(config, state_dir, report_dir),
         request_store=RequestStore(state_dir),
         ingress=IngressAdapter(config) if config.ingress.enabled else None,
+        traffic=HttpTrafficClient(config.traffic) if config.traffic.enabled else None,
     )
     return Cutover(config, store, ports, connector_docs=docs, approve=approve,
                    policy_gate=CutoverPolicyGate(config, state_dir))

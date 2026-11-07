@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -189,6 +190,25 @@ class IngressConfig:
 
 
 @dataclass(frozen=True)
+class TrafficConfig:
+    app: str | None = None
+    platform_url_env: str = "ONEPORT_PLATFORM_URL"
+    token_env: str = "ONEPORT_INGEST_TOKEN"
+    timeout_seconds: float = 15.0
+    targets: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.app)
+
+    def route_target(self, job_target: str) -> str:
+        try:
+            return self.targets[job_target]
+        except KeyError as exc:
+            raise ConfigError(f"traffic.targets 에 {job_target} 이 없다 (있는 것: {', '.join(self.targets) or '없음'})") from exc
+
+
+@dataclass(frozen=True)
 class Config:
     """설정 파일 전체."""
 
@@ -198,6 +218,7 @@ class Config:
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     cutover: CutoverConfig = field(default_factory=CutoverConfig)
     ingress: IngressConfig = field(default_factory=IngressConfig)
+    traffic: TrafficConfig = field(default_factory=TrafficConfig)
 
     def target(self, name: str) -> TargetConfig:
         try:
@@ -339,6 +360,37 @@ def _parse_ingress(raw: Mapping[str, Any] | None, targets: Mapping[str, TargetCo
                          timeout_seconds=float(raw.get("timeout_seconds", 30.0)), targets=mapping, app_checks=checks)
 
 
+_ROUTE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
+def _parse_traffic(raw: Mapping[str, Any] | None, targets: Mapping[str, TargetConfig]) -> TrafficConfig:
+    raw = raw or {}
+    allowed = {"app", "platform_url_env", "token_env", "timeout_seconds", "targets"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ConfigError(f"traffic: 알 수 없는 키 {sorted(unknown)}")
+    app = str(raw["app"]) if raw.get("app") else None
+    mapping_raw = raw.get("targets") or {}
+    if not isinstance(mapping_raw, Mapping):
+        raise ConfigError("traffic.targets 는 {job target: 플랫폼 서버 경로 이름} 매핑이어야 한다")
+    mapping = {str(k): str(v) for k, v in mapping_raw.items()}
+    for name, route in mapping.items():
+        if name not in targets:
+            raise ConfigError(f"traffic.targets 의 {name} 은 targets 에 없다")
+        if not _ROUTE_NAME.fullmatch(route):
+            raise ConfigError(f"traffic.targets.{name} 은 소문자·숫자·- 로 된 이름이어야 한다: {route}")
+    if app is not None and not _ROUTE_NAME.fullmatch(app):
+        raise ConfigError(f"traffic.app 은 소문자·숫자·- 로 된 이름이어야 한다: {app}")
+    if app and not mapping:
+        raise ConfigError("traffic.app 이 있으면 traffic.targets 매핑이 필요하다")
+    kwargs: dict[str, Any] = {"app": app, "targets": mapping,
+                              "timeout_seconds": float(raw.get("timeout_seconds", 15.0))}
+    for key in ("platform_url_env", "token_env"):
+        if raw.get(key):
+            kwargs[key] = str(raw[key])
+    return TrafficConfig(**kwargs)
+
+
 def parse_config(raw: Mapping[str, Any]) -> Config:
     """YAML 로 읽은 매핑을 Config 로 변환한다."""
     targets_raw = raw.get("targets")
@@ -357,6 +409,7 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         worker=_dataclass_from(WorkerConfig, raw.get("worker"), "worker"),
         cutover=_dataclass_from(CutoverConfig, raw.get("cutover"), "cutover"),
         ingress=_parse_ingress(raw.get("ingress"), targets),
+        traffic=_parse_traffic(raw.get("traffic"), targets),
     )
 
 
