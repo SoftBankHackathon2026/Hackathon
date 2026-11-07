@@ -45,7 +45,9 @@ class IamGateway(AwsGateway):
         self._write("attach_role_policy", RoleName=role_name, PolicyArn=policy_arn)
 
     def detach_policy(self, role_name: str, policy_arn: str) -> None:
-        self._write("detach_role_policy", RoleName=role_name, PolicyArn=policy_arn)
+        self._write_optional(
+            "detach_role_policy", NO_SUCH_ENTITY, RoleName=role_name, PolicyArn=policy_arn
+        )
 
     def delete_role(self, name: str) -> None:
         self._write("delete_role", RoleName=name)

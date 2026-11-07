@@ -1,0 +1,71 @@
+# 예시 설정. 비밀값은 여기 두지 않는다. 환경변수로 받는다:
+#   VAULT_TOKEN (필수), VAULT_ADDR·VAULT_MOUNT·VAULT_PATH (있으면 아래 값보다 우선)
+#   CODEX_API_KEY, SAMPLE_APP_DATABASE_URL (탐침 비밀번호), SLACK_BOT_TOKEN (선택), SMOKE_API_TOKEN (선택)
+job_id: onprem_agent_001
+state_dir: /var/lib/agent
+auto_apply: true
+
+smoke:
+  stage: pre_cutover
+  # 온프렘에 CDC 커넥터가 없어 대상 앱 DB 조회만 본다. 복제·쓰기는 검증하지 않고 보고에 그렇게 적는다.
+  # CDC 가 있으면 target_only 를 끄고 source_url 을 준다.
+  target_only: true
+  # NotReady 파드까지 포함하는 Service. 일반 sample-app Service 로는 503 을 받지 못해 hold 가 된다.
+  target_url: http://sample-app-smoke.hackathon.svc.cluster.local
+  http_timeout: 5
+  replication_timeout: 30
+  poll_interval: 1
+
+policy:
+  opa_url: http://migration-policy.hackathon.svc.cluster.local:8181
+
+# plan 전체가 OPA 입력이 되고 digest 를 만든다. 비밀값 키 금지 (policy_client 가 거절한다).
+plan:
+  source: aws
+  target: onprem
+  approved_locations: [busan-local]
+  limits:
+    evidence_ttl_seconds: 300
+    write_wait_max_seconds: 30
+  target_db:
+    host: postgres.hackathon.svc.cluster.local
+    port: 5432
+
+# SEC-01·SEC-02 수집기가 없어 사실을 선언한다. OPA 입력의 source 가 agent.declared-config 로 드러난다.
+declared_evidence:
+  target_db_exposure:
+    public: false
+    target_id: k8s:hackathon/postgres
+  target_location:
+    location: busan-local
+    target_id: k8s:hackathon/postgres
+
+openbao:
+  addr: http://openbao.hackathon.svc.cluster.local:8200
+  mount: secret
+  path: hackathon/sample-app/onprem
+  token_env: VAULT_TOKEN
+
+codex:
+  bin: codex
+  timeout: 300
+  # 파드는 sidecar (제한된 파드에서 Codex 샌드박스가 돌지 않는다). Mac·개발은 local. OpenSandbox 호스트는 opensandbox (README).
+  runner: sidecar
+  shared_dir: /work
+  # sidecar 에서는 필수다. 없으면 시작하지 않는다 (내장 기본 모델은 도구 목록이 비어 파일을 못 읽는다).
+  model: gpt-5.5
+  # home: ~/.codex         # 로컬 전용. 본인 Codex 로그인을 쓴다
+
+probe:
+  sslmode: verify-full
+  sslrootcert: /db-ca/ca.pem
+  password_url_env: SAMPLE_APP_DATABASE_URL
+
+restart:
+  namespace: hackathon
+  rollout: sample-app
+  selector: app=sample-app
+  timeout: 180
+
+slack:
+  channel: ""  # SLACK_BOT_TOKEN 과 함께 설정하면 chat.postMessage 로도 보낸다

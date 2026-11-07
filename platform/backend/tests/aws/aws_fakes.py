@@ -138,6 +138,8 @@ class FakeAws:
         self.roles[RoleName]["policies"].add(PolicyArn)
 
     def iam_detach_role_policy(self, RoleName, PolicyArn):
+        if PolicyArn not in self.roles[RoleName]["policies"]:
+            raise error("NoSuchEntity", "DetachRolePolicy")
         self.roles[RoleName]["policies"].discard(PolicyArn)
 
     def iam_delete_role(self, RoleName):

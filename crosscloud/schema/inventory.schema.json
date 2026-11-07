@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SoftBankHackathon2026/Hackathon/crosscloud/schema/inventory.schema.json",
+  "title": "crosscloud Inventory",
+  "description": "원본 클라우드 한 곳에서 파악한 구성. src/crosscloud/model.py 의 Inventory 와 필드가 같다. 비밀로 의심되거나 분류가 불명인 env 값은 담을 수 없다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cloud",
+    "collected_at",
+    "resources",
+    "workloads",
+    "grants",
+    "restrictions",
+    "restriction_scans",
+    "couplings",
+    "omissions",
+    "attestation"
+  ],
+  "properties": {
+    "cloud": {"$ref": "#/$defs/cloud"},
+    "collected_at": {
+      "description": "시간대가 붙은 RFC 3339 시각.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "resources": {"type": "array", "items": {"$ref": "#/$defs/Resource"}},
+    "workloads": {"type": "array", "items": {"$ref": "#/$defs/Workload"}},
+    "grants": {"type": "array", "items": {"$ref": "#/$defs/IdentityGrant"}},
+    "restrictions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Restriction"}
+    },
+    "restriction_scans": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/RestrictionScan"}
+    },
+    "couplings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/InfraCoupling"}
+    },
+    "omissions": {"type": "array", "items": {"$ref": "#/$defs/Omission"}},
+    "attestation": {"$ref": "#/$defs/CollectionAttestation"}
+  },
+  "$defs": {
+    "cloud": {"enum": ["aws", "gcp"]},
+    "restriction_kind": {
+      "enum": [
+        "scp",
+        "rcp",
+        "permissions_boundary",
+        "resource_policy_deny",
+        "session_policy",
+        "gcp_deny_policy",
+        "gcp_pab"
+      ]
+    },
+    "nullable_string": {"type": ["string", "null"]},
+    "string_list": {"type": "array", "items": {"type": "string"}},
+    "key_values": {"type": "array", "items": {"$ref": "#/$defs/KeyValue"}},
+    "KeyValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": {"type": "string"},
+        "value": {"type": ["string", "integer", "number", "boolean", "null"]}
+      }
+    },
+    "SecretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cloud", "native_id", "version"],
+      "properties": {
+        "cloud": {"$ref": "#/$defs/cloud"},
+        "native_id": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "Resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "cloud",
+        "native_id",
+        "region",
+        "attributes",
+        "source_of_truth"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "postgres_instance",
+            "secret",
+            "workload",
+            "workload_identity",
+            "load_balancer",
+            "dns_record",
+            "object_bucket",
+            "kms_key",
+            "kafka_cluster",
+            "queue",
+            "event_source",
+            "schedule",
+            "network_link",
+            "container_registry"
+          ]
+        },
+        "cloud": {"$ref": "#/$defs/cloud"},
+        "native_id": {"type": "string"},
+        "region": {"type": "string"},
+        "attributes": {"$ref": "#/$defs/key_values"},
+        "source_of_truth": {"enum": ["api", "iac_export", "kube_api"]}
+      }
+    },
+    "EnvEntry": {
+      "description": "값은 plain_nonsecret 일 때만 담는다. 그 밖의 분류는 value 가 null 이어야 한다.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "classification", "value", "confirmed_by"],
+      "properties": {
+        "key": {"type": "string"},
+        "classification": {
+          "enum": [
+            "secret_ref",
+            "plain_nonsecret",
+            "suspected_secret",
+            "unknown",
+            "empty"
+          ]
+        },
+        "value": {"$ref": "#/$defs/nullable_string"},
+        "confirmed_by": {"$ref": "#/$defs/nullable_string"}
+      },
+      "if": {
+        "properties": {
+          "classification": {"not": {"const": "plain_nonsecret"}}
+        }
+      },
+      "then": {"properties": {"value": {"type": "null"}}}
+    },
+    "Entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source_id", "attributes"],
+      "properties": {
+        "kind": {
+          "enum": ["http", "queue_consumer", "event_trigger", "schedule"]
+        },
+        "source_id": {"type": "string"},
+        "attributes": {"$ref": "#/$defs/key_values"}
+      }
+    },
+    "ImageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry_repo", "digest"],
+      "properties": {
+        "registry_repo": {"type": "string"},
+        "digest": {"type": "string"}
+      }
+    },
+    "Workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "cloud",
+        "platform",
+        "native_id",
+        "identity_id",
+        "image",
+        "code_repo",
+        "entries",
+        "env",
+        "secret_refs",
+        "db_user",
+        "depends_on"
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "cloud": {"$ref": "#/$defs/cloud"},
+        "platform": {
+          "enum": ["ec2", "ecs", "lambda", "eks", "gce", "cloud_run", "gke"]
+        },
+        "native_id": {"type": "string"},
+        "identity_id": {"type": "string"},
+        "image": {
+          "oneOf": [{"$ref": "#/$defs/ImageRef"}, {"type": "null"}]
+        },
+        "code_repo": {"$ref": "#/$defs/nullable_string"},
+        "entries": {"type": "array", "items": {"$ref": "#/$defs/Entry"}},
+        "env": {"type": "array", "items": {"$ref": "#/$defs/EnvEntry"}},
+        "secret_refs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/SecretRef"}
+        },
+        "db_user": {"$ref": "#/$defs/nullable_string"},
+        "depends_on": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "IdentityGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grant_id",
+        "principal_id",
+        "resource_id",
+        "action",
+        "effect",
+        "condition_raw",
+        "origin"
+      ],
+      "properties": {
+        "grant_id": {"type": "string"},
+        "principal_id": {"type": "string"},
+        "resource_id": {"type": "string"},
+        "action": {"type": "string"},
+        "effect": {"enum": ["allow", "deny"]},
+        "condition_raw": {"$ref": "#/$defs/nullable_string"},
+        "origin": {
+          "enum": [
+            "identity_policy",
+            "resource_policy",
+            "trust_policy",
+            "gcp_allow_policy"
+          ]
+        }
+      }
+    },
+    "Restriction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "restriction_id",
+        "kind",
+        "scope",
+        "mode",
+        "principals",
+        "actions",
+        "resources",
+        "condition_raw",
+        "condition_parsed"
+      ],
+      "properties": {
+        "restriction_id": {"type": "string"},
+        "kind": {"$ref": "#/$defs/restriction_kind"},
+        "scope": {"type": "string"},
+        "mode": {"enum": ["deny", "ceiling"]},
+        "principals": {"$ref": "#/$defs/string_list"},
+        "actions": {"$ref": "#/$defs/string_list"},
+        "resources": {"$ref": "#/$defs/string_list"},
+        "condition_raw": {"$ref": "#/$defs/nullable_string"},
+        "condition_parsed": {"type": "boolean"}
+      }
+    },
+    "RestrictionScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "kind", "coverage", "reason"],
+      "properties": {
+        "scope": {"type": "string"},
+        "kind": {"$ref": "#/$defs/restriction_kind"},
+        "coverage": {"enum": ["complete", "unknown"]},
+        "reason": {"type": "string"}
+      }
+    },
+    "InfraCoupling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload", "location", "rule_id", "category", "certainty"],
+      "properties": {
+        "workload": {"type": "string"},
+        "location": {"type": "string"},
+        "rule_id": {"type": "string"},
+        "category": {
+          "enum": [
+            "db_auth_rds_iam",
+            "db_auth_cloudsql_iam",
+            "db_auth_password_url",
+            "secret_sdk",
+            "kafka_sasl_iam",
+            "cloud_sdk_default_credentials"
+          ]
+        },
+        "certainty": {"enum": ["mandatory", "potential"]}
+      }
+    },
+    "Omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "detected_by", "acknowledged_by"],
+      "properties": {
+        "subject": {"type": "string"},
+        "detected_by": {
+          "enum": ["export_vs_api", "permission_denied", "unsupported_type"]
+        },
+        "acknowledged_by": {"$ref": "#/$defs/nullable_string"}
+      }
+    },
+    "CollectionAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secret_value_calls",
+        "collector_can_read_secret_values",
+        "cai_viewer_bound",
+        "suspected_values_retained",
+        "evidence_ref"
+      ],
+      "properties": {
+        "secret_value_calls": {"type": ["integer", "null"], "minimum": 0},
+        "collector_can_read_secret_values": {"type": "boolean"},
+        "cai_viewer_bound": {"type": "boolean"},
+        "suspected_values_retained": {
+          "description": "비밀로 의심되거나 분류가 불명인데 값을 남긴 env 수. 0 만 받는다.",
+          "type": "integer",
+          "const": 0
+        },
+        "evidence_ref": {"type": "string"}
+      }
+    }
+  }
+}

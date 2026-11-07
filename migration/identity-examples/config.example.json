@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "migration_id": "test-orders",
+  "source": {
+    "provider": "aws-identity-center",
+    "region": "ap-northeast-2",
+    "instance_arn": "arn:aws:sso:::instance/ssoins-1234567890123456",
+    "identity_store_id": "d-1234567890",
+    "account_ids": [
+      "111122223333"
+    ]
+  },
+  "targets": {
+    "keycloak": {
+      "base_url": "https://keycloak.test",
+      "realm": "identity-test",
+      "admin_token_env": "KC_TOKEN"
+    },
+    "openbao": {
+      "base_url": "https://bao.test",
+      "token_env": "BAO_TOKEN",
+      "auth_mount": "identity-test",
+      "audience": "identity-bao"
+    },
+    "kubernetes": {
+      "kubeconfig": "/run/platform/kubeconfig",
+      "context": "onprem",
+      "group_prefix": "kc:",
+      "audience": "identity-kubernetes",
+      "redirect_uris": [
+        "http://localhost:8000/callback"
+      ]
+    },
+    "applications": [
+      {
+        "id": "orders",
+        "client_id": "identity-orders",
+        "redirect_uris": [
+          "https://orders.test/callback"
+        ]
+      }
+    ]
+  }
+}

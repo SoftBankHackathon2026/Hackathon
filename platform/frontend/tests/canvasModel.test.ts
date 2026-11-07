@@ -576,3 +576,11 @@ test("cloudProviderOf only recognizes public clouds", () => {
   assert.equal(cloudProviderOf({ provider: "gcp" }), "gcp");
   assert.equal(cloudProviderOf({ provider: "onprem" }), null);
 });
+
+test("fitView never zooms out past the wheel zoom floor", () => {
+  const huge = { minX: 0, maxX: 100000, minY: 0, maxY: 100000 };
+  const fitted = fitView(huge, 800, 400);
+  assert.equal(fitted.k, 0.2);
+  assert.equal(zoomAt(fitted, 1.01, 0, 0).k, 0.202);
+  assert.equal(fitView(huge, 0, 0).k, 0.2);
+});

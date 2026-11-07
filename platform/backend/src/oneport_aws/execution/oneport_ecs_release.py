@@ -59,6 +59,7 @@ class ReleaseCheckpoint(TypedDict, total=False):
     rollback: dict[str, Any]
     restore_samples: int
     restore_attempts: int
+    restore_polls: int
 
 
 @dataclass

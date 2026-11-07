@@ -1,16 +1,13 @@
 import argparse
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-
-import httpx
-from kubernetes.client.exceptions import ApiException
-from kubernetes.config import ConfigException
-from urllib3.exceptions import HTTPError as Urllib3Error
+from pathlib import Path
 
 from controlplane.core import db
-from controlplane.cost.collect import collect_inventory
+from controlplane.cost.collect import carry_over_kubernetes, collect_inventory
 from controlplane.cost.config import CostConfig, load_cost_config
 from controlplane.cost.models import CostInventory
 from controlplane.cost.onprem import OnPremMeter, create_meter
@@ -29,9 +26,11 @@ from controlplane.providers.loader import load_platform
 from controlplane.repositories.fleet_journal import FleetJournal
 
 LOG = logging.getLogger(__name__)
-FACTS_EVERY_TICKS = 12
-# 노드·PVC·태그 자원은 자주 바뀌지 않고 AWS API 호출 수도 있어 5초 tick 기준 약 5분마다 읽는다.
-COST_EVERY_TICKS = 60
+FACTS_SECONDS = 60
+# 노드·PVC·태그 자원은 자주 바뀌지 않고 AWS API 호출 수도 있어 5분마다 읽는다. tick 이 느려져도 실제 시간 기준이다.
+COST_SECONDS = 300
+# 이 환경변수에 파일 경로가 있으면 tick 을 시작할 때마다 수정 시각을 갱신한다. 컨테이너 healthcheck 가 읽는다.
+HEARTBEAT_ENV = "ONEPORT_COLLECTOR_HEARTBEAT"
 
 
 class _BrokenMeter:
@@ -54,6 +53,7 @@ class FleetCollector:
         costs: CostStore | None = None,
         cost_config: CostConfig | None = None,
         cost_reader: Callable[..., CostInventory] = collect_inventory,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._journal = journal
@@ -62,7 +62,8 @@ class FleetCollector:
         self._cost_config = cost_config or CostConfig()
         self._cost_reader = cost_reader
         self._meters: dict[str, OnPremMeter] = {}
-        self._ticks = 0
+        self._clock = clock
+        self._last_run: dict[str, float] = {}
 
     def _meter(self, env: EnvironmentConfig) -> OnPremMeter | None:
         """비용 설정이 고른 온프렘 측정기. 환경마다 한 번 만든다."""
@@ -81,9 +82,17 @@ class FleetCollector:
         if self._costs is None:
             return
         settings = self._cost_config.environment(env.id)
-        self._costs.put(
-            self._cost_reader(env, settings.tags, meter=self._meter(env), project=settings.project)
+        current = self._cost_reader(
+            env, settings.tags, meter=self._meter(env), project=settings.project
         )
+        self._costs.put(carry_over_kubernetes(current, self._previous_costs(env)))
+
+    def _previous_costs(self, env: EnvironmentConfig) -> CostInventory | None:
+        try:
+            return self._costs.get(env.id)
+        except Exception as exc:  # noqa: BLE001 - 이전 값을 못 읽어도 이번 값은 저장한다
+            LOG.warning("env=%s previous cost error=%s", env.id, type(exc).__name__)
+            return None
 
     def collect_worker(self, job: MigrationConfig) -> None:
         if not job.worker_url:
@@ -110,31 +119,38 @@ class FleetCollector:
             env.id, facts.observed_at or datetime.now(UTC), facts_to_json(facts)
         )
 
+    def _due(self, name: str, interval: float, now: float) -> bool:
+        last = self._last_run.get(name)
+        if last is not None and now - last < interval:
+            return False
+        self._last_run[name] = now
+        return True
+
     def tick(self) -> None:
+        now = self._clock()
         for job in self._config.migrations:
             for collect in (self.collect_worker, self.collect_connectors):
                 try:
                     collect(job)
-                except httpx.HTTPError as exc:
+                except Exception as exc:  # noqa: BLE001 - 한 작업의 오류가 수집기 프로세스를 끝내지 않게 한다
                     LOG.warning(
                         "job=%s collect=%s error=%s",
                         job.job_id,
                         collect.__name__,
                         type(exc).__name__,
                     )
-        if self._ticks % FACTS_EVERY_TICKS == 0:
+        if self._due("facts", FACTS_SECONDS, now):
             for env in self._config.environments:
                 try:
                     self.collect_environment(env)
-                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
+                except Exception as exc:  # noqa: BLE001 - DB·검증 오류도 다음 환경과 다음 tick 을 막지 않는다
                     LOG.warning("env=%s facts error=%s", env.id, type(exc).__name__)
-        if self._ticks % COST_EVERY_TICKS == 0:
+        if self._due("costs", COST_SECONDS, now):
             for env in self._config.environments:
                 try:
                     self.collect_costs(env)
-                except (ApiException, ConfigException, OSError, Urllib3Error) as exc:
+                except Exception as exc:  # noqa: BLE001 - DB·검증 오류도 다음 환경과 다음 tick 을 막지 않는다
                     LOG.warning("env=%s cost error=%s", env.id, type(exc).__name__)
-        self._ticks += 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,9 +168,12 @@ def main(argv: list[str] | None = None) -> int:
         costs=CostStore(platform.store),
         cost_config=load_cost_config(),
     )
+    heartbeat = os.environ.get(HEARTBEAT_ENV)
     with db.pooling():
         platform.store.migrate()
         while True:
+            if heartbeat:
+                Path(heartbeat).touch()
             collector.tick()
             if args.once:
                 return 0

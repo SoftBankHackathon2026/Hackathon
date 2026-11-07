@@ -10,3 +10,10 @@
 kubeconfig
 credentials.json
 .DS_Store
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+agent/build/

@@ -56,8 +56,17 @@ export function connectionStatus(s: ConnectionSnapshot): {
   label: string;
   tone: "ok" | "running" | "warn" | "bad" | "idle";
 } {
-  if (s.device === "REVOKED") return { label: "연결 해제됨", tone: "idle" };
+  if (s.device === "REVOKED")
+    return {
+      label:
+        s.cleanup?.server && s.cleanup.gateway && s.cleanup.local
+          ? "연결 해제됨"
+          : "권한 철회됨 · 정리 확인 중",
+      tone: "idle",
+    };
   if (s.device === "REJECTED") return { label: "단말 확인 종료", tone: "idle" };
+  if (s.registration === "CANCELLED")
+    return { label: "연결 요청 취소됨", tone: "idle" };
   if (s.registration === "EXPIRED")
     return { label: "명령 기한 종료", tone: "warn" };
   if (s.blockedUntil) return { label: "인증 일시 제한", tone: "bad" };
@@ -78,10 +87,13 @@ export function connectionStatus(s: ConnectionSnapshot): {
     return { label: "단말 확인 필요", tone: "running" };
   if (s.collection === "COLLECTED")
     return { label: "환경등록 필요", tone: "running" };
-  return {
-    label: s.registration === "ISSUED" ? "명령 실행 대기" : "환경정보 수집 중",
-    tone: "running",
-  };
+  if (s.registration === "ISSUED")
+    return { label: "명령 실행 대기", tone: "running" };
+  if (s.collectionPending)
+    return { label: "환경정보 수집 중", tone: "running" };
+  if (s.tunnel === "READY")
+    return { label: "수집 대상 선택 대기", tone: "idle" };
+  return { label: "환경 연결 대기", tone: "idle" };
 }
 export function remainingSeconds(
   expiresAt: number | undefined,
@@ -115,7 +127,7 @@ export function normalizeCode(value: string) {
   return value.toUpperCase().replace(/[\s-]/g, "");
 }
 export function codeValid(value: string) {
-  return /^[A-HJ-NP-Z2-9]{8}$/.test(normalizeCode(value));
+  return /^[A-Z2-7]{8}$/.test(normalizeCode(value));
 }
 export function formatTime(value: number | undefined) {
   return value

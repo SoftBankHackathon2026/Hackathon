@@ -6,6 +6,10 @@ include config.wazuh-infra.example.yaml
 recursive-include docs/wazuh-infra *.md *.json
 recursive-include tests/wazuh_infra *.py
 recursive-include migration/wazuh_infra/ansible *.cfg *.yml *.py
+recursive-include docs/identity *.md
+recursive-include identity-examples *.json
+recursive-include tests/identity *.py
+recursive-include migration/identity *.md
 global-exclude *.py[cod]
 recursive-include secrets-examples *.json *.yaml
 recursive-include docs/secrets *.md

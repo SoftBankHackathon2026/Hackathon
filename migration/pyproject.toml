@@ -17,6 +17,11 @@ secrets = [
     "boto3>=1.43,<2",
     "psycopg[binary]>=3.3.8,<4",
 ]
+identity = [
+    "boto3>=1.35,<1.36",
+    "requests>=2.32,<3",
+]
+policy-runtime = ["boto3>=1.35,<2"]
 wazuh-infra = [
     "ansible-core>=2.20,<2.21",
     "kubernetes>=37,<38",

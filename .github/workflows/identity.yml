@@ -1,0 +1,46 @@
+name: identity-migration
+on:
+  pull_request:
+    paths: ['migration/**', '.github/workflows/identity.yml']
+  push:
+    branches: [main]
+    paths: ['migration/**', '.github/workflows/identity.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install isolated identity controller and test dependencies
+        run: python -m pip install -e './migration[identity,dev]' build ruff
+      - name: Validate dependency compatibility
+        run: python -m pip check
+      - name: Run identity and database migration regressions
+        working-directory: migration
+        run: python -m pytest --tb=short --ignore=tests/test_keycloak_ansible.py
+      - name: Check identity source and tests
+        run: |
+          ruff check migration/migration/identity migration/tests/identity
+          ruff format --check migration/migration/identity migration/tests/identity
+      - name: Exercise offline review flow
+        run: |
+          python -m migration.identity plan --config migration/identity-examples/config.example.json --inventory migration/identity-examples/inventory.example.json --mapping migration/identity-examples/mapping.example.json --out /tmp/identity-plan.json
+          python -m migration.identity report --config migration/identity-examples/config.example.json --plan /tmp/identity-plan.json --out /tmp/identity-report.md
+      - name: Verify packaged modules
+        working-directory: migration
+        run: |
+          python -m build
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile(next(Path('dist').glob('*.whl'))) as wheel:
+              files = set(wheel.namelist())
+              assert 'migration/identity/__main__.py' in files
+              assert 'migration/identity/collect.py' in files
+              assert 'migration/identity/adapters.py' in files
+              assert not any('__pycache__' in file for file in files)
+          PY

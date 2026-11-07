@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { nodesHash, replaceHash, resourceHash } from "../../app/routes";
+import {
+  CLOSE_PANELS_EVENT,
+  nodesHash,
+  replaceHash,
+  resourceHash,
+} from "../../app/routes";
 import type { FleetEnvironment, MigrationSummary } from "../../api/migrations";
 import type { Severity } from "../../api/security";
 import { Segmented } from "../../components/Segmented";
@@ -100,6 +105,11 @@ export function ArchitectureCanvas({
   }, [nodeRoute, plainRoute]);
   const baseHash = grouping === "node" ? nodesHash() : "#environments";
   const clearPanels = () => replaceHash(baseHash);
+  useEffect(() => {
+    const close = () => replaceHash(baseHash);
+    window.addEventListener(CLOSE_PANELS_EVENT, close);
+    return () => window.removeEventListener(CLOSE_PANELS_EVENT, close);
+  }, [baseHash]);
   // 패널은 하나만: 구성 요소를 고르면 노드 패널이 닫히고, 노드를 고르면 구성 요소 패널이 닫힌다(주소가 하나라서).
   const selectComponent = (ref: TileRef | null) =>
     replaceHash(ref ? resourceHash(ref.envId, ref.id) : baseHash);

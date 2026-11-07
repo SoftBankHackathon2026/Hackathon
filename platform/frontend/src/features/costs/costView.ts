@@ -24,6 +24,12 @@ export function mainBreakdown(env: EnvironmentCost): {
   return { breakdown: env.current, estimated: false };
 }
 
+export function pickJob(migrations: MigrationCost[], jobId: string) {
+  return migrations.some((m) => m.job_id === jobId)
+    ? jobId
+    : (migrations[0]?.job_id ?? "");
+}
+
 export function envTotals(overview: CostOverview) {
   const rows = overview.environments.map((env) => {
     const { breakdown, estimated } = mainBreakdown(env);

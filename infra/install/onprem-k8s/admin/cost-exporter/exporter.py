@@ -22,16 +22,44 @@ class Coefficients:
     max_watts_per_vcpu: float = 3.5
     watts_per_memory_gib: float = 0.392
     pue: float = 1.0
+    host_idle_watts: float | None = None
+    host_max_watts: float | None = None
+    host_threads: int | None = None
+    host_vcpus: int | None = None
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> "Coefficients":
         base = cls()
         return cls(
-            min_watts_per_vcpu=float(env.get("MIN_WATTS_PER_VCPU", base.min_watts_per_vcpu)),
-            max_watts_per_vcpu=float(env.get("MAX_WATTS_PER_VCPU", base.max_watts_per_vcpu)),
-            watts_per_memory_gib=float(env.get("WATTS_PER_MEMORY_GIB", base.watts_per_memory_gib)),
+            min_watts_per_vcpu=float(
+                env.get("MIN_WATTS_PER_VCPU", base.min_watts_per_vcpu)
+            ),
+            max_watts_per_vcpu=float(
+                env.get("MAX_WATTS_PER_VCPU", base.max_watts_per_vcpu)
+            ),
+            watts_per_memory_gib=float(
+                env.get("WATTS_PER_MEMORY_GIB", base.watts_per_memory_gib)
+            ),
             pue=float(env.get("PUE", base.pue)),
+            host_idle_watts=_optional(env, "HOST_IDLE_WATTS", float),
+            host_max_watts=_optional(env, "HOST_MAX_WATTS", float),
+            host_threads=_optional(env, "HOST_THREADS", int),
+            host_vcpus=_optional(env, "HOST_VCPUS", int),
         )
+
+    @property
+    def host(self) -> bool:
+        return None not in (
+            self.host_idle_watts,
+            self.host_max_watts,
+            self.host_threads,
+            self.host_vcpus,
+        )
+
+
+def _optional(env: dict[str, str], key: str, kind):
+    value = env.get(key)
+    return kind(value) if value not in (None, "") else None
 
 
 @dataclass(frozen=True)
@@ -94,10 +122,42 @@ def memory_watts(memory_bytes: int, coefficients: Coefficients) -> float:
     return memory_bytes / 2**30 * coefficients.watts_per_memory_gib
 
 
-def model_watts(vcpus: int, memory_bytes: int, cpu: float, coefficients: Coefficients) -> float:
+def model_watts(
+    vcpus: int, memory_bytes: int, cpu: float, coefficients: Coefficients
+) -> float:
     span = coefficients.max_watts_per_vcpu - coefficients.min_watts_per_vcpu
     per_vcpu = coefficients.min_watts_per_vcpu + span * cpu
-    return (vcpus * per_vcpu + memory_watts(memory_bytes, coefficients)) * coefficients.pue
+    return (
+        vcpus * per_vcpu + memory_watts(memory_bytes, coefficients)
+    ) * coefficients.pue
+
+
+def host_watts(vcpus: int, cpu: float, coefficients: Coefficients) -> float:
+    idle = coefficients.host_idle_watts * vcpus / coefficients.host_vcpus
+    span = coefficients.host_max_watts - coefficients.host_idle_watts
+    busy = span * cpu * vcpus / coefficients.host_threads
+    return (idle + busy) * coefficients.pue
+
+
+@dataclass(frozen=True)
+class Resume:
+    joules: float
+    seconds: float
+    started: float
+
+
+def resume_from(previous: dict | None, coefficients: Coefficients) -> Resume | None:
+    if not previous or previous.get("coefficients") != asdict(coefficients):
+        return None
+    try:
+        started = datetime.fromisoformat(previous["since"]).timestamp()
+        updated = datetime.fromisoformat(previous["updated_at"]).timestamp()
+        joules = float(previous["energy_joules"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if updated <= started or joules < 0:
+        return None
+    return Resume(joules=joules, seconds=updated - started, started=started)
 
 
 def rapl_zones(powercap: Path) -> list[Path]:
@@ -140,6 +200,7 @@ class Sampler:
         proc: Path = Path("/proc"),
         powercap: Path = Path("/sys/class/powercap"),
         clock=time.time,
+        resume: Resume | None = None,
     ) -> None:
         self._node = node
         self._coefficients = coefficients
@@ -154,7 +215,9 @@ class Sampler:
         self._at = self._started
         self._cpu = self._cpu_times()
         self._energy = self._read_rapl()
-        self._joules = 0.0
+        self._joules = resume.joules if resume else 0.0
+        self._offset = resume.seconds if resume else 0.0
+        self._since = resume.started if resume else self._started
 
     def _cpu_times(self) -> CpuTimes:
         return parse_cpu_times((self._proc / "stat").read_text())
@@ -179,13 +242,18 @@ class Sampler:
         if energy_now is not None and self._energy is not None:
             method = "rapl"
             package = energy_delta_joules(self._energy, energy_now) / seconds
-            watts = (package + memory_watts(memory, self._coefficients)) * self._coefficients.pue
+            watts = (
+                package + memory_watts(memory, self._coefficients)
+            ) * self._coefficients.pue
+        elif self._coefficients.host:
+            method = "host"
+            watts = host_watts(self._vcpus, cpu, self._coefficients)
         else:
             method = "model"
             watts = model_watts(self._vcpus, memory, cpu, self._coefficients)
         self._joules += watts * seconds
         self._at, self._cpu, self._energy = now, cpu_now, energy_now
-        elapsed = max(now - self._started, 1e-9)
+        elapsed = max(self._offset + now - self._started, 1e-9)
         return Reading(
             node=self._node,
             method=method,
@@ -196,7 +264,7 @@ class Sampler:
             power_watts=round(watts, 2),
             average_watts=round(self._joules / elapsed, 2),
             energy_joules=round(self._joules, 1),
-            since=_iso(self._started),
+            since=_iso(self._since),
             updated_at=_iso(now),
             coefficients=self._coefficients,
             rapl_error=self._rapl_error,
@@ -241,9 +309,14 @@ def configmap_body(namespace: str, reading: Reading) -> dict:
         "metadata": {
             "name": configmap_name(reading.node),
             "namespace": namespace,
-            "labels": {LABEL: "node", "app.kubernetes.io/name": "oneport-cost-exporter"},
+            "labels": {
+                LABEL: "node",
+                "app.kubernetes.io/name": "oneport-cost-exporter",
+            },
         },
-        "data": {DATA_KEY: json.dumps(asdict(reading), ensure_ascii=False, sort_keys=True)},
+        "data": {
+            DATA_KEY: json.dumps(asdict(reading), ensure_ascii=False, sort_keys=True)
+        },
     }
 
 
@@ -256,7 +329,9 @@ class KubeWriter:
 
     def _request(self, method: str, path: str, body: dict, content_type: str) -> None:
         if self._context is None:
-            self._context = ssl.create_default_context(cafile=str(self.account / "ca.crt"))
+            self._context = ssl.create_default_context(
+                cafile=str(self.account / "ca.crt")
+            )
         token = (self.account / "token").read_text().strip()
         request = urllib.request.Request(
             self.server + path,
@@ -266,6 +341,27 @@ class KubeWriter:
         )
         with urllib.request.urlopen(request, context=self._context, timeout=10):
             pass
+
+    def read(self, node: str) -> dict | None:
+        if self._context is None:
+            self._context = ssl.create_default_context(
+                cafile=str(self.account / "ca.crt")
+            )
+        token = (self.account / "token").read_text().strip()
+        request = urllib.request.Request(
+            f"{self.server}/api/v1/namespaces/{self.namespace}/configmaps/{configmap_name(node)}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with urllib.request.urlopen(
+                request, context=self._context, timeout=10
+            ) as response:
+                body = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        return json.loads((body.get("data") or {}).get(DATA_KEY) or "null")
 
     def put(self, reading: Reading) -> None:
         body = configmap_body(self.namespace, reading)
@@ -319,14 +415,26 @@ def handler_for(state: State) -> type[BaseHTTPRequestHandler]:
 
 
 def run(env: dict[str, str]) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     node = env["NODE_NAME"]
     interval = float(env.get("SAMPLE_SECONDS", "15"))
     publish_every = float(env.get("PUBLISH_SECONDS", "60"))
-    sampler = Sampler(node, Coefficients.from_env(env), proc=Path(env.get("PROC_ROOT", "/proc")))
+    coefficients = Coefficients.from_env(env)
     writer = KubeWriter(namespace=env["POD_NAMESPACE"])
+    try:
+        resume = resume_from(writer.read(node), coefficients)
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        LOG.warning("node=%s resume failed: %s", node, type(exc).__name__)
+        resume = None
+    sampler = Sampler(
+        node, coefficients, proc=Path(env.get("PROC_ROOT", "/proc")), resume=resume
+    )
     state = State()
-    server = ThreadingHTTPServer(("0.0.0.0", int(env.get("PORT", "9877"))), handler_for(state))
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", int(env.get("PORT", "9877"))), handler_for(state)
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     published = 0.0
     while True:
