@@ -235,6 +235,8 @@ def test_prepare_target_fails_when_app_not_on_target_db(
             "UpdateService",
         ),
         botocore.exceptions.WaiterError("ServicesStable", "Max attempts", {}),
+        botocore.exceptions.EndpointConnectionError(endpoint_url="https://ecs"),
+        botocore.exceptions.NoCredentialsError(),
         psycopg.OperationalError("connection lost"),
     ],
 )

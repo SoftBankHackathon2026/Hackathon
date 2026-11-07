@@ -63,7 +63,8 @@ _REPORTED = (
     target_deploy.DeployError,
     psycopg.Error,
     botocore.exceptions.ClientError,
-    botocore.exceptions.WaiterError,
+    # 대기 초과·접속 실패·자격 증명 없음(WaiterError 등) 모두 BotoCoreError 다.
+    botocore.exceptions.BotoCoreError,
     ValueError,
     KeyError,
     OSError,
