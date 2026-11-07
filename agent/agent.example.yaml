@@ -1,0 +1,51 @@
+# ghost-agent 설정 예시. 비밀값은 적지 않는다 (VAULT_TOKEN, AWS_*, CODEX_API_KEY, SLACK_BOT_TOKEN, SLACK_APP_TOKEN 은 환경변수).
+job_id: forward_001
+target_env: aws              # 어느 환경의 설정을 고치는가: aws | onprem
+stage: pre_cutover           # 사전 검사에 쓰는 migration 정책 단계
+
+store:
+  kind: aws-secrets-manager  # file | vault | aws-secrets-manager
+  aws_secrets_manager:
+    secret_id: hackathon/sample-app/aws     # SecretString = {"DB_HOST": ..., "DB_PORT": ..., "DB_NAME": ..., "DB_USER": ..., "DB_PASSWORD": ...}
+    region: ap-northeast-2
+  vault:                     # kind: vault 일 때 (온프렘). 토큰은 VAULT_TOKEN
+    addr: http://vault.hackathon.svc:8200
+    mount: secret
+    path: hackathon/sample-app/onprem
+  file:                      # kind: file 일 때 (개발)
+    path: dev/target.json
+
+scope:                       # AI 가 바꿀 수 있는 키. 값은 plan.target_db 로만 제한된다.
+  allowed_keys: [DB_HOST, DB_PORT]
+  secret_keys: [DB_PASSWORD]
+  table: orders              # 조회 검사에 쓰는 테이블
+
+plan:                        # 정책 입력의 plan. digest 는 생략하면 내용으로 계산한다.
+  source: onprem
+  target: aws
+  approved_locations: [ap-northeast-2]
+  limits:
+    evidence_ttl_seconds: 300
+    write_wait_max_seconds: 30
+  target_db:                 # AI 가 쓸 수 있는 유일한 대상 주소 (계획에 등록된 값)
+    host: migration-demo.cluster-xyz.ap-northeast-2.rds.amazonaws.com
+    port: 5432
+  remediation:
+    auto_apply: true         # true: 정책 통과 시 사람 승인 없이 적용. false: Slack 승인 대기
+
+evidence_extra: dev/evidence_extra.json   # SEC-02 수집기가 만든 다른 검사(target_db_exposure, target_location). 없으면 정책이 hold
+
+opa:
+  url: http://migration-policy.hackathon.svc:8181   # 또는 policy_dir: ../policies (로컬 opa CLI)
+
+codex:
+  bin: codex
+  model: null                # 팀 결정 후 지정. null 이면 Codex 기본값
+  timeout_seconds: 300
+  max_attempts: 2
+
+slack:
+  channel: "#ghost-migration"
+
+state_dir: state
+probe_timeout_seconds: 5
