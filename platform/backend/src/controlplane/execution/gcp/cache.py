@@ -9,7 +9,12 @@ import ipaddress
 import json
 import re
 
-from controlplane.execution.gcp.api import ApiBacked, ApiProfile, GcpApiClient
+from controlplane.execution.gcp.api import (
+    ApiBacked,
+    ApiProfile,
+    GcpApiClient,
+    RequestNotDelivered,
+)
 from controlplane.execution.gcp.errors import CacheSubmissionUnknown, DataProvisionError
 from controlplane.execution.gcp.journal import (
     JournalTable,
@@ -162,7 +167,7 @@ class GcpCacheProvisioner(ApiBacked):
                     "disableConcurrencyQuotaOverflowBuffering": True,
                 },
             )
-        except DataProvisionError:
+        except (DataProvisionError, RequestNotDelivered):
             cp["phase"] = "new"
             self._save(conn, cp)
             raise

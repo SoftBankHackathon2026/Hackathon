@@ -2,6 +2,8 @@ from controlplane.domain.models import DeploymentRequest
 from controlplane.providers.contracts import Phase, ProviderRejected, ReleaseKey, Submission
 from oneport_aws.execution.oneport_ecs_release import ReleaseContext, ReleaseState
 
+RESTORE_POLL_LIMIT = 180
+
 
 def request_rollback(ctx: ReleaseContext) -> None:
     task_definition = ctx.cp["prepared"]["checkpoint"]["task_definition_arn"]
@@ -14,7 +16,7 @@ def request_rollback(ctx: ReleaseContext) -> None:
             error_code="rollback_window_closed",
         )
         return
-    ctx.cp["restore_samples"], ctx.cp["restore_attempts"] = 0, 0
+    ctx.cp["restore_samples"], ctx.cp["restore_attempts"], ctx.cp["restore_polls"] = 0, 0, 0
     ctx.move(ReleaseState.RESTORE_CHECKING, "ECS 롤백을 요청했습니다. 이전 버전을 확인합니다.")
 
 
@@ -28,7 +30,15 @@ def check_rollback(ctx: ReleaseContext) -> None:
             error_code=observed.code,
         )
     elif observed.phase != Phase.READY:
-        ctx.poll()
+        ctx.cp["restore_polls"] = ctx.cp.get("restore_polls", 0) + 1
+        if ctx.cp["restore_polls"] > RESTORE_POLL_LIMIT:
+            ctx.move(
+                ReleaseState.UNCERTAIN,
+                "ECS 롤백 완료를 확인하지 못했습니다. 운영자 확인이 필요합니다.",
+                error_code="rollback_unobserved",
+            )
+        else:
+            ctx.poll()
     else:
         _verify_previous(ctx)
 
