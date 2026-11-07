@@ -46,6 +46,11 @@ run "db_is_public_single_az_with_logical_replication" {
   }
 
   assert {
+    condition     = aws_db_instance.this.storage_encrypted
+    error_message = "DB 저장소는 암호화한다."
+  }
+
+  assert {
     condition     = aws_db_instance.this.manage_master_user_password
     error_message = "마스터 비밀번호는 RDS 가 Secrets Manager 에 만든다(state 에 평문 금지)."
   }

@@ -3,6 +3,11 @@ output "name_prefix" {
   value       = var.name_prefix
 }
 
+output "region" {
+  description = "자원을 만든 리전. 잔여 검사(AwsResidueScanner region)에 넘긴다."
+  value       = var.region
+}
+
 output "roles" {
   description = "층별 placement 역할."
   value = {
@@ -17,7 +22,7 @@ output "vpc_id" {
 }
 
 output "public_subnet_ids" {
-  description = "퍼블릭 서브넷 2개. 봇 작업을 띄울 때도 쓴다."
+  description = "퍼블릭 서브넷 2개(ALB·ECS 작업·RDS 서브넷 그룹)."
   value       = module.base.public_subnet_ids
 }
 

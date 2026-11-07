@@ -28,8 +28,8 @@ AWS↔GCP 이전에서 AWS 쪽 자원을 만드는 Terraform 루트 모듈이다
 해체됐다는 1차 근거는 `terraform destroy` 뒤 state 가 빈 것이다. 잔여
 검사(`crosscloud.provision.residue_aws`)는 보조 확인이다. 이 모듈이 만드는 자원
 종류마다 서비스 API 를 직접 조회해(EC2 망 자원은 태그 필터, 나머지는 이름
-접두사) state 밖에 남은 자원을 찾는다. 모듈에 새 자원 종류를 더하면
-`residue_aws._SCANS` 에도 더한다.
+접두사) state 밖에 남은 자원을 찾는다. 조회 리전은 루트 출력 `region` 을
+명시해 넘긴다. 모듈에 새 자원 종류를 더하면 `residue_aws._SCANS` 에도 더한다.
 
 ## 시험 환경 결정
 
@@ -58,6 +58,14 @@ Terraform state 에 비밀 평문을 두지 않는다.
 리스너 기본 동작과 ECS 서비스의 작업 정의는 `ignore_changes` 다. 전환 단계가
 앱을 멈추거나 대상 DB 를 가리키는 작업 정의로 바꾼 뒤, 재 apply 가 앱을 원본
 DB 로 되돌리지 못하게 한다.
+
+전환 단계와의 계약: 작업 정의를 바꿀 때는 같은 family(`<name_prefix>-app`)의
+새 리비전으로 등록한다. 그 리비전이 참조할 Secret 은 `secret_names` 에 미리
+선언해 이 모듈이 그릇을 만들게 한다. 그래야 실행 역할이 그 Secret 을 읽을 수
+있고, 잔여 검사가 그 리비전과 Secret 을 찾는다.
+
+Fargate 작업 정의는 플랫폼을 따로 정하지 않아 `LINUX/X86_64` 로 돈다. 앱
+이미지에는 linux/amd64 가 있어야 한다.
 
 ## 실행
 

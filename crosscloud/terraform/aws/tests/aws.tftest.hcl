@@ -32,6 +32,11 @@ run "aws_to_gcp_is_one_source_fixture" {
   }
 
   assert {
+    condition     = output.region == "ap-northeast-2"
+    error_message = "잔여 검사에 넘길 조회 리전을 내보낸다."
+  }
+
+  assert {
     condition     = output.name_prefix == "ccx-r1"
     error_message = "이름 접두사를 그대로 내보낸다(잔여 검사 입력)."
   }
