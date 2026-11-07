@@ -123,6 +123,9 @@ def validate_report(
     expected_epoch: int | None = None,
     expected_target_id: str | None = None,
 ) -> dict:
+    optional = (
+        {"workloads"} if isinstance(report, dict) and "workloads" in report else set()
+    )
     exact(
         report,
         {
@@ -136,7 +139,8 @@ def validate_report(
             "cluster",
             "resources",
             "coverage",
-        },
+        }
+        | optional,
     )
     if type(report["schema_version"]) is not int or report["schema_version"] != 1:
         raise ReportError("UNSUPPORTED_REPORT_VERSION")
@@ -219,6 +223,8 @@ def validate_report(
             names.add(item["name"])
     if env["facts"] != facts_for(cluster, resources):
         raise ReportError("INVALID_FACTS")
+    if "workloads" in report:
+        validate_workloads(report["workloads"])
     canonical_json(report)
     return report
 
@@ -245,3 +251,51 @@ def facts_for(cluster: dict, resources: dict) -> list[dict[str, str]]:
             else str(len(resources["storage_classes"])),
         },
     ]
+
+
+def validate_workloads(value):
+    extra = (
+        {"rolloutsAvailable"}
+        if isinstance(value, dict) and "rolloutsAvailable" in value
+        else set()
+    )
+    exact(value, {"coverage", "items"} | extra)
+    if extra and type(value["rolloutsAvailable"]) is not bool:
+        raise ReportError("INVALID_COVERAGE")
+    if value["coverage"] not in ("complete", "unavailable"):
+        raise ReportError("INVALID_COVERAGE")
+    items = value["items"]
+    if not isinstance(items, list) or len(items) > 2000:
+        raise ReportError("INVALID_WORKLOADS")
+    if value["coverage"] == "unavailable" and items:
+        raise ReportError("INVALID_COVERAGE")
+    ids = set()
+    for item in items:
+        exact(
+            item,
+            {
+                "namespace",
+                "kind",
+                "name",
+                "replicas",
+                "images",
+                "secrets",
+                "configMaps",
+                "pvcs",
+            },
+        )
+        for key in ("namespace", "kind", "name"):
+            text(item[key])
+        if item["kind"] not in ("Deployment", "StatefulSet", "DaemonSet", "Rollout"):
+            raise ReportError("INVALID_WORKLOAD_KIND")
+        integer(item["replicas"])
+        identity = (item["namespace"], item["kind"], item["name"])
+        if identity in ids:
+            raise ReportError("DUPLICATE_WORKLOAD")
+        ids.add(identity)
+        for key in ("images", "secrets", "configMaps", "pvcs"):
+            if not isinstance(item[key], list) or len(item[key]) > 256:
+                raise ReportError("INVALID_WORKLOAD_REFS")
+            for name in item[key]:
+                text(name, limit=1024)
+    return value
