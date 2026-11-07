@@ -84,19 +84,12 @@ def main():
         try:
             if child.stdin is None:
                 raise RuntimeError("private input unavailable")
-            # This isolated container does not run systemd. Preserve the
-            # validated clipboard command and add the explicit test mode.
-            while command and command[-1] in b" \t\r\n":
-                command.pop()
             child.stdin.write(command)
-            child.stdin.write(b" -s -- --foreground\n")
+            child.stdin.write(b"\n")
             child.stdin.close()
         finally:
             command[:] = b"\0" * len(command)
-        print(
-            "Validated clipboard command sent to isolated Ubuntu in foreground test mode",
-            flush=True,
-        )
+        print("Real clipboard command sent to isolated Ubuntu terminal", flush=True)
         result = child.wait()
     print(f"Connector process exited: {result}", flush=True)
     raise SystemExit(result)

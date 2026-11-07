@@ -19,7 +19,7 @@ shutil.move('/usr/local/libexec/migration-net-helper', '/tmp/helper-disabled')
 env = dict(os.environ, MIGRATION_ENROLL='A' * 22 + '.' + 'B' * 43)
 
 def run():
-    result = subprocess.run(['bash', '/bootstrap.sh', '--foreground'], env=env,
+    result = subprocess.run(['bash', '/bootstrap.sh'], env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode != 0, 'preflight must stop before enrollment'
     assert env['MIGRATION_ENROLL'] not in result.stdout + result.stderr

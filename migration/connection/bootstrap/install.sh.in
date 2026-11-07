@@ -33,32 +33,12 @@ _migration_fail() { printf '%s\n' "$1" >&2; exit 1; }
 
 [[ "$_migration_base" == https://* && "$_migration_base" != *'@'* ]] || _migration_fail '배포 주소가 설정되지 않았습니다.'
 [[ "$_migration_amd64" =~ ^[0-9a-f]{96}$ && "$_migration_arm64" =~ ^[0-9a-f]{96}$ ]] || _migration_fail '배포 검증값이 설정되지 않았습니다.'
-_migration_mode=enroll
-_migration_request=''
-case "$#:${1-}" in
-  0:) ;;
-  1:--foreground) _migration_mode=run ;;
-  2:--resume)
-    _migration_mode=resume-service
-    _migration_request=$2
-    ;;
-  *) _migration_fail '지원하는 인수는 --foreground 또는 --resume 요청ID입니다.' ;;
-esac
-if [[ "$_migration_mode" == resume-service ]]; then
-  [[ -z "$_migration_enrollment" && "$_migration_request" =~ ^[A-Za-z0-9_-]{22}$ ]] ||
-    _migration_fail '재개할 요청 식별자를 확인해 주세요.'
-else
-  [[ "$_migration_enrollment" =~ ^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$ ]] ||
-    _migration_fail '등록 입력 형식이 올바르지 않습니다.'
-fi
+[[ "$_migration_enrollment" =~ ^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$ ]] || _migration_fail '등록 입력 형식이 올바르지 않습니다.'
 [[ "$(uname -s)" == Linux ]] || _migration_fail 'Ubuntu 24.04 Linux 단말이 필요합니다.'
 [[ -r /etc/os-release ]] || _migration_fail '운영체제를 확인할 수 없습니다.'
 # This is the operating system-owned metadata file, not remote task input.
 . /etc/os-release
 [[ "${ID-}" == ubuntu && "${VERSION_ID-}" == 24.04 ]] || _migration_fail '첫 지원 환경은 Ubuntu 24.04입니다.'
-if [[ "$_migration_mode" != run && ! -d /run/systemd/system ]]; then
-  _migration_fail '서비스 설치에는 systemd로 부팅한 Ubuntu가 필요합니다. 전경 실행 시험에는 --foreground를 사용하세요.'
-fi
 case "$(uname -m)" in
   x86_64) _migration_arch=linux-amd64; _migration_hash=$_migration_amd64 ;;
   aarch64) _migration_arch=linux-arm64; _migration_hash=$_migration_arm64 ;;
@@ -84,10 +64,7 @@ chmod 0700 "$_migration_work/initial-connector"
 "$_migration_work/initial-connector" install-release "$_migration_url" "$_migration_work/bundle" || _migration_fail '배포 묶음의 서명 또는 파일 검증에 실패했습니다.'
 chmod 0700 "$_migration_work/bundle/migration-connector"
 _migration_keep=1
-if [[ "$_migration_mode" == resume-service ]]; then
-  "$_migration_work/bundle/migration-connector" resume-service "$_migration_work/bundle/connector.json" "$_migration_request"
-else
-  # The registration secret stays in the private pipe.
-  printf '%s\n' "$_migration_enrollment" | "$_migration_work/bundle/migration-connector" "$_migration_mode" "$_migration_work/bundle/connector.json"
-fi
+# printf is a Bash builtin: the seed is neither an external argv nor inherited
+# environment. The connector reads the private pipe and erases seed material.
+printf '%s\n' "$_migration_enrollment" | "$_migration_work/bundle/migration-connector" run "$_migration_work/bundle/connector.json"
 unset _migration_enrollment

@@ -22,8 +22,6 @@ from migration_connection.contracts.protocol import (
 from migration_connection.control.errors import ConnectionError
 from migration_connection.control.limits import LimitScope
 
-RECONNECT_WAIT_MS = 90_000
-
 PROOF_FIELDS = {
     "version",
     "request_id",
@@ -195,21 +193,7 @@ class ConnectionService:
             now >= row.get("lease_expires_at", 0) or now >= row.get("key_expires_at", 0)
         ):
             row["tunnel"] = "DEGRADED"
-            row["tunnel_checks"] = 0
-            row["issue"] = (
-                "연결 확인 기한이 끝났습니다. 단말에서 서비스를 확인해 주세요."
-            )
-        if row["tunnel"] in ("CONNECTING", "REKEYING"):
-            deadline = row.get("tunnel_deadline_at")
-            # Requests created before the deadline field may already be waiting.
-            if deadline is None and row["epoch"] and row["events"]:
-                deadline = row["events"][-1]["at"] + RECONNECT_WAIT_MS
-            if deadline is not None and now >= deadline:
-                row["tunnel"] = "DEGRADED"
-                row["tunnel_checks"] = 0
-                row["issue"] = (
-                    "단말 응답을 확인하지 못했습니다. 온프레미스에서 연결 서비스를 확인해 주세요."
-                )
+            row["issue"] = "연결 확인 기한이 끝났습니다. 새 연결을 확인하세요."
 
     def snapshot(self, row, actor):
         self._access(row, actor)
@@ -264,7 +248,6 @@ class ConnectionService:
             ("environment_id", "environmentId"),
             ("registered_at", "registeredAt"),
             ("key_expires_at", "keyExpiresAt"),
-            ("last_tunnel_activity_at", "lastTunnelActivityAt"),
             ("cleanup", "cleanup"),
             ("issue", "issue"),
         ]:
@@ -492,7 +475,6 @@ class ConnectionService:
                         raise ConnectionError("INVALID_CONFIRMATION_CODE", 422)
                     row["device"], row["tunnel"] = "APPROVED", "CONNECTING"
                     row["device_expires_at"] = self.clock() + 90 * 86400000
-                    row["tunnel_deadline_at"] = self.clock() + 300_000
             elif action == "revoke":
                 row["device"], row["tunnel"] = "REVOKED", "NONE"
                 row["lease_expires_at"] = 0
@@ -504,16 +486,12 @@ class ConnectionService:
                     "local": False,
                 }
             elif action == "reconnect":
-                require(row["device"] == "APPROVED", "RECONNECT_UNAVAILABLE")
-                if row["tunnel"] in ("READY", "CONNECTING", "REKEYING"):
-                    return self.snapshot(row, actor)
-                require(row["tunnel"] == "DEGRADED", "RECONNECT_UNAVAILABLE")
+                require(
+                    row["device"] == "APPROVED" and row["tunnel"] == "DEGRADED",
+                    "RECONNECT_UNAVAILABLE",
+                )
                 row["tunnel"] = "CONNECTING"
-                row["tunnel_checks"] = 0
-                row["tunnel_deadline_at"] = self.clock() + RECONNECT_WAIT_MS
-                row["reconnect_after_epoch"] = row["epoch"]
                 row["task"] = None
-                row.pop("issue", None)
             elif action == "collect":
                 self._ready(row)
                 require(
@@ -679,9 +657,6 @@ class ConnectionService:
                 require(through_tunnel, "TUNNEL_TRANSPORT_REQUIRED", 403)
                 self._ready(row)
                 if action == "poll":
-                    row["last_tunnel_activity_at"] = max(
-                        now, row.get("last_tunnel_activity_at", 0)
-                    )
                     task = row.get("task")
                     if task and now >= task["payload"]["expires_at_ms"]:
                         row["task"] = None
@@ -852,10 +827,6 @@ class ConnectionService:
                     row["collected"] = []
                     row.pop("inventory_digest", None)
             if state == "READY":
-                require(
-                    epoch > row.get("reconnect_after_epoch", 0),
-                    "NEW_KEY_EPOCH_REQUIRED",
-                )
                 require(data.get("checks") == 2, "TUNNEL_PROBES_REQUIRED")
                 expires, lease = (
                     data.get("key_expires_at_ms"),
@@ -871,12 +842,8 @@ class ConnectionService:
                 # A heartbeat may renew only the authorization lease, never the key lifetime.
                 if epoch == row["epoch"] and row.get("key_expires_at"):
                     require(expires == row["key_expires_at"], "KEY_LIFETIME_CHANGED")
-                if epoch != row["epoch"] or not row.get("key_expires_at"):
-                    row["last_tunnel_activity_at"] = now
                 row["key_expires_at"], row["lease_expires_at"] = expires, lease
                 row["tunnel_checks"] = 4
-                row.pop("tunnel_deadline_at", None)
-                row.pop("reconnect_after_epoch", None)
                 row.pop("issue", None)
             else:
                 row["lease_expires_at"] = 0
@@ -885,13 +852,6 @@ class ConnectionService:
                     # lifetime. Same-generation REKEYING must retain the bound.
                     row["key_expires_at"] = 0
                     row["tunnel_checks"] = 0
-            if state == "REKEYING" and epoch != row["epoch"]:
-                row["tunnel_deadline_at"] = now + RECONNECT_WAIT_MS
-            if state == "DEGRADED":
-                row["tunnel_checks"] = 0
-                row["issue"] = (
-                    "터널 통신이 끊겼습니다. 온프레미스 단말에서 연결 서비스를 확인해 주세요."
-                )
             changed = row["tunnel"] != state or row["epoch"] != epoch
             row["epoch"], row["connection_id"], row["tunnel"] = (
                 epoch,

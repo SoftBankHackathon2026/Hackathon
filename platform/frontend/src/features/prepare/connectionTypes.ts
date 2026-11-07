@@ -25,7 +25,6 @@ export type ConnectionSnapshot = {
   target: ConnectionTarget | null;
   serverNow: number;
   observedAt: number;
-  lastTunnelActivityAt?: number;
   registrationExpiresAt: number;
   approvalExpiresAt?: number;
   registration: "ISSUED" | "CONSUMED" | "EXPIRED" | "CANCELLED";
