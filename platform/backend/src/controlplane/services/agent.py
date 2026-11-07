@@ -3,15 +3,19 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from controlplane.core.errors import OperationNotFound, RequestConflict
-from controlplane.repositories.agent import DECISION_PENDING, AgentJournal
+from controlplane.repositories.agent import DECISION_PENDING, RERUN_PENDING, AgentJournal
 from controlplane.schemas.accounts import Identity
 from controlplane.schemas.agent import (
+    RERUN_STATES,
     WAITING_APPROVAL,
+    AgentCommand,
     AgentHeartbeat,
     AgentStatus,
     AgentStatusList,
     ApprovalTicket,
     ChangeSummary,
+    CommandAccepted,
+    CommandKind,
     Decision,
     DecisionAccepted,
     PendingApproval,
@@ -20,11 +24,14 @@ from controlplane.schemas.agent import (
     RunListItem,
     RunReport,
     RunSummary,
+    SettingsChange,
     StoredRun,
 )
 
 RUN_NOT_FOUND = "해당 에이전트 실행 기록이 없어요."
 APPROVAL_NOT_FOUND = "해당 승인 요청이 없어요."
+AGENT_NOT_FOUND = "신호를 보낸 적 없는 에이전트예요."
+COMMAND_NOT_FOUND = "해당 에이전트 명령이 없어요."
 NOT_WAITING = "승인을 기다리는 실행이 아니어서 결정할 수 없어요."
 SCREEN_REQUESTER = "운영 화면"
 ONLINE_FACTOR = 3
@@ -87,16 +94,53 @@ class AgentService:
         if not self._journal.ack(approval_id, result_state, self._now()):
             raise OperationNotFound(APPROVAL_NOT_FOUND)
 
-    def status(self) -> AgentStatusList:
+    def status(self, permitted: bool) -> AgentStatusList:
         now = self._now()
+        pending = self._journal.open_commands()
         return AgentStatusList(
             agents=[
                 AgentStatus(
-                    **row, online=is_online(row["received_at"], row["interval_seconds"], now)
+                    **row,
+                    online=is_online(row["received_at"], row["interval_seconds"], now),
+                    pending_commands=pending.get(row["agent_id"], []),
                 )
                 for row in self._journal.heartbeats()
-            ]
+            ],
+            can_command=permitted,
         )
+
+    def _rerun_pending(self, agent_id: str) -> bool:
+        return any(
+            command.kind == "rerun"
+            for command in self._journal.open_commands(agent_id).get(agent_id, [])
+        )
+
+    def _command(
+        self, agent_id: str, kind: CommandKind, payload: dict, identity: Identity | None
+    ) -> CommandAccepted:
+        if not self._journal.known_agent(agent_id):
+            raise OperationNotFound(AGENT_NOT_FOUND)
+        if kind == "rerun" and self._rerun_pending(agent_id):
+            raise RequestConflict(RERUN_PENDING)
+        command = self._journal.command(
+            agent_id, kind, payload, identity.email if identity else SCREEN_REQUESTER, self._now()
+        )
+        return CommandAccepted(id=command.id, kind=command.kind)
+
+    def change_settings(
+        self, agent_id: str, change: SettingsChange, identity: Identity | None
+    ) -> CommandAccepted:
+        return self._command(agent_id, "settings", change.model_dump(exclude_unset=True), identity)
+
+    def rerun(self, agent_id: str, identity: Identity | None) -> CommandAccepted:
+        return self._command(agent_id, "rerun", {}, identity)
+
+    def commands(self, agent_id: str) -> list[AgentCommand]:
+        return self._journal.open_commands(agent_id).get(agent_id, [])
+
+    def ack_command(self, command_id: int, result: str) -> None:
+        if not self._journal.ack_command(command_id, result, self._now()):
+            raise OperationNotFound(COMMAND_NOT_FOUND)
 
     def runs(self, limit: int) -> RunList:
         return RunList(runs=[_item(run) for run in self._journal.runs(limit)])
@@ -123,6 +167,9 @@ class AgentService:
             if pending
             else None,
             can_decide=permitted and run.state == WAITING_APPROVAL and pending is None,
+            can_rerun=permitted
+            and run.state in RERUN_STATES
+            and not self._rerun_pending(run.agent_id),
         )
 
     def decide(
