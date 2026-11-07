@@ -175,12 +175,13 @@ class AgentService:
     def decide(
         self, run_id: str, decision: Decision, identity: Identity | None
     ) -> DecisionAccepted:
+        return self.decide_as(run_id, decision, identity.email if identity else SCREEN_REQUESTER)
+
+    def decide_as(self, run_id: str, decision: Decision, requested_by: str) -> DecisionAccepted:
         run = self._run(run_id)
         if run.state != WAITING_APPROVAL:
             raise RequestConflict(NOT_WAITING)
         if self._journal.pending(run_id) is not None:
             raise RequestConflict(DECISION_PENDING)
-        ticket = self._journal.decide(
-            run_id, decision, identity.email if identity else SCREEN_REQUESTER, self._now()
-        )
+        ticket = self._journal.decide(run_id, decision, requested_by, self._now())
         return DecisionAccepted(id=ticket.id, decision=ticket.decision)

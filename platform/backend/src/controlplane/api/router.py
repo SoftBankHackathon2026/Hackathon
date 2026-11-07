@@ -13,6 +13,7 @@ from controlplane.api.routes import (
     monitoring,
     releases,
     runs,
+    slack,
     system,
     team,
     traffic,
@@ -34,6 +35,7 @@ for module in (
     costs,
     connections,
     agent,
+    slack,
     traffic,
 ):
     api_router.include_router(module.router)

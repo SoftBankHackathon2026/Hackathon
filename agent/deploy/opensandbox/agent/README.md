@@ -106,6 +106,7 @@ AI 에게 묻기 전에 지금 설정으로 DB 에 붙어 보고(진단), 실패
   - `settings`: `auto_apply`(bool), `interval_seconds`(30~3600), `slack_enabled`(bool), `slack_thread_ts`(빈 값 또는 `1700000000.000100` 꼴)만 바꿀 수 있다. 다른 키나 범위 밖 값은 거절한다. 바꾼 값은 `state_dir/settings.json` 에 남아 재시작해도 유지된다(`agent.yaml` 보다 우선).
   - `rerun`: 남은 대기 시간을 건너뛰고 바로 다시 판정한다.
 - Slack 승인 대기 메시지에 플랫폼 링크가 붙는다.
+- `slack.buttons: true` 면 승인 대기 메시지에 승인, 거절, 플랫폼에서 보기 버튼이 붙는다. 버튼은 플랫폼 `/api/v1/slack/interactions` 가 받아 화면 승인과 같은 대기열에 넣는다. 플랫폼에 Slack 서명 비밀을 넣기 전에는 켜지 않는다(`platform/deploy/ec2/README.md`).
 - `APP-01-UNVERIFIED` 보류(스모크 일시 실패)는 같은 내용이 3번 연속일 때만 Slack 으로 알린다.
 
 플랫폼에 닿지 않아도 판정·수정은 그대로 하고 로그만 남긴다.

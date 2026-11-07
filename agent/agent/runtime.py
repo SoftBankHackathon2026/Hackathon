@@ -132,6 +132,7 @@ class AgentRuntime:
             "slack": {
                 "mode": self.slack_mode(), "enabled": self.slack_enabled,
                 "channel": self.cfg.slack_channel or None, "thread_ts": self.slack_thread_ts or None,
+                "buttons": self.cfg.slack_buttons,
             },
             "fix": {"keys": allowed_keys(self.cfg.target_db), "plan": planned_values(self.cfg.target_db)},
             "sandbox": {

@@ -243,9 +243,11 @@ class World:
 class _ListNotifier:
     def __init__(self, sink: list[str], *, echo: bool) -> None:
         self.sink, self.echo = sink, echo
+        self.blocks: list[list[dict[str, Any]] | None] = []
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
         self.sink.append(text)
+        self.blocks.append(blocks)
         if self.echo:
             StdoutNotifier().send(text)
 
