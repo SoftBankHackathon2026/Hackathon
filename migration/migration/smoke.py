@@ -10,6 +10,9 @@
                 대상 행은 CDC 로만 생긴다. 대상에 직접 쓰면 verify(pre) 의 T-B 와 DRAINING 의 건수 일치가 깨진다.
   final_verify  양쪽 다 GET 만. pre_cutover 가 만든 행을 원본과 대상에서 읽어 비교한다.
                 이때는 원본 INSERT 가 REVOKE 됐고 커넥터도 지워져, 새 행은 쓸 수도 복제될 수도 없다.
+  --target-only pre_cutover 만. 대상 앱에 없는 ID 를 GET 한다. 원본을 쓰지 않고 행을 만들지 않는다.
+                앱이 DB 를 조회해 준 404 면 통과다. 복제·쓰기는 검증하지 않으므로 detail.mode 로 드러낸다.
+                CDC 가 없는 환경에서 대상 앱의 DB 연결만 볼 때 쓴다 (AI 설정 수정 에이전트).
 
 스모크 행은 run_id=smoke_<job_id>, phase=smoke 로 구분하고 지우지 않는다 (앱·sink 모두 DELETE 권한이 없다).
 READY 이후에 실행한다. 더 이르면 CATCHING_UP 의 live 행 수에 스모크 행이 함께 세진다.
@@ -47,6 +50,7 @@ log = logging.getLogger("migration.smoke")
 CHECK_NAME = "target_app_db"
 CHECK_SOURCE = "migration.smoke"
 SMOKE_PHASE = "smoke"
+TARGET_ONLY_MODE = "target_only"
 STAGES: tuple[str, ...] = ("pre_cutover", "final_verify")
 STEPS: tuple[str, ...] = ("create", "retry", "read_back", "replicated")
 RECORD_FIELDS: frozenset[str] = frozenset({"request_id", "run_id", "phase", "request_no", "payload", "created_at"})
@@ -124,6 +128,7 @@ class SmokeResult:
     db_connected: bool = False
     source_environment: str | None = None
     target_environment: str | None = None
+    target_only: bool = False
 
     def _results(self) -> list[str]:
         probe = [self.target_probe.result] if self.target_probe else []
@@ -133,6 +138,8 @@ class SmokeResult:
     def order_query_ok(self) -> bool:
         """스텝이 전부 통과했을 때만 true. final_verify 의 create/retry 는 하지 않는 스텝이라 skipped 를 허용한다."""
         results = {name: step.result for name, step in self.steps.items()}
+        if self.target_only:
+            return results == {"create": SKIPPED, "retry": SKIPPED, "read_back": OK, "replicated": SKIPPED}
         if self.stage == "final_verify":
             return results == {"create": SKIPPED, "retry": SKIPPED, "read_back": OK, "replicated": OK}
         return all(r == OK for r in results.values())
@@ -167,6 +174,8 @@ class SmokeResult:
         }
         if self.target_probe is not None:
             detail["target_probe"] = self.target_probe.as_dict()
+        if self.target_only:
+            detail["mode"] = TARGET_ONLY_MODE
         return build_check(self.status, detail, source=CHECK_SOURCE)
 
 
@@ -321,7 +330,7 @@ def _check_write(step: Step, resp: Response, record: dict[str, str], *, expect_c
 class _Runner:
     def __init__(
         self,
-        source: RequestApi,
+        source: RequestApi | None,
         target: RequestApi,
         *,
         replication_timeout: float,
@@ -333,6 +342,26 @@ class _Runner:
         self.replication_timeout = replication_timeout
         self.poll_interval = poll_interval
         self.sleep, self.clock = sleep, clock
+
+    def target_only(self, job_id: str) -> SmokeResult:
+        """대상 앱만 GET 한다. 앱이 DB 를 조회해 준 404 가 통과 증거다. 어디에도 쓰지 않는다."""
+        rid = str(uuid.uuid4())
+        result = SmokeResult("pre_cutover", job_id, smoke_run_id(job_id), rid, target_only=True)
+        for name in ("create", "retry", "replicated"):
+            result.steps[name].result = SKIPPED
+        resp = self.target.get(rid)
+        result.target_environment = resp.environment
+        result.db_connected = _db_answered(resp)
+        result.target_probe = probe = Step(http_code=resp.code)
+        read_back = result.steps["read_back"]
+        read_back.http_code = resp.code
+        if _is_not_found(resp):
+            probe.result = read_back.result = OK
+        else:
+            _set_failure(probe, resp, target_side=True)
+            if resp.code == 200:  # 방금 만든 UUID 가 이미 있다. 무엇을 보고 있는지 믿을 수 없다
+                probe.result, probe.reason = UNKNOWN, "id_already_on_target"
+        return result
 
     def pre_cutover(self, job_id: str, *, now: datetime | None) -> SmokeResult:
         record = new_record(job_id, now=now)
@@ -466,10 +495,11 @@ def run_smoke(
     stage: str,
     *,
     job_id: str,
-    source_url: str,
+    source_url: str | None = None,
     target_url: str,
     token: str | None = None,
     request_id: str | None = None,
+    target_only: bool = False,
     http_timeout: float = 5.0,
     replication_timeout: float = 30.0,
     poll_interval: float = 1.0,
@@ -484,15 +514,21 @@ def run_smoke(
         raise SmokeConfigError(f"job_id 는 비어 있지 않고 run_id 가 {MAX_RUN_ID_LENGTH}자 이하여야 한다")
     if http_timeout <= 0 or replication_timeout < 0 or poll_interval < 0:
         raise SmokeConfigError("시간 설정이 잘못됐다")
+    if target_only and stage != "pre_cutover":
+        raise SmokeConfigError("--target-only 는 pre_cutover 에서만 쓴다")
+    if not target_only and not source_url:
+        raise SmokeConfigError("--source-url 이 필요하다 (--target-only 가 아닐 때)")
     runner = _Runner(
-        RequestApi(source_url, token, http_timeout),
+        RequestApi(source_url, token, http_timeout) if source_url and not target_only else None,
         RequestApi(target_url, token, http_timeout),
         replication_timeout=replication_timeout,
         poll_interval=poll_interval,
         sleep=sleep,
         clock=clock,
     )
-    if stage == "final_verify":
+    if target_only:
+        result = runner.target_only(job_id)
+    elif stage == "final_verify":
         result = runner.final_verify(job_id, request_id)
     else:
         result = runner.pre_cutover(job_id, now=now)
@@ -509,7 +545,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = subs.add_parser("run", help="스모크를 실행하고 target_app_db check JSON 을 출력한다")
     r.add_argument("--stage", required=True, choices=STAGES)
     r.add_argument("--job-id", required=True, help="스모크 행의 run_id(smoke_<job_id>)가 된다")
-    r.add_argument("--source-url", required=True)
+    r.add_argument("--source-url", help="--target-only 가 아니면 필수")
+    r.add_argument("--target-only", action="store_true", help="대상 앱의 DB 조회만 본다. 원본을 쓰지 않고 행을 만들지 않는다")
     r.add_argument("--target-url", required=True)
     r.add_argument("--request-id", help="final_verify 에서 비교할 pre_cutover 행 ID (그 결과의 detail.request_id)")
     r.add_argument("--token-env", default=DEFAULT_TOKEN_ENV, help="토큰을 담은 환경변수 이름. 토큰 값을 인자로 받지 않는다")
@@ -531,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
             target_url=args.target_url,
             token=token_from_env(args.token_env),
             request_id=args.request_id,
+            target_only=args.target_only,
             http_timeout=args.http_timeout,
             replication_timeout=args.replication_timeout,
             poll_interval=args.poll_interval,

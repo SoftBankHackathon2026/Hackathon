@@ -734,3 +734,56 @@ def test_cli_config_error_exit_code(capsys, monkeypatch):
                        "--target-url", "http://127.0.0.1:9"])
     assert code == 1
     assert "short" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# --target-only: 대상 앱의 DB 조회만 본다
+# ---------------------------------------------------------------------------
+
+
+def test_target_only_passes_on_app_404_without_writing(apps):
+    source, target = apps
+    result = run_smoke("pre_cutover", job_id=JOB, target_url=target.url, target_only=True)
+    check = result.to_check()
+    assert check["status"] == "pass"
+    assert check["detail"]["db_connected"] is True and check["detail"]["order_query_ok"] is True
+    assert check["detail"]["mode"] == "target_only"
+    assert result.exit_code == smoke.EXIT_PASS
+    assert source.calls == [] and target.posts() == [] and target.rows == {}
+
+
+def test_target_only_db_unavailable_is_confirmed_failure(apps):
+    _, target = apps
+    target.override = lambda *_: (503, api_error("DB_UNAVAILABLE"), {})
+    check = run_smoke("pre_cutover", job_id=JOB, target_url=target.url, target_only=True).to_check()
+    assert check["status"] == "pass"  # 관측 성공, 사실은 detail 로 전한다 (OPA deny)
+    assert check["detail"]["db_connected"] is False and check["detail"]["order_query_ok"] is False
+
+
+def test_target_only_ingress_404_is_not_db_evidence(apps):
+    _, target = apps
+    target.override = lambda *_: (404, {"message": "not found"}, {})
+    check = run_smoke("pre_cutover", job_id=JOB, target_url=target.url, target_only=True).to_check()
+    assert check["status"] == "error" and check["detail"]["db_connected"] is False
+
+
+def test_target_only_unreachable_is_error():
+    check = run_smoke("pre_cutover", job_id=JOB, target_url="http://127.0.0.1:9", target_only=True, http_timeout=1).to_check()
+    assert check["status"] == "error"
+
+
+def test_target_only_is_refused_on_final_verify():
+    with pytest.raises(SmokeConfigError):
+        run_smoke("final_verify", job_id=JOB, target_url="http://t", target_only=True)
+
+
+def test_source_url_still_required_without_target_only():
+    with pytest.raises(SmokeConfigError):
+        run_smoke("pre_cutover", job_id=JOB, target_url="http://t")
+
+
+def test_cli_target_only(apps, capsys, monkeypatch):
+    monkeypatch.delenv("SMOKE_API_TOKEN", raising=False)
+    _, target = apps
+    assert smoke.main(["run", "--stage", "pre_cutover", "--job-id", JOB, "--target-only", "--target-url", target.url]) == 0
+    assert json.loads(capsys.readouterr().out)["detail"]["mode"] == "target_only"

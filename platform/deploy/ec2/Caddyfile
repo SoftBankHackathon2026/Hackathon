@@ -1,5 +1,11 @@
 {$ONEPORT_DOMAIN} {
 	encode zstd gzip
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-	reverse_proxy oneport-web:8080
+	handle_path /releases/* {
+		root * /srv/releases
+		file_server
+	}
+	handle {
+		reverse_proxy oneport-web:8080
+	}
 }

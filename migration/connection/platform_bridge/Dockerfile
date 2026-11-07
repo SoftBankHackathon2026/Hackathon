@@ -3,6 +3,9 @@
 ARG PLATFORM_IMAGE
 FROM ${PLATFORM_IMAGE}
 USER root
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && openssl version | grep '^OpenSSL 3\.5\.'
 COPY migration/connection/pyproject.toml migration/connection/__init__.py /opt/connection-source/
 COPY migration/connection/contracts/*.py /opt/connection-source/contracts/
 COPY migration/connection/control/*.py /opt/connection-source/control/

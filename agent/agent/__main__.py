@@ -1,81 +1,117 @@
-"""CLI.
+"""python -m agent run | approve <run_id> | status [run_id]
 
-  python -m agent run     --config agent.yaml          사전 검사 → AI 수정 → 보고 (한 번)
-  python -m agent approve --config agent.yaml <rem_id> 승인 대기 수정안 적용
-  python -m agent status  --config agent.yaml          최근 기록
-  python -m agent probe   --config agent.yaml          저장소 값으로 탐침만
-  python -m agent slack   --config agent.yaml          Slack 봇 (Socket Mode)
+종료 코드: 0 복구 완료·고칠 것 없음·승인 대기, 1 설정 오류, 2 그 밖의 끝 상태 (사람이 봐야 한다).
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
+import os
 import sys
 
-from .config import AgentConfig, load_config
-from .notify import LogNotifier, Notifier, SlackNotifier
+from migration.policy_client import DecisionStore, OpaHttpEvaluator
+from migration.smoke import SmokeConfigError, run_smoke, token_from_env
+
+from .config import AgentConfig, ConfigError, load_config
+from .kv import OpenBaoKv
+from .notify import build_notifier
 from .probe import PostgresProber
-from .proposer import CodexProposer
-from .remediation import Remediator, build_evaluators
-from .slack_bot import _summary, serve
-from .stores import build_store
+from .proposer import ProposerError, build_proposer
+from .remediation import Deps, Remediator
+from .restart import InClusterKubeApi, RolloutRestarter
+from .runs import OK_STATES, Run, RunStore
+
+EXIT_OK, EXIT_CONFIG, EXIT_ATTENTION = 0, 1, 2
 
 
-def build_notifier(cfg: AgentConfig, *, force_log: bool = False) -> Notifier:
-    if force_log or not cfg.slack.channel:
-        return LogNotifier()
-    try:
-        return SlackNotifier(cfg.slack.channel, token_env=cfg.slack.bot_token_env)
-    except ValueError as exc:
-        logging.getLogger("agent").warning("%s → 로그 알림으로 대체", exc)
-        return LogNotifier()
+def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore) -> Remediator:
+    def smoke() -> dict:
+        s = cfg.smoke
+        return run_smoke(
+            s.stage, job_id=cfg.job_id, source_url=s.source_url, target_url=s.target_url, target_only=s.target_only,
+            token=token_from_env(s.token_env), http_timeout=s.http_timeout,
+            replication_timeout=s.replication_timeout, poll_interval=s.poll_interval,
+        ).to_check()
 
-
-def build_remediator(cfg: AgentConfig, *, notifier: Notifier | None = None) -> Remediator:
-    mig_eval, rem_eval = build_evaluators(cfg)
-    return Remediator(
-        cfg, store=build_store(cfg.store), prober=PostgresProber(cfg.scope, timeout=cfg.probe_timeout_seconds),
-        proposer=CodexProposer(cfg.codex), notifier=notifier or build_notifier(cfg),
-        migration_evaluator=mig_eval, remediation_evaluator=rem_eval,
+    deps = Deps(
+        smoke=smoke,
+        evaluator=OpaHttpEvaluator(cfg.opa_url, timeout=cfg.opa_timeout),
+        decisions=decisions,
+        kv=OpenBaoKv(cfg.openbao.addr, cfg.openbao.mount, cfg.openbao.path, cfg.openbao.token, timeout=cfg.openbao.timeout),
+        proposer=build_proposer(cfg.codex),
+        prober=PostgresProber(cfg.probe),
+        restarter=RolloutRestarter(cfg.restart, InClusterKubeApi()),
+        notifier=build_notifier(cfg.slack_channel),
+        runs=runs,
     )
+    return Remediator(deps, job_id=cfg.job_id, plan=cfg.plan, declared_evidence=cfg.declared_evidence,
+                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage)
+
+
+def _print_run(run: Run, runs: RunStore) -> None:
+    print(json.dumps({**dataclasses.asdict(run), "events": runs.events(run.run_id)}, ensure_ascii=False, indent=2))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="python -m agent", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--config", help="설정 파일 (기본 AGENT_CONFIG 또는 /etc/agent/agent.yaml)")
+    p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
+    sub = p.add_subparsers(dest="command", required=True)
+    r = sub.add_parser("run", help="한 번 실행한다")
+    r.add_argument("--no-auto-apply", action="store_true", help="저장소에 쓰기 전에 멈추고 승인을 기다린다")
+    a = sub.add_parser("approve", help="승인 대기 중인 실행을 적용한다")
+    a.add_argument("run_id")
+    s = sub.add_parser("status", help="실행 기록을 본다")
+    s.add_argument("run_id", nargs="?")
+    return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="agent", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["run", "approve", "status", "probe", "slack"])
-    parser.add_argument("args", nargs="*")
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--no-slack", action="store_true", help="Slack 대신 로그로 보고")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    ns = parser.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if ns.verbose else logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(level=args.log_level.upper(), stream=sys.stderr,
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    try:
+        cfg = load_config(args.config)
+        if args.command == "run" and args.no_auto_apply:
+            cfg = dataclasses.replace(cfg, auto_apply=False)
+    except ConfigError as exc:
+        logging.getLogger("agent").error("설정 오류: %s", exc)
+        return EXIT_CONFIG
 
-    cfg = load_config(ns.config)
-    if ns.command == "probe":
-        snap = build_store(cfg.store).read()
-        result = PostgresProber(cfg.scope, timeout=cfg.probe_timeout_seconds).probe(snap.values)
-        print(json.dumps(result.as_check(app_id=f"{cfg.target_env}:agent-probe"), ensure_ascii=False, indent=2))
-        return 0 if result.db_connected else 1
-
-    rem = build_remediator(cfg, notifier=build_notifier(cfg, force_log=ns.no_slack))
-    if ns.command == "run":
-        rec = rem.run()
-        print(json.dumps(rec.as_dict(), ensure_ascii=False, indent=2))
-        return 0 if rec.status in ("NO_ACTION", "RECHECK_PASSED") else 2
-    if ns.command == "approve":
-        if not ns.args:
-            parser.error("approve <remediation_id>")
-        rec = rem.approve(ns.args[0], approver="cli")
-        print(json.dumps(rec.as_dict(), ensure_ascii=False, indent=2))
-        return 0 if rec.status == "RECHECK_PASSED" else 2
-    if ns.command == "status":
-        data = rem.records.latest(cfg.job_id)
-        print(_summary(data) if data else "기록이 없다.")
-        return 0
-    serve(cfg, rem)
-    return 0
+    runs, decisions = RunStore(cfg.state_dir), DecisionStore(cfg.state_dir)
+    try:
+        if args.command == "status":
+            if args.run_id:
+                found = runs.get(args.run_id)
+                if found is None:
+                    print(f"실행 기록이 없다: {args.run_id}", file=sys.stderr)
+                    return EXIT_CONFIG
+                _print_run(found, runs)
+            else:
+                for item in runs.recent():
+                    print(item.run_id, item.state, item.updated_at)
+            return EXIT_OK
+        try:
+            remediator = build_remediator(cfg, runs, decisions)
+        except ProposerError as exc:
+            logging.getLogger("agent").error("초기화 실패: %s", exc)
+            return EXIT_CONFIG
+        except (OSError, SmokeConfigError) as exc:
+            logging.getLogger("agent").error("초기화 실패: %s", type(exc).__name__)
+            return EXIT_CONFIG
+        try:
+            run = remediator.run() if args.command == "run" else remediator.approve(args.run_id)
+        except ValueError as exc:  # 승인 대상이 없거나 상태가 맞지 않음
+            print(str(exc), file=sys.stderr)
+            return EXIT_CONFIG
+        return EXIT_OK if run.state in OK_STATES else EXIT_ATTENTION
+    finally:
+        runs.close()
+        decisions.close()
 
 
 if __name__ == "__main__":

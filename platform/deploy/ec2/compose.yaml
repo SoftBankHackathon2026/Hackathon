@@ -3,13 +3,15 @@
 #   oneport-api       : FastAPI. 화면 API, 보고기 ingest
 #   oneport-collector : 수집기. 세 클러스터 모두 /opt/oneport/kube 의 읽기 전용 kubeconfig 로 읽는다
 #   oneport-web       : 화면(nginx). /api 는 oneport-api 로 넘긴다
-#   caddy             : 80·443. Let's Encrypt 인증서를 받아 HTTPS 로 oneport-web 에 넘기고, 80 은 HTTPS 로 돌린다
+#   caddy             : 80·443. Let's Encrypt 인증서를 받아 HTTPS 로 oneport-web 에 넘기고, 80 은 HTTPS 로 돌린다. /releases/ 는 단말 배포본 정적 파일
+#   redis·connection-broker : 온프렘 환경 연결(#48). profile connection 일 때만 뜬다. deploy.sh 가 /opt/oneport/connection/broker/broker.json 이 있으면 켠다
 #
 # 인스턴스에만 있는 파일 (Git 에 넣지 않는다, README 참고)
-#   /opt/oneport/.env                  : ONEPORT_REGISTRY, ONEPORT_TAG
+#   /opt/oneport/.env                  : ONEPORT_REGISTRY, ONEPORT_TAG, ONEPORT_BROKER_TAG, ONEPORT_DOMAIN, COMPOSE_PROFILES (deploy.sh 가 쓴다)
 #   /opt/oneport/settings.env          : ONEPORT_DOMAIN, ONEPORT_AUTH_MODE, ONEPORT_ALLOWED_HOSTS, ONEPORT_ALLOWED_ORIGINS
 #   /opt/oneport/secrets/              : postgres-password, database-url, ingest-token
 #   /opt/oneport/kube/                 : onprem.kubeconfig, aws.kubeconfig, gcp.kubeconfig
+#   /opt/oneport/connection/           : server.env, server/(작업 서명키·런타임 토큰), broker/(중계 설정·인증서), public/(서명한 단말 배포본)
 #
 # 메모리 상한(mem_limit)은 t3.small(2GiB)에 맞춘다. 합계 약 1.3GiB 이고 나머지는 OS·dockerd·tailscaled·SSM 에이전트 몫이다.
 # 상한을 넘은 컨테이너만 OOM 으로 죽고 restart 로 다시 뜬다. 인스턴스 전체가 멈추지 않게 하는 것이 목적이다.
@@ -45,7 +47,11 @@ services:
 
   oneport-api:
     <<: *api
-    env_file: [settings.env]
+    command: ["uvicorn", "controlplane.main:app", "--host", "0.0.0.0", "--port", "8320", "--proxy-headers", "--forwarded-allow-ips", "172.16.0.0/12"]
+    env_file:
+      - settings.env
+      - path: connection/server.env
+        required: false
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_INGEST_TOKEN_FILE: /etc/oneport/secrets/ingest-token
@@ -56,6 +62,7 @@ services:
       - ./secrets/ingest-token:/etc/oneport/secrets/ingest-token:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro
+      - ./connection/server:/etc/oneport/connection:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8320/healthz', headers={'Host': 'localhost'}))"]
       interval: 10s
@@ -70,8 +77,10 @@ services:
       ONEPORT_COLLECTOR_HEARTBEAT: /tmp/collector-heartbeat
       ONEPORT_FLEET_CONFIG: /etc/oneport/fleet/fleet.json
       ONEPORT_COST_CONFIG: /etc/oneport/fleet/cost.json
+      GOOGLE_APPLICATION_CREDENTIALS: /etc/oneport/gcp/credentials.json
     volumes:
       - ./secrets/database-url:/etc/oneport/secrets/database-url:ro
+      - ./secrets/gcp:/etc/oneport/gcp:ro
       - ./kube:/etc/oneport/kube:ro
       - ./fleet.json:/etc/oneport/fleet/fleet.json:ro
       - ./cost.json:/etc/oneport/fleet/cost.json:ro
@@ -110,11 +119,49 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./connection/public:/srv/releases:ro
       - caddy-data:/data
       - caddy-config:/config
     mem_limit: 128m
     depends_on:
       - oneport-web
+
+  redis:
+    image: redis:7.4-alpine
+    profiles: [connection]
+    restart: unless-stopped
+    user: "999:999"
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    tmpfs: [/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+    mem_limit: 64m
+
+  connection-broker:
+    image: ${ONEPORT_REGISTRY}/ghost/oneport-platform-broker:${ONEPORT_BROKER_TAG:-none}
+    profiles: [connection]
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    tmpfs: [/run, /tmp]
+    ports:
+      - "8443:8443"
+      - "51820:51820/udp"
+    extra_hosts:
+      - "${ONEPORT_DOMAIN:-localhost}:host-gateway"
+    volumes:
+      - ./connection/broker:/etc/migration-connector:ro
+    mem_limit: 64m
+    depends_on:
+      oneport-api: {condition: service_healthy}
+      redis: {condition: service_healthy}
 
 volumes:
   postgres:

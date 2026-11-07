@@ -447,7 +447,7 @@ def read_aws_managed(region: str, tags: dict[str, str], session: Any = None) -> 
     return ManagedScan(managed=services, transfers=transfers, public_ipv4=len(public_ips))
 
 
-GCP_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
+GCP_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
 def _gcp_client() -> Any:
