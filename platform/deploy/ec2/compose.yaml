@@ -8,7 +8,8 @@
 #
 # 인스턴스에만 있는 파일 (Git 에 넣지 않는다, README 참고)
 #   /opt/oneport/.env                  : ONEPORT_REGISTRY, ONEPORT_TAG, ONEPORT_BROKER_TAG, ONEPORT_DOMAIN, COMPOSE_PROFILES (deploy.sh 가 쓴다)
-#   /opt/oneport/settings.env          : ONEPORT_DOMAIN, ONEPORT_AUTH_MODE, ONEPORT_ALLOWED_HOSTS, ONEPORT_ALLOWED_ORIGINS
+#   /opt/oneport/settings.env          : ONEPORT_DOMAIN, ONEPORT_AUTH_MODE, ONEPORT_ALLOWED_HOSTS, ONEPORT_ALLOWED_ORIGINS,
+#                                        ONEPORT_ONPREM_WORKER_URL, ONEPORT_ONPREM_CONNECT_URL (fleet.json 자리표시를 채우는 온프렘 상태 프록시 주소)
 #   /opt/oneport/secrets/              : postgres-password, database-url, ingest-token
 #   /opt/oneport/kube/                 : onprem.kubeconfig, aws.kubeconfig, gcp.kubeconfig
 #   /opt/oneport/connection/           : server.env, server/(작업 서명키·런타임 토큰), broker/(중계 설정·인증서), public/(서명한 단말 배포본)
@@ -72,6 +73,7 @@ services:
   oneport-collector:
     <<: *api
     command: ["python", "-m", "controlplane.execution.fleet_collector"]
+    env_file: [settings.env]
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_COLLECTOR_HEARTBEAT: /tmp/collector-heartbeat
