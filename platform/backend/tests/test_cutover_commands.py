@@ -178,6 +178,7 @@ def test_claim_any_takes_the_oldest_pending_command_of_any_task(make_store, requ
         "onprem_return",
     )
     assert (first.source_env, first.target_env) == ("aws", "onprem")
+    assert (first.source_provider, first.target_provider) == ("aws", "onprem")
     assert service.claim_any().command.id == newer.id
     assert service.claim_any() is None
 

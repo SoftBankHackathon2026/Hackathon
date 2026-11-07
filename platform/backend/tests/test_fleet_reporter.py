@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import shlex
+import socket
 import sqlite3
 import sys
 import urllib.error
@@ -349,3 +350,195 @@ def test_main_needs_exactly_one_of_job_id_or_all_jobs(monkeypatch):
         reporter.main(["--platform-url", "http://p"])
     with pytest.raises(SystemExit):
         reporter.main(["--job-id", "a", "--all-jobs", "--platform-url", "http://p"])
+
+
+CLOUD_BASE = """
+targets:
+  aws_eks: {host: rds, dbname: shop}
+  gcp_gke: {host: cloudsql, dbname: shop_b}
+job: {job_id: placeholder, source: aws_eks, target: gcp_gke}
+application:
+  control_url: http://127.0.0.1:18080
+  tables: [{name: public.migration_demo, primary_key: [request_id]}]
+kafka: {connect_url: http://migration-connect:8083}
+"""
+
+CLOUD_CLAIM = {
+    "command": {"id": "cmd_c", "action": "run", "approval_id": None},
+    "job_id": "aws_to_gcp_001",
+    "source_env": "aws",
+    "target_env": "gcp",
+    "data_source": "aws_eks",
+    "data_target": "gcp_gke",
+    "source_provider": "aws",
+    "target_provider": "gcp",
+}
+
+
+def make_cloud_state(state_dir: Path, stage: str, failed: str | None = None) -> None:
+    cloud = state_dir / "cloud"
+    cloud.mkdir(parents=True, exist_ok=True)
+    checkpoint = json.dumps({"failed_stage": failed} if failed else {})
+    with sqlite3.connect(cloud / "cutover.sqlite3") as conn:
+        conn.execute(
+            "CREATE TABLE cutover_jobs (job_id TEXT, direction TEXT, source TEXT, target TEXT, stage TEXT, checkpoint TEXT, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO cutover_jobs VALUES ('aws_to_gcp_001','forward','aws_eks','gcp_gke',?,?,'2026-11-07T01:00:00Z')",
+            (stage, checkpoint),
+        )
+
+
+@pytest.mark.parametrize(
+    "providers, cloud",
+    [
+        (("aws", "gcp"), True),
+        (("gcp", "aws"), True),
+        (("onprem", "aws"), False),
+        (("aws", "onprem"), False),
+        ((None, "gcp"), False),
+    ],
+)
+def test_only_cloud_to_cloud_tasks_take_the_cloud_route(providers, cloud):
+    claimed = {**CLOUD_CLAIM, "source_provider": providers[0], "target_provider": providers[1]}
+    assert reporter.is_cloud_route(claimed) is cloud
+
+
+def test_cloud_job_config_keeps_the_application_and_swaps_the_job(tmp_path):
+    import yaml
+
+    base = tmp_path / "cloud.yaml"
+    base.write_text(CLOUD_BASE)
+    path = reporter.cloud_job_config(str(base), CLOUD_CLAIM, tmp_path / "jobs")
+    config = yaml.safe_load(path.read_text())
+    assert path.name == "aws_to_gcp_001.cloud.yaml"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert config["job"] == {"job_id": "aws_to_gcp_001", "source": "aws_eks", "target": "gcp_gke"}
+    assert config["application"]["control_url"] == "http://127.0.0.1:18080"
+    with pytest.raises(ValueError, match="gcp_x"):
+        reporter.cloud_job_config(
+            str(base), {**CLOUD_CLAIM, "data_target": "gcp_x"}, tmp_path / "jobs"
+        )
+    with pytest.raises(ValueError, match="MIGRATION_CLOUD_CONFIG"):
+        reporter.cloud_job_config("", CLOUD_CLAIM, tmp_path / "jobs")
+
+
+def test_cloud_argv_supports_run_approve_and_retry_only():
+    base = ["python", "-m", "migration.cloud"]
+    prefix = base + ["--config", "/c.yaml", "--state-dir", "/s/cloud"]
+    argv = reporter.cloud_argv({"action": "run"}, base, "/c.yaml", "/s/cloud")
+    assert argv == prefix + ["run"]
+    assert reporter.cloud_argv(
+        {"action": "approve", "approval_id": "A-1"}, base, "/c.yaml", "/s/cloud"
+    ) == prefix + ["run", "--approve", "A-1"]
+    assert reporter.cloud_argv({"action": "retry"}, base, "/c.yaml", "/s/cloud") == prefix + [
+        "run",
+        "--retry",
+    ]
+    for action in ("abort", "force_retry"):
+        with pytest.raises(ValueError, match="지원하지 않는"):
+            reporter.cloud_argv({"action": action}, base, "/c.yaml", "/s/cloud")
+    with pytest.raises(ValueError, match="approval_id"):
+        reporter.cloud_argv({"action": "approve"}, base, "/c.yaml", "/s/cloud")
+
+
+@pytest.mark.parametrize(
+    "stage, failed, reported, reported_failed",
+    [
+        ("COPYING", None, "COPYING", None),
+        ("STOPPING", None, "SYNC_CONFIRMED", None),
+        ("FAILED", "STOPPING", "ABORTED", "SYNC_CONFIRMED"),
+        ("NEEDS_RECOVERY", "SWITCHING", "NEEDS_RECOVERY", "SWITCHING"),
+    ],
+)
+def test_cloud_state_is_reported_in_platform_stages(
+    tmp_path, stage, failed, reported, reported_failed
+):
+    make_cloud_state(tmp_path, stage, failed)
+    cutover = reporter.read_job_cutover(tmp_path, "aws_to_gcp_001")
+    assert cutover["stage"] == reported
+    assert cutover["checkpoint"].get("failed_stage") == reported_failed
+    assert reporter.known_jobs(tmp_path) == ["aws_to_gcp_001"]
+
+
+def test_onprem_state_wins_and_both_states_are_listed(tmp_path):
+    make_state(tmp_path)
+    make_cloud_state(tmp_path, "COPYING")
+    assert reporter.known_jobs(tmp_path) == ["aws_to_gcp_001", "forward_001"]
+    assert reporter.read_job_cutover(tmp_path, "forward_001")["stage"] == "READY"
+
+
+def test_adapter_runs_only_while_the_cloud_command_runs(tmp_path, monkeypatch):
+    config = tmp_path / "c.yaml"
+    script = tmp_path / "adapter.py"
+    marker = tmp_path / "args.txt"
+    script.write_text(
+        "import socket, sys, time\n"
+        f"open({str(marker)!r}, 'w').write(' '.join(sys.argv[1:]))\n"
+        "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen()\n"
+        "time.sleep(60)\n"
+    )
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    config.write_text(CLOUD_BASE.replace("18080", str(port)))
+    monkeypatch.setenv("ONEPORT_ADAPTER_ARGV", f"{sys.executable} {script} {port}")
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_ENV", "/etc/ingress.env")
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_CONTROL_URL", "http://ingress:9092")
+    with reporter.adapter_running(config):
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            pass
+    assert f"--cloud-config {config}" in marker.read_text()
+    assert "--ingress-control-url http://ingress:9092" in marker.read_text()
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+
+
+def test_adapter_needs_its_ingress_settings(tmp_path, monkeypatch):
+    config = tmp_path / "c.yaml"
+    config.write_text(CLOUD_BASE)
+    monkeypatch.delenv("CROSSCLOUD_INGRESS_ENV", raising=False)
+    with pytest.raises(ValueError, match="CROSSCLOUD_INGRESS_ENV"):
+        with reporter.adapter_running(config):
+            pass
+
+
+def test_adapter_that_exits_early_is_a_config_error(tmp_path, monkeypatch):
+    config = tmp_path / "c.yaml"
+    config.write_text(CLOUD_BASE)
+    monkeypatch.setenv("ONEPORT_ADAPTER_ARGV", f"{sys.executable} -c 'raise SystemExit(4)'")
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_ENV", "/etc/ingress.env")
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_CONTROL_URL", "http://ingress:9092")
+    with pytest.raises(ValueError, match="exit 4"):
+        with reporter.adapter_running(config):
+            pass
+
+
+def test_execute_any_runs_cloud_tasks_with_migration_cloud(tmp_path, monkeypatch):
+    base = tmp_path / "cloud.yaml"
+    base.write_text(CLOUD_BASE)
+    script = "import sys; print(' '.join(sys.argv[1:])); sys.exit(3)"
+    monkeypatch.setenv("ONEPORT_CLOUD_ARGV", f"{sys.executable} -c {shlex.quote(script)}")
+    monkeypatch.setenv("MIGRATION_CLOUD_CONFIG", str(base))
+    entered = []
+
+    @reporter.contextmanager
+    def fake_adapter(config):
+        entered.append(config)
+        yield
+
+    posted = []
+    monkeypatch.setattr(reporter, "adapter_running", fake_adapter)
+    monkeypatch.setattr(reporter, "claim_any_command", lambda args, token: CLOUD_CLAIM)
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append((url, body)) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: None)
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p/", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    url, body = posted[-1]
+    assert url.endswith("/migrations/aws_to_gcp_001/commands/cmd_c/result")
+    assert body["exit_code"] == 3
+    assert f"--state-dir {tmp_path / 'cloud'} run" in body["log_tail"]
+    assert entered == [tmp_path / "jobs" / "aws_to_gcp_001.cloud.yaml"]

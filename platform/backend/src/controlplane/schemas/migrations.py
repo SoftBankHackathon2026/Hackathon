@@ -367,6 +367,8 @@ class ClaimedCommand(BaseModel):
     target_env: str
     data_source: str
     data_target: str
+    source_provider: str | None = None
+    target_provider: str | None = None
 
 
 class PodLogLine(BaseModel):

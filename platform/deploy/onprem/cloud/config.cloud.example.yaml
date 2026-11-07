@@ -1,0 +1,37 @@
+targets:
+  aws:
+    host: <RDS 엔드포인트>
+    dbname: migration_demo
+    sslmode: verify-full
+    sslrootcert: /etc/live-cutover/rds-ca.pem
+    users:
+      admin: {user: <RDS 관리자>, password_env: MIGRATION_AWS_ADMIN_PASSWORD}
+      app: {user: migration_app, password_env: MIGRATION_APP_PASSWORD}
+      cdc: {user: migration_cdc, password_env: MIGRATION_CDC_PASSWORD}
+      sink: {user: migration_sink, password_env: MIGRATION_SINK_PASSWORD}
+      verify: {user: migration_verify, password_env: MIGRATION_VERIFY_PASSWORD}
+  gcp:
+    host: <Cloud SQL 주소>
+    dbname: migration_demo_gcp
+    sslmode: verify-full
+    sslrootcert: /etc/live-cutover/cloudsql-ca.pem
+    users:
+      admin: {user: <Cloud SQL 관리자>, password_env: MIGRATION_GCP_ADMIN_PASSWORD}
+      app: {user: migration_app, password_env: MIGRATION_GCP_APP_PASSWORD}
+      cdc: {user: migration_cdc, password_env: MIGRATION_GCP_CDC_PASSWORD}
+      sink: {user: migration_sink, password_env: MIGRATION_GCP_SINK_PASSWORD}
+      verify: {user: migration_verify, password_env: MIGRATION_GCP_VERIFY_PASSWORD}
+job:
+  job_id: replaced_by_runner
+  source: aws
+  target: gcp
+application:
+  control_url: http://127.0.0.1:18080
+  tables:
+    - name: public.migration_demo
+      primary_key: [request_id]
+kafka:
+  connect_url: http://migration-connect:8083
+cutover:
+  stage_timeout_seconds: 1800
+  poll_interval_seconds: 5
