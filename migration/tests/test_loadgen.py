@@ -68,6 +68,62 @@ def _settings(state_dir, **kw) -> WorkerSettings:
     return WorkerSettings(**base)
 
 
+def test_demo_budget_survives_restart_and_replayed_release(state_dir):
+    settings = _settings(state_dir, max_generated=200, max_queue=200)
+    store = RequestStore(state_dir)
+    backend = MemoryBackend('onprem')
+    worker = Worker(settings, store, lambda _: backend)
+    assert worker.generate_one() is None
+    worker.set_generation_limit(100)
+    first = [worker.generate_one() for _ in range(100)]
+    assert all(first)
+    assert worker.generate_one() is None
+    worker.pause()
+    worker.set_generation_limit(200)
+    assert worker.generate_one() is None, 'paused worker cannot spend target budget'
+    # Restart from SQLite and persisted metadata, without relying on runtime counters.
+    restarted = Worker(settings, store, lambda _: backend)
+    assert restarted.status()['generated_total'] == 100
+    restarted.set_generation_limit(200)
+    restarted.resume()
+    assert all(restarted.generate_one() for _ in range(100))
+    for _ in range(10):
+        restarted.set_generation_limit(200)
+        assert restarted.generate_one() is None
+    assert restarted.status()['generated_total'] == 200
+    with pytest.raises(WorkerError, match='persisted demo budget'):
+        Worker(_settings(state_dir), store, lambda _: backend)
+    for invalid in [201, -1, 100, None, True]:
+        with pytest.raises(WorkerError):
+            restarted.set_generation_limit(invalid)
+    store.close()
+
+
+def test_demo_budget_http_control(state_dir):
+    store = RequestStore(state_dir)
+    worker = Worker(_settings(state_dir, max_generated=200), store, lambda _: MemoryBackend('onprem'))
+    server = serve(worker, '127.0.0.1', 0)
+    base = f'http://127.0.0.1:{server.server_port}'
+    try:
+        code, body = _http(base, 'POST', '/generation-limit', {'limit': 100})
+        assert code == 200 and json.loads(body)['generation_limit'] == 100
+        assert _http(base, 'POST', '/generation-limit', {'limit': 201})[0] == 409
+        assert _http(base, 'POST', '/generation-limit', {})[0] == 409
+    finally:
+        server.shutdown(); server.server_close(); store.close()
+
+
+def test_demo_full_queue_waits_without_consuming_budget(state_dir):
+    store = RequestStore(state_dir)
+    worker = Worker(_settings(state_dir, max_generated=200, max_queue=1), store, lambda _: MemoryBackend('onprem'))
+    worker.set_generation_limit(100)
+    assert worker.generate_one() is not None
+    assert worker.generate_one() is None
+    assert worker.status()['generated_total'] == 1
+    assert worker.counters['queue_rejected'] == 0
+    store.close()
+
+
 def _wait(pred, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

@@ -71,6 +71,9 @@ worker:
   state_dir: /var/lib/worker
 
 cutover:
+  # 시연 전체 1,000건: seed 800 + 복제 중 100 + 전환 후 100.
+  # 새 DB/상태 디렉터리에서 사용. 지속 부하 시연은 이 줄을 지우거나 null로 설정.
+  demo_total_rows: 1000
   state_dir: /var/lib/worker
   min_live_rows_after_snapshot: 100
   min_rows_after_switch: 100
