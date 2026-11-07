@@ -1,8 +1,10 @@
+import base64
 import gzip
 import json
 
 import cloudtrail_fixture as fixture
 import pytest
+from cryptography.hazmat.primitives import serialization
 
 from crosscloud.audit_copy import cloudtrail_verify
 
@@ -471,3 +473,65 @@ def test_newest_log_not_yet_covered_by_a_digest_makes_result_partial():
     report = _verify(trail)
 
     assert report.result == "partial"
+
+
+@pytest.mark.parametrize("algorithm", ["MD5", None])
+def test_log_entry_with_non_sha256_hash_algorithm_is_invalid(algorithm):
+    # 공식 절차는 logFiles.hashAlgorithm 에 적힌 알고리즘으로 해시하라고 한다.
+    # SHA-256 밖의 값을 SHA-256 으로 가정해 통과시키지 않는다.
+    trail = fixture.chain(1)
+    uri = trail.digest_uris[0]
+    log_uri = trail.log_uris[0]
+
+    def change(document):
+        entry = document["logFiles"][0]
+        if algorithm is None:
+            del entry["hashAlgorithm"]
+        else:
+            entry["hashAlgorithm"] = algorithm
+
+    _resign(trail, uri, change)
+
+    report = _verify(trail)
+
+    assert report.result == "invalid"
+    finding = _status(report, log_uri)
+    assert finding.status == "invalid"
+    assert "hashAlgorithm" in finding.reason
+
+
+def test_subject_public_key_info_der_key_is_accepted():
+    # AWS 문서의 list-public-keys 샘플은 PKCS#1 과
+    # SPKI(MIIBIjANBgkqhkiG9w0BAQEF…)가 섞여 있고 인코딩이 바뀔 수 있다고
+    # 적는다. 두 형식 모두 읽어야 한다(aws-cli load_pkcs1 은 SPKI 를 못 읽음).
+    spki = (
+        fixture.private_key()
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    assert base64.b64encode(spki).startswith(b"MIIBIjANBgkqhkiG9w0BAQEF")
+    trail = fixture.chain(2)
+
+    report = _verify(trail, public_keys={fixture.FINGERPRINT: spki})
+
+    assert report.result == "valid"
+
+
+@pytest.mark.parametrize(
+    "field", ["previousDigestS3Object", "previousDigestS3Bucket"]
+)
+@pytest.mark.parametrize("hours", [1, 2])
+def test_digest_without_previous_link_field_is_invalid(field, hours):
+    trail = fixture.chain(hours)
+    newest = trail.digest_uris[-1]
+    _resign(trail, newest, lambda d: d.pop(field))
+
+    report = _verify(trail)
+
+    assert report.result == "invalid"
+    finding = _status(report, newest)
+    assert finding.status == "invalid"
+    assert "필드" in finding.reason

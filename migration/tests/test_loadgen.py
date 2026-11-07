@@ -138,6 +138,7 @@ def test_lost_response_is_settled_by_lookup_not_duplicate(worker, backends):
     backends["onprem"].lose_response_once = True
     rec = worker.generate_one()
     assert _wait(lambda: worker.store.get(rec.request_id).status == COMMITTED)
+    assert worker.drain(1)["settled"]
     assert backends["onprem"].lookups >= 1
     assert worker.counters["committed_existing"] == 1 and worker.counters["committed_new"] == 0
     assert len(backends["onprem"].rows) == 1
@@ -212,7 +213,10 @@ def test_restart_resumes_pending_with_same_ids(state_dir, backends):
     store2 = RequestStore(state_dir)
     w2 = Worker(_settings(state_dir), store2, lambda n: backends[n])
     assert w2.queue_length() == 3
+    assert w2.state == WorkerState.PAUSED
     w2.start()
+    assert not backends["onprem"].rows
+    w2.resume()
     assert _wait(lambda: all(store2.get(i).status == COMMITTED for i in ids))
     assert set(backends["onprem"].rows) == set(ids)
     assert w2._make_request().request_no == 4  # request_no 이어짐
@@ -259,3 +263,95 @@ def test_http_control_api(worker, backends):
         assert code == 404
     finally:
         server.shutdown()
+
+
+def test_permission_rejection_pauses_and_allows_drain(worker, backends, monkeypatch):
+    def reject(rec):
+        raise psycopg.errors.InsufficientPrivilege("permission denied")
+    monkeypatch.setattr(backends["onprem"], "insert", reject)
+    rec = worker.generate_one()
+    assert _wait(lambda: worker.state == WorkerState.PAUSED)
+    assert worker.drain(1)["settled"]
+    assert worker.store.get(rec.request_id).status == "pending"
+    worker.switch_target("aws")
+    worker.resume()
+    assert _wait(lambda: worker.store.get(rec.request_id).status == COMMITTED)
+
+
+def test_unknown_commit_blocks_target_switch(worker, backends):
+    backends["onprem"].fail_times = 100
+    worker.generate_one()
+    assert _wait(lambda: worker.state == WorkerState.ERROR)
+    worker.pause()
+    assert not worker.drain(0)["settled"]
+    with pytest.raises(WorkerError):
+        worker.switch_target("aws")
+
+
+def test_corrupt_metadata_refuses_start(state_dir, backends):
+    (state_dir / "worker.json").write_text("{broken")
+    store = RequestStore(state_dir)
+    with pytest.raises(WorkerError):
+        Worker(_settings(state_dir), store, lambda n: backends[n])
+    store.close()
+
+
+def test_switch_target_and_pause_survive_restart(state_dir, backends):
+    store = RequestStore(state_dir)
+    w = Worker(_settings(state_dir), store, lambda n: backends[n])
+    w.pause()
+    w.switch_target("aws", "aws_live")
+    restored = Worker(_settings(state_dir), store, lambda n: backends[n])
+    assert (restored.state, restored.target, restored.phase) == (WorkerState.PAUSED, "aws", "aws_live")
+    store.close()
+
+
+def test_persistence_failure_prevents_resume(worker, monkeypatch):
+    worker.pause()
+    def fail(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr("migration.loadgen.os.replace", fail)
+    with pytest.raises(WorkerError):
+        worker.resume()
+    assert worker.state == WorkerState.ERROR
+
+
+@pytest.mark.parametrize("state", ["ERROR", "SWITCHING", "PAUSED"])
+def test_restart_never_resumes_stopped_state(state_dir, backends, state):
+    (state_dir / "worker.json").write_text(json.dumps({
+        "target": "aws", "phase": "aws_live", "run_id": "run-1", "state": state,
+        "unresolved": None,
+    }))
+    store = RequestStore(state_dir)
+    w = Worker(_settings(state_dir), store, lambda n: backends[n])
+    assert w.state != WorkerState.RUNNING
+    assert w.target == "aws"
+    store.close()
+
+
+def test_permission_error_after_lost_response_reconciles_commit(worker, backends, monkeypatch):
+    backend = backends["onprem"]
+    original = backend.insert
+    def commit_then_reject(rec):
+        original(rec)
+        raise psycopg.errors.InsufficientPrivilege("permission denied on retry")
+    monkeypatch.setattr(backend, "insert", commit_then_reject)
+    rec = worker.generate_one()
+    assert _wait(lambda: worker.store.get(rec.request_id).status == COMMITTED)
+    assert worker.counters["committed_existing"] == 1
+    assert worker.drain(0)["settled"]
+
+
+def test_crash_after_commit_record_before_meta_clear(state_dir, backends):
+    store = RequestStore(state_dir)
+    w = Worker(_settings(state_dir), store, lambda n: backends[n])
+    w.pause()
+    rec = w.generate_one()
+    w._unresolved = rec.request_id
+    w._persist_meta()
+    store.mark_committed(rec.request_id, "onprem", 1, datetime.now(UTC).isoformat())
+    restored = Worker(_settings(state_dir), store, lambda n: backends[n])
+    assert restored.state == WorkerState.PAUSED
+    assert restored.drain(0)["settled"]
+    restored.switch_target("aws")
+    store.close()

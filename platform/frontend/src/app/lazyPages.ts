@@ -10,6 +10,11 @@ export const MigrationDetailPage = lazy(() =>
     default: m.MigrationDetailPage,
   })),
 );
+export const AgentPage = lazy(() =>
+  import("../features/agent/AgentPage").then((m) => ({
+    default: m.AgentPage,
+  })),
+);
 export const EnvironmentsPage = lazy(() =>
   import("../features/environments/EnvironmentsPage").then((m) => ({
     default: m.EnvironmentsPage,

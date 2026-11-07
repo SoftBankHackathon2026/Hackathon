@@ -9,9 +9,11 @@ from controlplane.core.errors import AccessDenied, NotConfigured, OperationNotFo
 from controlplane.cost.service import CostService
 from controlplane.repositories.accounts import SESSION_COOKIE
 from controlplane.schemas.accounts import Identity
+from controlplane.services.agent import AgentService
 from controlplane.services.auth import AuthService
 from controlplane.services.builds import BuildService
 from controlplane.services.cutover_commands import CutoverCommandService
+from controlplane.services.data_mapping import DataMappingService
 from controlplane.services.deployments import DeploymentService
 from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
@@ -97,8 +99,31 @@ def require_ingest_commands(
     return container.cutover_commands
 
 
+AGENT_NOT_CONFIGURED = (
+    "에이전트 기록에는 플랫폼 DB 가 필요해요. ONEPORT_DATABASE_URL_FILE 을 설정하세요."
+)
+
+
+def get_agent(container: ContainerDep) -> AgentService:
+    if container.agent is None:
+        raise NotConfigured(AGENT_NOT_CONFIGURED)
+    return container.agent
+
+
+def require_ingest_agent(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> AgentService:
+    service = get_agent(container)
+    _check_ingest_token(container, authorization)
+    return service
+
+
 def get_cutover_commands(container: ContainerDep) -> CutoverCommandService:
     return container.cutover_commands
+
+
+def get_data_mappings(container: ContainerDep) -> DataMappingService:
+    return container.data_mappings
 
 
 def get_enrollments(container: ContainerDep) -> EnrollmentService:
@@ -115,7 +140,10 @@ FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
 IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]
+AgentDep = Annotated[AgentService, Depends(get_agent)]
+IngestAgentDep = Annotated[AgentService, Depends(require_ingest_agent)]
 CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
+DataMappingsDep = Annotated[DataMappingService, Depends(get_data_mappings)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
@@ -194,6 +222,25 @@ def optional_viewer(
 
 
 ViewerIdentity = Annotated[Identity | None, Depends(optional_viewer)]
+
+
+def deploy_permitted(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> bool:
+    if not container.execution_configured:
+        return False
+    if container.auth_mode == AuthMode.OPERATOR:
+        if container.operator_token is None:
+            return False
+        expected = "Bearer " + container.operator_token.get_secret_value()
+        return secrets.compare_digest(authorization.encode(), expected.encode())
+    if container.auth_mode != AuthMode.LOGIN:
+        return True
+    identity = session_identity(request, container)
+    return identity is not None and identity.can_deploy
+
+
+DeployPermitted = Annotated[bool, Depends(deploy_permitted)]
 
 
 def _require_commander(

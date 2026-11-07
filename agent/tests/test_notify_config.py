@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent.config import ConfigError, parse_config
@@ -51,3 +53,49 @@ def test_target_only_does_not_need_source_url() -> None:
     assert cfg.smoke.target_only is True and cfg.smoke.source_url is None
     with pytest.raises(ConfigError, match="source_url"):
         parse_config({**RAW, "smoke": {"target_url": "http://t"}}, {"VAULT_TOKEN": "t"})
+
+
+def test_webhook_wins_and_posts_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent import notify
+
+    url = "https://hooks.slack.com/services/T000/B000/XXXX"
+    notifier = build_notifier(None, {"SLACK_WEBHOOK_URL": url, "SLACK_BOT_TOKEN": "x"})
+    assert isinstance(notifier, CompositeNotifier)
+    hook = notifier.notifiers[1]
+    assert isinstance(hook, notify.SlackWebhookNotifier) and "XXXX" not in repr(hook)
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n):
+            return b"ok"
+
+    def open_(req, timeout):
+        seen["url"], seen["body"] = req.full_url, req.data
+        return Resp()
+
+    monkeypatch.setattr(hook._opener, "open", open_)
+    hook.send("[agent run-1] 복구 완료")
+    assert seen["url"] == url
+    assert json.loads(seen["body"]) == {"text": "[agent run-1] 복구 완료"}
+
+
+def test_non_slack_webhook_is_ignored() -> None:
+    assert isinstance(build_notifier(None, {"SLACK_WEBHOOK_URL": "https://evil.example/hook"}), StdoutNotifier)
+
+
+def test_webhook_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent import notify
+
+    hook = notify.SlackWebhookNotifier("https://hooks.slack.com/services/T/B/X")
+
+    def boom(req, timeout):
+        raise OSError("down")
+
+    monkeypatch.setattr(hook._opener, "open", boom)
+    hook.send("text")

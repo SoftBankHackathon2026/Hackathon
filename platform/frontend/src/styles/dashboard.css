@@ -3837,3 +3837,26 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.dm {
+  display: grid;
+  gap: 10px;
+}
+.shell .dm-table select,
+.shell .dm-table .dm-reason {
+  min-width: 220px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-body);
+}
+.shell .dm-table .dm-reason {
+  display: block;
+  margin-top: 6px;
+}
+.dm-basis {
+  color: var(--sub);
+}

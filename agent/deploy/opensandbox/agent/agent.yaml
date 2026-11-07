@@ -1,0 +1,79 @@
+job_id: onprem_agent_remote
+state_dir: /var/lib/oneport-agent
+auto_apply: true
+approve_command: oneport-agent approve
+
+smoke:
+  stage: pre_cutover
+  target_only: true
+  target_url: http://127.0.0.1:18080
+  http_timeout: 5
+  replication_timeout: 30
+  poll_interval: 1
+  error_retries: 2
+  retry_delay: 8
+
+policy:
+  opa_url: http://127.0.0.1:18181
+
+plan:
+  source: aws
+  target: onprem
+  approved_locations: [busan-local]
+  limits:
+    evidence_ttl_seconds: 300
+    write_wait_max_seconds: 30
+  target_db:
+    host: postgres.hackathon.svc.cluster.local
+    port: 5432
+    name: migration_demo_return
+    user: migration_app
+
+declared_evidence:
+  target_db_exposure:
+    public: false
+    target_id: k8s:hackathon/postgres
+  target_location:
+    location: busan-local
+    target_id: k8s:hackathon/postgres
+
+openbao:
+  addr: http://127.0.0.1:18200
+  mount: secret
+  path: hackathon/sample-app/onprem
+  token_env: VAULT_TOKEN
+
+codex:
+  runner: opensandbox
+  model: gpt-5.5
+  timeout: 300
+  sandbox_url: http://127.0.0.1:8090
+  sandbox_api_key_env: OPENSANDBOX_SERVER_API_KEY
+  sandbox_image: oneport/codex-sandbox:latest
+
+probe:
+  sslmode: verify-full
+  sslrootcert: /etc/oneport-agent/db-ca.pem
+  password_url_env: SAMPLE_APP_DATABASE_URL
+  attempts: 3
+  retry_delay: 5
+  address_map:
+    postgres.hackathon.svc.cluster.local:5432: 127.0.0.1:15432
+
+restart:
+  namespace: hackathon
+  rollout: sample-app
+  selector: app=sample-app
+  timeout: 180
+  api_server: "@K8S_API_SERVER@"
+  token_file: /etc/oneport-agent/kube-token
+  ca_file: /etc/oneport-agent/kube-ca.crt
+
+slack:
+  channel: ""
+  thread_ts: ""
+
+platform:
+  url: ""
+  agent_id: oneport-sandbox
+  token_env: ONEPORT_INGEST_TOKEN

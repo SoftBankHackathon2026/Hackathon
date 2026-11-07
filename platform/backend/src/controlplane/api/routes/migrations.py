@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query, Response
 from controlplane.api.deps import (
     CutoverCommandsDep,
     CutoverOperatorIdentity,
+    DataMappingsDep,
     FleetDep,
     IngestCommandsDep,
     IngestDep,
@@ -12,6 +13,7 @@ from controlplane.api.deps import (
     SecurityDep,
     ViewerIdentity,
 )
+from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
     CommandCreate,
     CommandResult,
@@ -71,6 +73,21 @@ def list_commands(
     job_id: str, service: CutoverCommandsDep, identity: ViewerIdentity
 ) -> list[CutoverCommand]:
     return service.list_commands(job_id)
+
+
+@router.get("/migrations/{job_id}/data-mapping")
+def data_mapping(job_id: str, service: DataMappingsDep, identity: ViewerIdentity) -> DataMapping:
+    return service.get(job_id)
+
+
+@router.post("/migrations/{job_id}/data-mapping")
+def confirm_data_mapping(
+    job_id: str,
+    body: DataMappingUpdate,
+    service: DataMappingsDep,
+    identity: CutoverOperatorIdentity,
+) -> DataMapping:
+    return service.update(job_id, body, identity)
 
 
 @router.get("/security/posture")

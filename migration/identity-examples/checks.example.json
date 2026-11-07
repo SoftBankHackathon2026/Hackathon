@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "checks": [
+    {
+      "kind": "kubernetes",
+      "group": "identity-grant-859066cc92c3976225d10b46",
+      "token_env": "IDENTITY_KUBE_USER_TOKEN",
+      "expected_subject": "REPLACE_WITH_KEYCLOAK_USER_UUID",
+      "allowed": true,
+      "namespace": "orders-dev",
+      "api_group": "",
+      "resource": "pods",
+      "verb": "get"
+    },
+    {
+      "kind": "openbao",
+      "group": "identity-grant-859066cc92c3976225d10b46",
+      "token_env": "IDENTITY_BAO_USER_JWT",
+      "expected_subject": "REPLACE_WITH_KEYCLOAK_USER_UUID",
+      "allowed": true,
+      "role": "identity-8bee33c6efde6a15868fac3e",
+      "path": "kv/data/orders/dev/database"
+    },
+    {
+      "kind": "kubernetes",
+      "group": "identity-grant-859066cc92c3976225d10b46",
+      "token_env": "IDENTITY_KUBE_USER_TOKEN",
+      "expected_subject": "REPLACE_WITH_KEYCLOAK_USER_UUID",
+      "allowed": false,
+      "namespace": "orders-dev",
+      "api_group": "",
+      "resource": "pods",
+      "verb": "delete"
+    },
+    {
+      "kind": "openbao",
+      "group": "identity-grant-859066cc92c3976225d10b46",
+      "token_env": "IDENTITY_BAO_USER_JWT",
+      "expected_subject": "REPLACE_WITH_KEYCLOAK_USER_UUID",
+      "allowed": false,
+      "role": "identity-8bee33c6efde6a15868fac3e",
+      "path": "kv/data/unrelated/database"
+    }
+  ]
+}

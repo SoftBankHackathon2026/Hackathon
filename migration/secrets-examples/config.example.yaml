@@ -1,0 +1,29 @@
+# Fictional references only. Copy to a private file and replace every /secure path.
+schema_version: 1
+migration_id: orders-dev-secrets
+source:
+  account_id: '111122223333'
+  region: ap-northeast-2
+  profile: source-readonly
+  include_names: [/example/orders/*]
+  exclude_names: []
+target:
+  endpoint: https://secrets.example.internal:8200
+  expected_version: 2.7.2
+  cluster_id: REPLACE-WITH-INSPECTED-CLUSTER-ID
+  mount: kv
+  prefix: migration
+  ca_file: /secure/openbao-ca.pem
+  # Output credential_ref from issue-migration-token is an absolute file path;
+  # explicitly prefix it with file: here. Never use the bootstrap/root token.
+  token_ref: file:/secure/openbao-migration.token
+preparation:
+  configure_result: /secure/openbao-configure.json
+  verify_result: /secure/openbao-verify.json
+identity:
+  config: /secure/identity-config.json
+  inventory: /secure/identity-inventory.json
+  plan: /secure/identity-plan.json
+# Without reviewed identity mappings, explicitly use identity: null and
+# access_mode: deferred / identity_assignments: [] in the mapping.
+# Value copy is allowed; consumer access remains incomplete.

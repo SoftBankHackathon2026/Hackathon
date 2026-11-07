@@ -13,6 +13,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+secrets = [
+    "boto3>=1.43,<2",
+    "psycopg[binary]>=3.3.8,<4",
+]
+identity = [
+    "boto3>=1.35,<1.36",
+    "requests>=2.32,<3",
+]
 image-migration = ["boto3>=1.43,<2"]
 policy-runtime = ["boto3>=1.35,<2"]
 security-logs = ["boto3>=1.36,<2"]
@@ -51,6 +59,7 @@ exclude = ["*.__pycache__"]
 namespaces = false
 
 [tool.setuptools.package-data]
+"migration.secrets" = ["README.md"]
 "migration.wazuh_infra" = ["ansible/**/*.py", "ansible/**/*.yml", "ansible/ansible.cfg"]
 "migration.harbor_infra" = ["ansible/ansible.cfg", "ansible/requirements.yml", "ansible/releases.json", "ansible/playbooks/*.yml", "ansible/library/*.py", "ansible/module_utils/*.py", "ansible/callback_plugins/*.py", "ansible/templates/*"]
 "migration.openbao_infra" = [
@@ -73,6 +82,7 @@ namespaces = false
 testpaths = ["tests"]
 addopts = "-q -ra"
 markers = [
+    "secrets_live: 격리된 실제 OpenBao와 선택적 PostgreSQL 시험",
     "wazuh_live: 격리된 로컬 Wazuh indexer의 실제 처리 시험",
     "integration: 실제 PostgreSQL이 필요한 테스트 (MIGRATION_TEST_DSN 설정 시 실행)",
     "openbao_live: OPENBAO_TEST_BINARY로 제공한 실제 OpenBao 실행 파일을 사용하는 로컬 시험",

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +20,9 @@ from . import policy_client as pc
 
 
 class CutoverPolicyError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def execution_digest(config: Config) -> str:
@@ -30,6 +34,8 @@ def execution_digest(config: Config) -> str:
 class CutoverPolicyGate:
     def __init__(self, config: Config, state_dir: Path, *, evidence_file: str | None = None,
                  evaluator: pc.Evaluator | None = None, collector_settings: str | None = None) -> None:
+        self._sleep = time.sleep
+        self._clock = time.monotonic
         self.config = config
         self.state_dir = state_dir
         self.evidence_file = evidence_file or os.environ.get("CUTOVER_POLICY_EVIDENCE")
@@ -39,6 +45,21 @@ class CutoverPolicyGate:
         self.collector_settings = collector_settings or os.environ.get("CUTOVER_POLICY_COLLECTOR_SETTINGS")
 
     def __call__(self, stage: str, local_checks: dict[str, Any] | None = None) -> dict[str, Any]:
+        started = self._clock()
+        for attempt in range(3):
+            checks = deepcopy(local_checks)
+            if checks and "write_wait" in checks:
+                checks["write_wait"]["detail"]["elapsed_seconds"] += self._clock() - started
+            try:
+                return self._evaluate_once(stage, checks)
+            except CutoverPolicyError as exc:
+                if not exc.retryable or attempt == 2:
+                    raise
+                self._sleep(2)
+        raise AssertionError("unreachable")
+
+    def _evaluate_once(self, stage: str, local_checks: dict[str, Any] | None = None) -> dict[str, Any]:
+        refresh_started = self._clock()
         if not self.evidence_file or self.evaluator is None:
             raise CutoverPolicyError("CUTOVER_POLICY_NOT_CONFIGURED")
         if self.collector_settings:
@@ -66,7 +87,11 @@ class CutoverPolicyGate:
                 raise CutoverPolicyError("CUTOVER_POLICY_PLAN_CHANGED")
             self.plan_digest = computed
             checks = dict(doc['checks'])
-            checks.update(local_checks or {})
+            checks.update(deepcopy(local_checks or {}))
+            if "write_wait" in checks and local_checks and "write_wait" in local_checks:
+                elapsed = checks["write_wait"]["detail"]["elapsed_seconds"] + self._clock() - refresh_started
+                checks["write_wait"] = pc.build_check(checks["write_wait"]["status"], {"elapsed_seconds": elapsed},
+                                                     source="migration.cutover")
             now = datetime.now(UTC)
             for check in checks.values():
                 observed = datetime.fromisoformat(check['observed_at'].replace('Z', '+00:00'))
@@ -94,7 +119,16 @@ class CutoverPolicyGate:
         finally:
             store.close()
         if not decision.allowed:
-            raise CutoverPolicyError("CUTOVER_POLICY_BLOCKED:" + decision.decision_id + ':' + decision.outcome)
+            # Only a transient observation failure may be retried. A database
+            # rejection, unsafe configuration, stale evidence or OPA failure cannot.
+            app_code = checks.get("target_app_db", {}).get("detail", {}).get("code")
+            transient = app_code in {"APP_TIMEOUT", "APP_CONNECTION_FAILED", "APP_DNS_FAILED"}
+            remaining = (plan["limits"]["write_wait_max_seconds"] -
+                         checks.get("write_wait", {}).get("detail", {}).get("elapsed_seconds", 0))
+            retryable = (decision.outcome == pc.HOLD and
+                         set(decision.reason_codes) == {"APP-01-UNVERIFIED"} and transient and remaining > 2)
+            raise CutoverPolicyError("CUTOVER_POLICY_BLOCKED:" + decision.decision_id + ':' + decision.outcome,
+                                     retryable=retryable)
         if (decision.plan_digest != plan['digest'] or
                 decision.evidence_snapshot_id != inp['evidence']['snapshot_id']):
             raise CutoverPolicyError("CUTOVER_POLICY_RESPONSE_MISMATCH")

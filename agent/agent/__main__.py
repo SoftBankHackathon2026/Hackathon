@@ -1,4 +1,4 @@
-"""python -m agent run | approve <run_id> | status [run_id]
+"""python -m agent run | watch [--interval 초] | approve <run_id> | status [run_id]
 
 종료 코드: 0 복구 완료·고칠 것 없음·승인 대기, 1 설정 오류, 2 그 밖의 끝 상태 (사람이 봐야 한다).
 """
@@ -11,6 +11,9 @@ import json
 import logging
 import os
 import sys
+import time
+from datetime import UTC, datetime
+from typing import Callable, Mapping
 
 from migration.policy_client import DecisionStore, OpaHttpEvaluator
 from migration.smoke import SmokeConfigError, run_smoke, token_from_env
@@ -20,21 +23,37 @@ from .kv import OpenBaoKv
 from .notify import build_notifier
 from .probe import PostgresProber
 from .proposer import ProposerError, build_proposer
+from .platform import PlatformClient, handle_approvals
 from .remediation import Deps, Remediator
 from .restart import InClusterKubeApi, RolloutRestarter
+from . import runs as R
 from .runs import OK_STATES, Run, RunStore
 
 EXIT_OK, EXIT_CONFIG, EXIT_ATTENTION = 0, 1, 2
+AGENT_VERSION = "0.1.0"
+
+
+def smoke_with_retry(
+    once: Callable[[], dict], *, retries: int, delay: float, sleep: Callable[[float], None] = time.sleep,
+) -> dict:
+    check = once()
+    for _ in range(max(retries, 0)):
+        if check.get("status") != "error":
+            break
+        logging.getLogger("agent").info("스모크 관측 오류. %.0f초 뒤 다시 본다", delay)
+        sleep(delay)
+        check = once()
+    return check
 
 
 def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore) -> Remediator:
     def smoke() -> dict:
         s = cfg.smoke
-        return run_smoke(
+        return smoke_with_retry(lambda: run_smoke(
             s.stage, job_id=cfg.job_id, source_url=s.source_url, target_url=s.target_url, target_only=s.target_only,
             token=token_from_env(s.token_env), http_timeout=s.http_timeout,
             replication_timeout=s.replication_timeout, poll_interval=s.poll_interval,
-        ).to_check()
+        ).to_check(), retries=s.error_retries, delay=s.retry_delay)
 
     deps = Deps(
         smoke=smoke,
@@ -43,12 +62,63 @@ def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore)
         kv=OpenBaoKv(cfg.openbao.addr, cfg.openbao.mount, cfg.openbao.path, cfg.openbao.token, timeout=cfg.openbao.timeout),
         proposer=build_proposer(cfg.codex),
         prober=PostgresProber(cfg.probe),
-        restarter=RolloutRestarter(cfg.restart, InClusterKubeApi()),
-        notifier=build_notifier(cfg.slack_channel),
+        restarter=RolloutRestarter(cfg.restart, InClusterKubeApi(
+            server=cfg.restart.api_server, token_file=cfg.restart.token_file, ca_file=cfg.restart.ca_file,
+        )),
+        notifier=build_notifier(cfg.slack_channel, thread_ts=cfg.slack_thread_ts),
         runs=runs,
     )
     return Remediator(deps, job_id=cfg.job_id, plan=cfg.plan, declared_evidence=cfg.declared_evidence,
-                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage)
+                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command,
+                      approve_url=cfg.platform_url)
+
+
+BUSY_STATES = frozenset({R.WAITING_APPROVAL, R.APPLYING})
+APPLYING_STALE_SECONDS = 900
+
+
+def _stale(run: Run, at: datetime) -> bool:
+    if run.state != R.APPLYING:
+        return False
+    return (at - datetime.fromisoformat(run.updated_at.replace("Z", "+00:00"))).total_seconds() > APPLYING_STALE_SECONDS
+
+
+def build_platform(cfg: AgentConfig, env: Mapping[str, str] | None = None) -> PlatformClient | None:
+    environ = os.environ if env is None else env
+    token = environ.get(cfg.platform_token_env)
+    if not cfg.platform_url or not token:
+        return None
+    try:
+        return PlatformClient(cfg.platform_url, token, cfg.platform_agent_id)
+    except ValueError as exc:
+        logging.getLogger("agent").warning("플랫폼 보고를 끈다: %s", exc)
+        return None
+
+
+def watch(
+    remediator: Remediator, runs: RunStore, *, interval: float, iterations: int | None = None,
+    sleep: Callable[[float], None] = time.sleep, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    platform: PlatformClient | None = None,
+) -> None:
+    log = logging.getLogger("agent.watch")
+    done = 0
+    while iterations is None or done < iterations:
+        if platform is not None:
+            platform.heartbeat(version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(interval))
+            for run_id, state in handle_approvals(platform, remediator, runs):
+                log.info("플랫폼 결정 처리 %s: %s", run_id, state)
+            platform.sync(runs)
+        latest = next(iter(runs.recent()), None)
+        if latest is not None and latest.state in BUSY_STATES and not _stale(latest, now()):
+            log.info("진행 중인 실행 %s (%s) 이 있어 새로 판정하지 않는다", latest.run_id, latest.state)
+        else:
+            run = remediator.run()
+            log.info("실행 %s 끝: %s", run.run_id, run.state)
+        if platform is not None:
+            platform.sync(runs)
+        done += 1
+        if iterations is None or done < iterations:
+            sleep(interval)
 
 
 def _print_run(run: Run, runs: RunStore) -> None:
@@ -63,6 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="한 번 실행한다")
     r.add_argument("--no-auto-apply", action="store_true", help="저장소에 쓰기 전에 멈추고 승인을 기다린다")
+    w = sub.add_parser("watch", help="주기마다 판정하고 APP-01 이면 고친다")
+    w.add_argument("--interval", type=float, default=60.0)
     a = sub.add_parser("approve", help="승인 대기 중인 실행을 적용한다")
     a.add_argument("run_id")
     s = sub.add_parser("status", help="실행 기록을 본다")
@@ -103,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, SmokeConfigError) as exc:
             logging.getLogger("agent").error("초기화 실패: %s", type(exc).__name__)
             return EXIT_CONFIG
+        if args.command == "watch":
+            watch(remediator, runs, interval=max(args.interval, 10.0), platform=build_platform(cfg))
+            return EXIT_OK
         try:
             run = remediator.run() if args.command == "run" else remediator.approve(args.run_id)
         except ValueError as exc:  # 승인 대상이 없거나 상태가 맞지 않음

@@ -98,7 +98,7 @@ class RunStore:
             )
             self._event(run.run_id, state, message, at)
 
-    def claim_approval(self, run_id: str) -> bool:
+    def claim_approval(self, run_id: str, by: str | None = None) -> bool:
         """WAITING_APPROVAL → APPLYING 원자 전이. 승인 명령을 두 번 실행해도 한 번만 적용한다."""
         at = _now()
         with self._conn:
@@ -108,7 +108,19 @@ class RunStore:
             )
             if cur.rowcount != 1:
                 return False
-            self._event(run_id, APPLYING, "승인됨", at)
+            self._event(run_id, APPLYING, f"승인됨 ({by})" if by else "승인됨", at)
+        return True
+
+    def claim_rejection(self, run_id: str, by: str | None = None) -> bool:
+        at = _now()
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE runs SET state = ?, updated_at = ? WHERE run_id = ? AND state = ?",
+                (REJECTED, at, run_id, WAITING_APPROVAL),
+            )
+            if cur.rowcount != 1:
+                return False
+            self._event(run_id, REJECTED, f"사람이 거절함 ({by})" if by else "사람이 거절함", at)
         return True
 
     def get(self, run_id: str) -> Run | None:

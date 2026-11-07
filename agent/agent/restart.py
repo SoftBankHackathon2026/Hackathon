@@ -45,18 +45,21 @@ class KubeApi(Protocol):
 class InClusterKubeApi:
     """파드의 ServiceAccount 로 API 서버를 부른다. kubectl 을 이미지에 넣지 않으려고 직접 호출한다."""
 
-    def __init__(self, *, timeout: float = 10.0) -> None:
-        self._token = (SA_DIR / "token").read_text(encoding="utf-8").strip()
-        self._ctx = ssl.create_default_context(cafile=str(SA_DIR / "ca.crt"))
+    def __init__(
+        self, *, timeout: float = 10.0, server: str | None = None, token_file: str | None = None, ca_file: str | None = None,
+    ) -> None:
+        self._server = (server or API_SERVER).rstrip("/")
+        self._token = Path(token_file or SA_DIR / "token").read_text(encoding="utf-8").strip()
+        self._ctx = ssl.create_default_context(cafile=str(ca_file or SA_DIR / "ca.crt"))
         self._timeout = timeout
 
     def _call(self, method: str, path: str, body: Mapping[str, Any] | None, content_type: str) -> dict[str, Any]:
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        req = urllib.request.Request(API_SERVER + path, data=data, method=method, headers={
+        req = urllib.request.Request(self._server + path, data=data, method=method, headers={
             "Authorization": f"Bearer {self._token}", "Content-Type": content_type, "Accept": "application/json",
         })
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout, context=self._ctx) as resp:  # noqa: S310 - 고정 주소
+            with urllib.request.urlopen(req, timeout=self._timeout, context=self._ctx) as resp:  # noqa: S310 - 설정한 API 서버
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             exc.close()

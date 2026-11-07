@@ -343,3 +343,49 @@ def test_plan_lists_all_stages(config, state_dir, fakes):
     names = [n for n, _ in _build(config, state_dir, fakes).plan()]
     assert names == [PRECHECK, COPYING, CATCHING_UP, READY, FENCING, "DRAINING", "SYNC_CONFIRMED", SWITCHING,
                      VERIFYING, COMPLETED]
+
+
+def test_policy_hold_before_grant_restores_source(config, state_dir, fakes):
+    _simulate_replication(fakes)
+    cut = _build(config, state_dir, fakes, approve="x")
+    original = cut.policy_gate
+    def gate(stage, checks=None):
+        if stage == "final_verify":
+            raise RuntimeError("policy hold")
+        return original(stage, checks)
+    cut.policy_gate = gate
+    with pytest.raises(CutoverError, match=ROLLED_BACK):
+        cut.run()
+    assert cut.job.stage == ROLLED_BACK
+    assert fakes["db"].app_insert == {"onprem": True, "aws": False}
+    assert fakes["worker"].state == "RUNNING"
+    assert "grant:aws" not in fakes["db"].calls
+
+
+def test_grant_lost_response_never_reopens_source(config, state_dir, fakes):
+    _simulate_replication(fakes)
+    original = fakes["db"].grant_app_insert
+    def lost_response(target):
+        original(target)
+        raise ConnectionError("grant response lost")
+    fakes["db"].grant_app_insert = lost_response
+    cut = _build(config, state_dir, fakes, approve="x")
+    with pytest.raises(CutoverError, match=NEEDS_RECOVERY):
+        cut.run()
+    assert cut.job.checkpoint["target_grant_attempted"]
+    assert not fakes["db"].app_insert["onprem"]
+    assert fakes["db"].app_insert["aws"]
+    # Re-closing target later cannot erase the possibility of target writes.
+    fakes["db"].app_insert["aws"] = False
+    with pytest.raises(CutoverError):
+        _build(config, state_dir, fakes).abort_rollback()
+
+
+def test_legacy_switching_failure_requires_manual_recovery(config, state_dir, fakes):
+    cut = _build(config, state_dir, fakes, approve="x")
+    cut.job.checkpoint.clear()
+    cut._save(SWITCHING)
+    cut.policy_gate = lambda *args: (_ for _ in ()).throw(RuntimeError("hold"))
+    with pytest.raises(CutoverError, match=NEEDS_RECOVERY):
+        cut.run()
+    assert "grant:onprem" not in fakes["db"].calls

@@ -5,6 +5,7 @@ import { PageBoundary } from "../components/QueryBoundary";
 import { PageHeader } from "../components/PageKit";
 import { AccountControls } from "./AccountControls";
 import {
+  AgentPage,
   CostsPage,
   EnvironmentsPage,
   FleetPage,
@@ -58,6 +59,7 @@ export function Workspace({
         {route.view === "migration" && (
           <MigrationDetailPage key={route.id} jobId={route.id} />
         )}
+        {route.view === "agent" && <AgentPage runId={route.runId} />}
         {route.view === "environments" && (
           <EnvironmentsPage
             key={access.user?.team ?? "shared"}

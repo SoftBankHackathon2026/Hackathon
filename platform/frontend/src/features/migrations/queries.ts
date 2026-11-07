@@ -14,6 +14,11 @@ import {
   type CommandRequest,
   type Fleet,
 } from "../../api/migrations";
+import {
+  confirmDataMapping,
+  getDataMapping,
+  type DataMappingUpdate,
+} from "../../api/dataMapping";
 import { isActive, pollInterval } from "./stages";
 
 export const SERIES_MINUTES = 60;
@@ -74,5 +79,26 @@ export function useRequestCommand(jobId: string) {
     mutationFn: (body: CommandRequest) => requestCommand(jobId, body),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["migration", jobId] }),
+  });
+}
+
+export function dataMappingQueryOptions(jobId: string) {
+  return queryOptions({
+    queryKey: ["migration", jobId, "data-mapping"] as const,
+    queryFn: ({ signal }) => getDataMapping(jobId, signal),
+    refetchInterval: 60000,
+  });
+}
+
+export function useConfirmDataMapping(jobId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DataMappingUpdate) => confirmDataMapping(jobId, body),
+    onSuccess: (mapping) => {
+      queryClient.setQueryData(["migration", jobId, "data-mapping"], mapping);
+      return queryClient.invalidateQueries({
+        queryKey: ["migration", jobId, "commands"],
+      });
+    },
   });
 }
