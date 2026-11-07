@@ -1,0 +1,12 @@
+[Unit]
+Description=Block direct egress from the OpenSandbox sandbox network
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sandbox-egress-rules
+
+[Install]
+WantedBy=multi-user.target

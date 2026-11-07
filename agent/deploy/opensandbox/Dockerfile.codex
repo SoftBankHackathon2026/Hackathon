@@ -1,0 +1,7 @@
+FROM node:22-slim
+ARG CODEX_VERSION=0.167.0
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git jq \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force \
+ && useradd -m -u 10001 agent && mkdir -p /work && chown agent:agent /work
+WORKDIR /work
