@@ -96,3 +96,39 @@ def test_setup_failure_invalidates_previous_snapshot(monkeypatch, tmp_path):
         '--write-wait-max-seconds', '300'])
     assert main() == 2
     assert json.loads(output.read_text()) == {'error': 'EVIDENCE_COLLECTION_FAILED'}
+
+@pytest.mark.parametrize('error,code', [
+    (TimeoutError('secret=hidden'), 'APP_TIMEOUT'),
+    (__import__('socket').gaierror('secret=hidden'), 'APP_DNS_FAILED'),
+    (__import__('ssl').SSLError('secret=hidden'), 'APP_TLS_FAILED'),
+    (ConnectionRefusedError('secret=hidden'), 'APP_CONNECTION_FAILED'),
+    (RuntimeError('secret=hidden'), 'APP_OBSERVATION_FAILED'),
+])
+def test_app_failure_keeps_layer_but_not_sensitive_message(config, error, code):
+    def fail():
+        raise error
+    config, args, _ = setup(config, app_reader=fail)
+    doc = collect(config, **args)
+    detail = doc['checks']['target_app_db']['detail']
+    assert detail['code'] == code
+    assert detail['duration_ms'] >= 0
+    assert 'hidden' not in json.dumps(doc)
+
+
+@pytest.mark.parametrize('status,body,expected', [
+    (503, b'{"error":{"code":"DB_UNAVAILABLE","message":"secret=hidden"}}', 'APP_DB_UNAVAILABLE'),
+    (503, b'upstream unavailable secret=hidden', 'APP_HTTP_ERROR'),
+    (401, b'{"token":"hidden"}', 'APP_HTTP_ERROR'),
+])
+def test_http_failure_distinguishes_app_db_from_gateway(monkeypatch, status, body, expected):
+    import io
+    from urllib.error import HTTPError
+    from migration.cutover_evidence import app_error_detail
+    class Opener:
+        def open(self, *args, **kwargs):
+            raise HTTPError('https://test', status, 'secret=hidden', {}, io.BytesIO(body))
+    monkeypatch.setattr('migration.cutover_evidence.build_opener', lambda *args: Opener())
+    with pytest.raises(EvidenceError) as caught:
+        app_info('https://test')
+    assert app_error_detail(caught.value) == {'code': expected, 'http_status': status}
+    assert 'hidden' not in str(caught.value)
