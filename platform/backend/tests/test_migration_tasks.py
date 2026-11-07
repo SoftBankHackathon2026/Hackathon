@@ -129,4 +129,3 @@ def test_creating_a_task_does_not_change_the_built_in_fleet(monkeypatch):
         json={"source_env": "aws", "target_env": "z", "target_provider": "onprem"},
     )
     assert [m.job_id for m in DEFAULT_FLEET.migrations] == before
-
