@@ -122,3 +122,48 @@ def test_local_final_facts_override_external_claims(config, state_dir, fakes, se
     # Original source can still write: no target grant regardless of external claims.
     with pytest.raises(Exception, match='원본 쓰기 차단'): cut.stage_switching()
     assert not fakes['db'].calls
+
+
+def test_transient_observation_reloads_and_recovers(setup_gate, monkeypatch):
+    gate, doc, file = setup_gate
+    good = doc["checks"]["target_app_db"]
+    doc["checks"]["target_app_db"] = pc.build_check("error", {"code": "APP_TIMEOUT"}, source="test")
+    file.write_text(json.dumps(doc))
+    sleeps = []
+    def recover(seconds):
+        sleeps.append(seconds)
+        doc["checks"]["target_app_db"] = good
+        file.write_text(json.dumps(doc))
+    monkeypatch.setattr(gate, "_sleep", recover, raising=False)
+    assert gate("pre_cutover")["stage"] == "pre_cutover"
+    assert sleeps == [2]
+
+
+@pytest.mark.parametrize("code,expected_sleeps", [("APP_TIMEOUT", 2), ("APP_DB_UNAVAILABLE", 0),
+                                                  ("APP_TLS_FAILED", 0), ("APP_EVIDENCE_UNAVAILABLE", 0)])
+def test_only_known_transient_errors_retry_bounded(setup_gate, monkeypatch, code, expected_sleeps):
+    gate, doc, file = setup_gate
+    doc["checks"]["target_app_db"] = pc.build_check("error", {"code": code}, source="test")
+    file.write_text(json.dumps(doc))
+    sleeps = []
+    monkeypatch.setattr(gate, "_sleep", sleeps.append)
+    with pytest.raises(CutoverPolicyError):
+        gate("pre_cutover")
+    assert len(sleeps) == expected_sleeps
+
+
+def test_retry_elapsed_wait_is_not_reset(setup_gate, monkeypatch):
+    gate, _, _ = setup_gate
+    clock = [10.0]
+    monkeypatch.setattr(gate, "_clock", lambda: clock[0])
+    monkeypatch.setattr(gate, "_sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    elapsed = []
+    def evaluate(stage, checks):
+        elapsed.append(checks["write_wait"]["detail"]["elapsed_seconds"])
+        raise CutoverPolicyError("transient", retryable=True)
+    monkeypatch.setattr(gate, "_evaluate_once", evaluate)
+    checks = {"write_wait": pc.build_check("pass", {"elapsed_seconds": 100}, source="test")}
+    with pytest.raises(CutoverPolicyError):
+        gate("final_verify", checks)
+    assert elapsed == [100, 102, 104]
+    assert checks["write_wait"]["detail"]["elapsed_seconds"] == 100
