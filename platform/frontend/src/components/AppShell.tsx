@@ -3,9 +3,10 @@ import { Icon, type IconName } from "./Icon";
 import { SlotContext } from "./PageSlots";
 
 export type View =
-  "migrations" | "environments" | "security" | "costs" | "team";
+  "migrations" | "agent" | "environments" | "security" | "costs" | "team";
 export const views: { id: View; title: string; icon: IconName }[] = [
   { id: "migrations", title: "마이그레이션", icon: "swap" },
+  { id: "agent", title: "AI 에이전트", icon: "bot" },
   { id: "environments", title: "환경", icon: "layers" },
   { id: "security", title: "보안", icon: "shield" },
   { id: "costs", title: "비용", icon: "coin" },
