@@ -16,7 +16,7 @@ from agent.fakes import DECLARED, JOB_ID, FakeApps, FakeRestarter
 from agent.kv import OpenBaoKv
 from agent.notify import StdoutNotifier
 from agent.probe import PostgresProber
-from agent.proposer import CodexProposer
+from agent.proposer import build_proposer
 from agent.remediation import Deps, Remediator
 from agent.runs import RunStore
 from migration.policy_client import DecisionStore, OpaHttpEvaluator
@@ -33,6 +33,10 @@ def main() -> int:
     p.add_argument("--codex-home")
     p.add_argument("--codex-timeout", type=float, default=300)
     p.add_argument("--no-auto-apply", action="store_true")
+    p.add_argument("--runner", choices=("local", "opensandbox"), default="local")
+    p.add_argument("--model")
+    p.add_argument("--sandbox-url", default="http://127.0.0.1:8090")
+    p.add_argument("--sandbox-api-key-env", default="OPENSANDBOX_SERVER_API_KEY")
     args = p.parse_args()
 
     plan = {
@@ -53,7 +57,10 @@ def main() -> int:
             remediator = Remediator(
                 Deps(
                     smoke=smoke, evaluator=OpaHttpEvaluator(args.opa_url), decisions=decisions, kv=kv,
-                    proposer=CodexProposer(CodexSettings(timeout=args.codex_timeout, home=args.codex_home)),
+                    proposer=build_proposer(CodexSettings(
+                        timeout=args.codex_timeout, home=args.codex_home, runner=args.runner, model=args.model,
+                        sandbox_url=args.sandbox_url, sandbox_api_key_env=args.sandbox_api_key_env,
+                    )),
                     prober=PostgresProber(ProbeSettings(sslmode="disable")),
                     restarter=FakeRestarter(apps), notifier=StdoutNotifier(), runs=runs,
                 ),
