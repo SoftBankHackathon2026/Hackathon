@@ -76,8 +76,9 @@ def renew_broker_cert(root: Path, domain: str, openssl: str) -> None:
 
 def trust(root: Path, domain: str, openssl: str) -> None:
     os.umask(0o077)
-    for name in ("broker-ca.key", "signing", "job-signing-key.pem", "runtime-token"):
-        if (root / name).exists():
+    for name in ("broker-ca.key", "broker.crt", "signing", "job-signing-key.pem", "runtime-token"):
+        path = root / name
+        if path.exists() or path.is_symlink():
             raise SystemExit(f"refusing to replace existing {name}")
     (root / "signing").mkdir(mode=0o700)
     (root / "public").mkdir(mode=0o700, exist_ok=True)

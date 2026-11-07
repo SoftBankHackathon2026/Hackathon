@@ -61,6 +61,12 @@ class ReleaseToolsTests(unittest.TestCase):
             self.assertEqual(ca, (root / "broker-ca.crt").read_bytes())
             self.assertEqual(first_key, renewed_key)
             self.assertNotEqual(first_serial, renewed_serial)
+            (root / "broker-ca.key").rename(root / "broker-ca.key.backup")
+            failed = subprocess.run(
+                [*args, "renew-broker-cert"], capture_output=True, timeout=60,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual((renewed_serial, renewed_key), inspect_certificate())
             subprocess.run(
                 [openssl, "verify", "-CAfile", str(root / "broker-ca.crt"),
                  "-verify_hostname", domain, str(certificate)],
