@@ -14,6 +14,7 @@ from migration.identity.execute import (
     status,
 )
 from migration.identity.verify import verify
+from tests.identity.conftest import MemoryTargets
 
 
 def test_apply_resume_is_idempotent_and_private(
@@ -120,11 +121,60 @@ def test_rollback_revokes_only_new_grants_and_cannot_resume(
     assert result["status"] == "complete" and set(memory_targets.deleted) == set(
         proposal["revoke"]
     )
+    for _ in range(2):
+        with pytest.raises(IdentityError, match="ROLLED_BACK_PLAN_CANNOT_RESUME"):
+            apply(identity_config, identity_plan, prepared, tmp_path, memory_targets)
+    assert not set(proposal["revoke"]) & set(memory_targets.items)
+
+
+class FlakyReads(MemoryTargets):
+    def __init__(self, failing):
+        super().__init__()
+        self.failing = set(failing)
+
+    def read(self, resource):
+        if resource["id"] in self.failing:
+            self.failing.discard(resource["id"])
+            raise IdentityError("TARGET_TRANSPORT_ERROR", status="failed")
+        return super().read(resource)
+
+
+def test_failed_read_on_resume_keeps_created_grant_revocable(
+    identity_config, identity_plan, tmp_path
+):
+    targets = FlakyReads(())
+    prepared = preflight(identity_config, identity_plan, targets)
+    apply(identity_config, identity_plan, prepared, tmp_path, targets)
+    revoke = rollback_plan(identity_config, identity_plan, tmp_path)["revoke"]
+    targets.failing = {revoke[0]}
+    result = apply(identity_config, identity_plan, prepared, tmp_path, targets)
+    assert result["status"] == "partial"
+    assert result["results"][-1] == {
+        "id": revoke[0],
+        "state": "applied",
+        "reason": "TARGET_TRANSPORT_ERROR",
+    }
+    assert rollback_plan(identity_config, identity_plan, tmp_path)["revoke"] == revoke
+
+
+def test_rollback_keeps_revoking_after_one_failure(
+    identity_config, identity_plan, tmp_path
+):
+    targets = FlakyReads(())
+    prepared = preflight(identity_config, identity_plan, targets)
+    apply(identity_config, identity_plan, prepared, tmp_path, targets)
+    revoke = rollback_plan(identity_config, identity_plan, tmp_path)["revoke"]
+    targets.failing = {revoke[0]}
+    result = rollback(identity_config, identity_plan, tmp_path, targets)
+    assert result["status"] == "partial"
+    assert result["results"][0] == {
+        "id": revoke[0],
+        "state": "unknown",
+        "reason": "TARGET_TRANSPORT_ERROR",
+    }
+    assert set(targets.deleted) == set(revoke[1:])
     assert (
-        apply(identity_config, identity_plan, prepared, tmp_path, memory_targets)[
-            "status"
-        ]
-        == "partial"
+        rollback_plan(identity_config, identity_plan, tmp_path)["revoke"] == revoke[:1]
     )
 
 

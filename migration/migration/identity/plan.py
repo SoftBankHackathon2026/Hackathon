@@ -660,6 +660,26 @@ def validate_paths(paths):
         require(item["capabilities"] == ["read"], "OPENBAO_READ_ONLY_INITIAL_SCOPE")
 
 
+RESOURCE_KINDS = frozenset(
+    {
+        "kc_realm",
+        "kc_client",
+        "kc_mapper",
+        "kc_user",
+        "kc_group",
+        "kc_membership",
+        "kc_role",
+        "kc_group_role",
+        "k8s_role",
+        "k8s_binding",
+        "bao_mount",
+        "bao_config",
+        "bao_policy",
+        "bao_role",
+    }
+)
+
+
 def validate_plan(plan, config, *, allow_blocked=False):
     require(
         plan.get("kind") == "identity_plan" and plan.get("schema_version") == 1,
@@ -679,4 +699,11 @@ def validate_plan(plan, config, *, allow_blocked=False):
         len({r["id"] for r in plan["resources"]}) == len(plan["resources"]),
         "DUPLICATE_RESOURCE",
     )
+    for r in plan["resources"]:
+        require(r.get("kind") in RESOURCE_KINDS, "UNSUPPORTED_RESOURCE_KIND")
+        if r["kind"] == "k8s_role":
+            require(r["payload"].get("kind") == "Role", "KUBERNETES_ROLE_ONLY")
+            validate_rules(r["payload"].get("rules"))
+        if r["kind"] == "bao_policy":
+            validate_paths(r["payload"].get("paths"))
     return copy.deepcopy(plan)
