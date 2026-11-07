@@ -146,3 +146,12 @@
 .connection-page.is-live-apps {
   align-content: start;
 }
+.connection-page.is-live-apps {
+  grid-auto-rows: max-content;
+  align-items: start;
+}
+.connection-page.is-live-apps .appsel-bar {
+  height: fit-content;
+  min-height: 0;
+  align-self: start;
+}
