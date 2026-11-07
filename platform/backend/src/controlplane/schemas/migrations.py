@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from controlplane.domain.migration import Direction, MigrationStatus, StageProgress
+from controlplane.domain.task_plan import PlanPhase, StepId, StepStatus
 
 DataSource = Literal["live", "simulated"]
 
@@ -310,3 +311,57 @@ class CommandResult(BaseModel):
     @classmethod
     def keep_tail(cls, value: str) -> str:
         return value[-LOG_TAIL_LIMIT:]
+
+
+class PlanStepView(BaseModel):
+    id: StepId
+    title: str
+    description: str
+    tool: str | None
+    status: StepStatus
+    runnable: bool
+
+
+class PlanPhaseView(BaseModel):
+    id: PlanPhase
+    title: str
+    status: StepStatus
+    steps: list[PlanStepView]
+
+
+class PlanRoute(BaseModel):
+    source_env: str
+    target_env: str
+    source_provider: str
+    target_provider: str
+    label: str
+
+
+class TaskPlan(BaseModel):
+    job_id: str
+    route: PlanRoute
+    phases: list[PlanPhaseView]
+
+
+class MigrationCreate(BaseModel):
+    source_env: str = Field(min_length=1, max_length=64)
+    target_env: str = Field(min_length=1, max_length=64)
+    data_source: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    data_target: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    source_provider: Literal["onprem", "aws", "gcp"] | None = None
+    target_provider: Literal["onprem", "aws", "gcp"] | None = None
+    apps: list[str] = Field(default_factory=list, max_length=50)
+
+
+class MigrationCreated(BaseModel):
+    job_id: str
+    label: str
+
+
+class ClaimedCommand(BaseModel):
+    command: CutoverCommand
+    job_id: str
+    source_env: str
+    target_env: str
+    data_source: str
+    data_target: str

@@ -13,6 +13,13 @@ from controlplane.domain.migration import (
     stage_index,
     status_of,
 )
+from controlplane.domain.task_plan import (
+    PlanPhase,
+    Signals,
+    phase_status,
+    plan_steps,
+    route_label,
+)
 from controlplane.integrations.base import FleetSource
 from controlplane.schemas.migrations import (
     DowntimeEvidence,
@@ -20,13 +27,21 @@ from controlplane.schemas.migrations import (
     MigrationEvent,
     MigrationSeries,
     MigrationSummary,
+    PlanPhaseView,
+    PlanRoute,
+    PlanStepView,
     SeriesPoint,
     StageView,
+    TaskPlan,
     VerifyPair,
     WriteCounts,
 )
 
 MIGRATION_NOT_FOUND = "등록된 마이그레이션 작업이 없어요."
+PHASE_TITLES = {
+    PlanPhase.ENVIRONMENT: "환경 마이그레이션",
+    PlanPhase.APPLICATION: "앱 마이그레이션",
+}
 PAUSED_STATES = frozenset({"PAUSED", "SWITCHING", "ERROR"})
 MAX_SERIES_POINTS = 720
 DEFAULT_WINDOW_MINUTES = 120
@@ -274,6 +289,63 @@ class MigrationService:
             verify=VerifyPair(pre=state.verify_pre, post=state.verify_post),
             connectors=state.connectors,
             worker=state.worker,
+        )
+
+    def get_plan(self, job_id: str, mapping_status: str | None) -> TaskPlan:
+        state = self._state(job_id)
+        environments = {env.config.id: env for env in self._source.list_environments()}
+        source = environments.get(state.config.source_env)
+        target = environments.get(state.config.target_env)
+        source_provider = (
+            source.config.provider
+            if source
+            else state.config.source_provider or state.config.source_env
+        )
+        target_provider = (
+            target.config.provider
+            if target
+            else state.config.target_provider or state.config.target_env
+        )
+        signals = Signals(
+            source_connected=bool(source and source.cluster.connected),
+            target_connected=bool(target and target.cluster.connected),
+            mapping_status=mapping_status,
+            stage=state.cutover.stage if state.cutover else None,
+            failed_stage=_failed_stage(state),
+            verify_passed=state.verify_post.passed if state.verify_post else None,
+        )
+        steps = plan_steps(source_provider, target_provider, signals)
+        phases = []
+        for phase in PlanPhase:
+            members = [step for step in steps if step.definition.phase == phase]
+            phases.append(
+                PlanPhaseView(
+                    id=phase,
+                    title=PHASE_TITLES[phase],
+                    status=phase_status(members),
+                    steps=[
+                        PlanStepView(
+                            id=step.definition.id,
+                            title=step.definition.title,
+                            description=step.definition.description,
+                            tool=step.tool,
+                            status=step.status,
+                            runnable=step.runnable,
+                        )
+                        for step in members
+                    ],
+                )
+            )
+        return TaskPlan(
+            job_id=job_id,
+            route=PlanRoute(
+                source_env=state.config.source_env,
+                target_env=state.config.target_env,
+                source_provider=source_provider,
+                target_provider=target_provider,
+                label=route_label(source_provider, target_provider),
+            ),
+            phases=phases,
         )
 
     def get_series(self, job_id: str, minutes: int) -> MigrationSeries:

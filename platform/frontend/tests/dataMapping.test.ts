@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DataMapping, DataResource } from "../src/api/dataMapping.ts";
 import {
+  basisText,
   changed,
   choiceValue,
   choose,
@@ -25,6 +26,7 @@ const resource = (
     name,
     origin: "cluster",
     detail: null,
+    infrastructure: false,
     ...extra,
   }) as DataResource;
 
@@ -53,6 +55,7 @@ const mapping = (overrides: Partial<DataMapping> = {}): DataMapping => ({
       kind: "postgres",
       basis: "name",
       candidates: ["t1"],
+      note: null,
     },
     {
       source: "s2",
@@ -62,6 +65,7 @@ const mapping = (overrides: Partial<DataMapping> = {}): DataMapping => ({
       kind: "postgres",
       basis: "none",
       candidates: ["t1"],
+      note: null,
     },
   ],
   blockers: [],
@@ -149,6 +153,17 @@ test("changed is always true until ready, then compares with saved values", () =
 
 test("labels and tones", () => {
   assert.equal(resourceLabel(resource("a", "pg")), "pg (클러스터)");
+  assert.equal(
+    resourceLabel(
+      resource("a", "logs", { origin: "managed", infrastructure: true }),
+    ),
+    "logs (관리형, 인프라)",
+  );
+  assert.equal(basisText("only_pair", null), "자동: 같은 종류가 하나씩");
+  assert.equal(
+    basisText("only_pair", "인프라 버킷 2개 제외"),
+    "자동: 같은 종류가 하나씩 (인프라 버킷 2개 제외)",
+  );
   assert.equal(
     resourceLabel(
       resource("a", "rds", { origin: "managed", detail: "db.t4g.micro" }),

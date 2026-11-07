@@ -20,6 +20,7 @@ import {
   type DataMappingUpdate,
 } from "../../api/dataMapping";
 import { isActive, pollInterval } from "./stages";
+import { getTaskPlan } from "../../api/taskPlan";
 
 export const SERIES_MINUTES = 60;
 
@@ -79,6 +80,14 @@ export function useRequestCommand(jobId: string) {
     mutationFn: (body: CommandRequest) => requestCommand(jobId, body),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["migration", jobId] }),
+  });
+}
+
+export function taskPlanQueryOptions(jobId: string) {
+  return queryOptions({
+    queryKey: ["migration", jobId, "plan"] as const,
+    queryFn: ({ signal }) => getTaskPlan(jobId, signal),
+    refetchInterval: 10000,
   });
 }
 

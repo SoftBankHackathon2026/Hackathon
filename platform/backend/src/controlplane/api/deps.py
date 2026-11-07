@@ -19,10 +19,12 @@ from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
 from controlplane.services.fleet import FleetService
 from controlplane.services.ingest import IngestService
+from controlplane.services.migration_tasks import MigrationTaskService
 from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
+from controlplane.services.traffic import TrafficRoutes
 
 EXECUTION_NOT_CONFIGURED = "실행 환경이 등록되지 않았습니다."
 NOT_LOGIN_MODE = "로그인 모드가 아닙니다."
@@ -99,6 +101,20 @@ def require_ingest_commands(
     return container.cutover_commands
 
 
+TRAFFIC_NOT_CONFIGURED = (
+    "공개 도메인 전환이 설정되지 않았습니다. ONEPORT_TRAFFIC_DIR 을 설정하세요."
+)
+
+
+def require_ingest_traffic(
+    container: ContainerDep, authorization: str = Header(default="")
+) -> TrafficRoutes:
+    _check_ingest_token(container, authorization)
+    if container.traffic is None:
+        raise NotConfigured(TRAFFIC_NOT_CONFIGURED)
+    return container.traffic
+
+
 AGENT_NOT_CONFIGURED = (
     "에이전트 기록에는 플랫폼 DB 가 필요해요. ONEPORT_DATABASE_URL_FILE 을 설정하세요."
 )
@@ -126,6 +142,10 @@ def get_data_mappings(container: ContainerDep) -> DataMappingService:
     return container.data_mappings
 
 
+def get_tasks(container: ContainerDep) -> MigrationTaskService:
+    return container.tasks
+
+
 def get_enrollments(container: ContainerDep) -> EnrollmentService:
     if container.enrollments is None:
         raise NotConfigured(
@@ -140,10 +160,12 @@ FleetDep = Annotated[FleetService, Depends(get_fleet)]
 SecurityDep = Annotated[SecurityService, Depends(get_security)]
 IngestDep = Annotated[IngestService, Depends(require_ingest)]
 IngestCommandsDep = Annotated[CutoverCommandService, Depends(require_ingest_commands)]
+IngestTrafficDep = Annotated[TrafficRoutes, Depends(require_ingest_traffic)]
 AgentDep = Annotated[AgentService, Depends(get_agent)]
 IngestAgentDep = Annotated[AgentService, Depends(require_ingest_agent)]
 CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
 DataMappingsDep = Annotated[DataMappingService, Depends(get_data_mappings)]
+TasksDep = Annotated[MigrationTaskService, Depends(get_tasks)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]

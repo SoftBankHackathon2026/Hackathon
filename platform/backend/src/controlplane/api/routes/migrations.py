@@ -11,20 +11,27 @@ from controlplane.api.deps import (
     IngestDep,
     MigrationsDep,
     SecurityDep,
+    TasksDep,
     ViewerIdentity,
 )
+from controlplane.core.errors import OperationNotFound
 from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
+    ClaimedCommand,
     CommandCreate,
     CommandResult,
     CutoverCommand,
     Fleet,
+    MigrationCreate,
+    MigrationCreated,
     MigrationDetail,
     MigrationEvent,
     MigrationIngest,
     MigrationSeries,
+    TaskPlan,
 )
 from controlplane.schemas.security import SecurityPosture
+from controlplane.services.data_mapping import DataMappingService
 
 router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
@@ -37,6 +44,27 @@ def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
 @router.get("/migrations/{job_id}")
 def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> MigrationDetail:
     return service.get_detail(job_id)
+
+
+@router.post("/migrations", status_code=201)
+def create_migration(
+    body: MigrationCreate, tasks: TasksDep, identity: CutoverOperatorIdentity
+) -> MigrationCreated:
+    return tasks.create(body, identity.email if identity else None)
+
+
+@router.get("/migrations/{job_id}/plan")
+def plan(
+    job_id: str, service: MigrationsDep, mappings: DataMappingsDep, identity: ViewerIdentity
+) -> TaskPlan:
+    return service.get_plan(job_id, _mapping_status(mappings, job_id))
+
+
+def _mapping_status(mappings: DataMappingService, job_id: str) -> str | None:
+    try:
+        return mappings.get(job_id).status
+    except OperationNotFound:
+        return None
 
 
 @router.get("/migrations/{job_id}/series")
@@ -98,6 +126,14 @@ def posture(service: SecurityDep, identity: ViewerIdentity) -> SecurityPosture:
 @router.post("/ingest/migrations/{job_id}", status_code=202)
 def ingest(job_id: str, body: MigrationIngest, service: IngestDep) -> None:
     service.ingest(job_id, body)
+
+
+@router.post("/ingest/commands/claim", response_model=ClaimedCommand | None)
+def claim_any_command(service: IngestCommandsDep):
+    claimed = service.claim_any()
+    if claimed is None:
+        return Response(status_code=204)
+    return claimed
 
 
 @router.post("/ingest/migrations/{job_id}/commands/claim", response_model=CutoverCommand | None)

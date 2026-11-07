@@ -94,3 +94,14 @@ ingress:
       database: migration_demo
       # environment: aws          # /api/info 의 environment 를 검사하려면 지정
       # token_env: AWS_REQUEST_API_TOKEN   # HTTPS 대상이 Bearer 를 요구할 때
+
+# 공개 도메인 전환. 이 절이 없으면 공용 도메인은 운영자가 옮긴다. 있으면 SWITCHING 에서 대상 쓰기·접수 큐를 연 뒤
+# 플랫폼 API(/api/v1/ingest/traffic/<app>)로 공용 도메인을 대상으로 돌리고, VERIFYING 에서 다시 확인한다.
+# 플랫폼 서버 Caddy 가 이 경로를 따른다 (Hackathon platform/deploy/ec2/README.md "공용 도메인 전환").
+# traffic:
+#   app: sample-app
+#   targets:            # job 의 target 이름 → 플랫폼 서버 경로 이름
+#     onprem: onprem
+#     aws: aws
+#   # platform_url_env: ONEPORT_PLATFORM_URL   # 기본값. 러너 Pod 의 보고기와 같은 값
+#   # token_env: ONEPORT_INGEST_TOKEN          # 기본값. 보고용 토큰

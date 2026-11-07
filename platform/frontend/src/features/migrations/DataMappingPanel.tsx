@@ -7,7 +7,7 @@ import { StatusDot } from "../../components/StatusDot";
 import { formatDateTime } from "../../lib/format";
 import {
   ACTION_LABELS,
-  BASIS_LABELS,
+  basisText,
   changed,
   choiceValue,
   choose,
@@ -146,7 +146,9 @@ function MappingEditor({
                         />
                       )}
                     </td>
-                    <td className="dm-basis">{BASIS_LABELS[view.basis]}</td>
+                    <td className="dm-basis">
+                      {basisText(view.basis, view.note)}
+                    </td>
                   </tr>
                 );
               })}

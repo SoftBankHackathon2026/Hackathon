@@ -59,6 +59,41 @@ STOP_TOKENS = frozenset(
 )
 
 
+KAFKA_MEMBER = re.compile(r"-(broker|controller|zookeeper)$")
+INFRA_BUCKET_TOKENS = frozenset({"tfstate", "terraform", "log", "logs", "cloudtrail", "flowlogs"})
+
+
+def infra_bucket(name: str) -> bool:
+    return bool(set(re.split(r"[^a-z0-9]+", name.lower())) & INFRA_BUCKET_TOKENS)
+
+
+def cluster_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
+    groups: dict[tuple[str, str, str], list] = {}
+    for workload in inventory.workloads:
+        if workload.role not in DATA_KINDS:
+            continue
+        base = KAFKA_MEMBER.sub("", workload.name) if workload.role == "kafka" else workload.name
+        groups.setdefault((workload.role, workload.namespace, base), []).append(workload)
+    found = []
+    for (kind, namespace, base), members in groups.items():
+        pods = sum(m.replicas for m in members)
+        parts = sorted(m.name for m in members)
+        detail = f"파드 {pods}개"
+        if len(members) > 1:
+            detail += " (" + ", ".join(parts) + ")"
+        found.append(
+            DataResource(
+                id=f"cluster:{namespace}/{base}",
+                env_id=env_id,
+                kind=kind,
+                name=f"{namespace}/{base}",
+                origin="cluster",
+                detail=detail,
+            )
+        )
+    return found
+
+
 def data_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
     found = [
         DataResource(
@@ -69,22 +104,12 @@ def data_resources(env_id: str, inventory: CostInventory) -> list[DataResource]:
             origin="managed",
             detail=service.size
             or (f"{service.storage_gib:g} GiB" if service.storage_gib else None),
+            infrastructure=service.kind == "object_storage" and infra_bucket(service.name),
         )
         for service in inventory.managed
         if service.kind in DATA_KINDS
     ]
-    found += [
-        DataResource(
-            id=f"cluster:{workload.namespace}/{workload.name}",
-            env_id=env_id,
-            kind=workload.role,
-            name=f"{workload.namespace}/{workload.name}",
-            origin="cluster",
-            detail=f"파드 {workload.replicas}개",
-        )
-        for workload in inventory.workloads
-        if workload.role in DATA_KINDS
-    ]
+    found += cluster_resources(env_id, inventory)
     return sorted(found, key=lambda r: (DATA_KINDS.index(r.kind), r.name))
 
 
@@ -107,27 +132,31 @@ def suggest(sources: list[DataResource], targets: list[DataResource]) -> list[Bi
     for kind in DATA_KINDS:
         same = [s for s in sources if s.kind == kind]
         options = [t for t in targets if t.kind == kind]
-        candidates = [t.id for t in options]
+        primary = [t for t in options if not t.infrastructure] or options
+        skipped = len(options) - len(primary)
+        note = f"인프라 버킷 {skipped}개 제외" if skipped else None
+        candidates = [t.id for t in primary] + [t.id for t in options if t not in primary]
         for source in same:
             if not options:
                 views.append(
                     BindingView(source=source.id, kind=kind, action="create", basis="no_target")
                 )
                 continue
-            if len(same) == 1 and len(options) == 1:
+            if len(same) == 1 and len(primary) == 1:
                 views.append(
                     BindingView(
                         source=source.id,
                         kind=kind,
                         action="map",
-                        target=options[0].id,
+                        target=primary[0].id,
                         basis="only_pair",
                         candidates=candidates,
+                        note=note,
                     )
                 )
                 continue
             scored = sorted(
-                ((similarity(source.name, t.name), t) for t in options),
+                ((similarity(source.name, t.name), t) for t in primary),
                 key=lambda pair: (-pair[0], pair[1].name),
             )
             best_score, best = scored[0]
@@ -141,6 +170,7 @@ def suggest(sources: list[DataResource], targets: list[DataResource]) -> list[Bi
                     target=best.id if confident else None,
                     basis="name" if confident else "none",
                     candidates=candidates,
+                    note=note if confident else None,
                 )
             )
     return views

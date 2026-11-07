@@ -31,7 +31,7 @@ def with_default_layout(env: EnvironmentConfig) -> EnvironmentConfig:
 def load_fleet_config(environment: PlatformEnvironment | None = None) -> FleetConfig:
     path = (environment or PlatformEnvironment()).fleet_config
     if path is None:
-        return DEFAULT_FLEET
+        return DEFAULT_FLEET.model_copy(deep=True)
     config = FleetConfig.model_validate_json(_expand(path.read_text()))
     return config.model_copy(
         update={"environments": [with_default_layout(env) for env in config.environments]}

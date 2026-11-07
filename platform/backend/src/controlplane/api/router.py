@@ -15,6 +15,7 @@ from controlplane.api.routes import (
     runs,
     system,
     team,
+    traffic,
 )
 
 api_router = APIRouter()
@@ -33,5 +34,6 @@ for module in (
     costs,
     connections,
     agent,
+    traffic,
 ):
     api_router.include_router(module.router)

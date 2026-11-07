@@ -135,11 +135,20 @@
   margin: 16px 0;
   list-style: none;
 }
-.connection-page .connection-environments button {
-  width: 100%;
+.connection-environments li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   margin: 4px 0;
-  padding: 12px;
+  padding-right: 4px;
   border: 1px solid transparent;
+  border-radius: var(--radius-control);
+}
+.connection-page .connection-environment-select {
+  width: 100%;
+  margin: 0;
+  padding: 12px 4px 12px 12px;
+  border: 0;
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -150,19 +159,41 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.connection-environments button strong {
+.connection-environment-select strong {
   font-size: var(--fs-sm);
   font-weight: 600;
 }
-.connection-environments button > span:not(.status) {
+.connection-environment-select > span:not(.status) {
   color: var(--text-secondary);
 }
-.connection-page .connection-environments button:hover {
+.connection-environments li:hover {
   background: var(--surface-subtle);
 }
-.connection-page .connection-environments button[aria-current] {
+.connection-environments li:has([aria-current]) {
   background: var(--accent-soft);
   border-color: var(--accent-line);
+}
+.connection-page .connection-disconnect {
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-secondary);
+}
+.connection-page .connection-disconnect:enabled:hover {
+  background: var(--danger-soft);
+  color: var(--danger-contrast);
+}
+.connection-page .connection-disconnect:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-tertiary);
+}
+.connection-page .connection-environments button:focus-visible {
+  outline-offset: -2px;
 }
 .connection-sidebar-note {
   border-top: 1px solid var(--border);
@@ -632,16 +663,32 @@
   font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
-.connection-page .connection-danger {
+.connection-page .connection-danger:enabled {
   background: var(--danger);
   color: var(--text-knockout);
-  margin-right: 12px;
 }
 .connection-page .connection-revoke {
+  width: min(420px, calc(100% - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
   font-size: var(--fs-sm);
+}
+.connection-revoke::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
+.connection-revoke h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-lg);
 }
 .connection-revoke p {
   margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.connection-revoke .connection-actions {
+  justify-content: flex-end;
 }
 .connection-history ol {
   list-style: none;

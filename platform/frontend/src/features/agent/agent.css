@@ -120,3 +120,200 @@
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
+.agent-strip li > * {
+  min-width: 0;
+}
+.agent-rerun {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-left: auto;
+}
+.agent-note {
+  overflow-wrap: anywhere;
+}
+.agent-settings-list {
+  display: grid;
+  gap: var(--sp-5);
+}
+.agent-settings {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.agent-settings h3 {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.agent-change-list,
+.agent-pending ul {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-pending {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.agent-pending li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-form {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+  max-width: 520px;
+}
+.agent-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  font: var(--type-body);
+}
+.agent-field > span:first-child {
+  min-width: 96px;
+  color: var(--text-secondary);
+}
+.shell .agent-field input {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-body);
+}
+.shell .agent-field .seg {
+  flex-wrap: wrap;
+}
+.agent-change-list li {
+  overflow-wrap: anywhere;
+}
+.agent-verdict {
+  display: grid;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-5);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.agent-verdict .sub {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-steps {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-steps > li {
+  position: relative;
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 0 0 var(--sp-5) 20px;
+}
+.agent-steps > li::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: -2px;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+.agent-steps > li:last-child::before {
+  display: none;
+}
+.agent-steps > li > .dot {
+  position: absolute;
+  top: 6px;
+  left: 0;
+}
+.agent-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  align-items: baseline;
+}
+.agent-step-head .sub {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-step-title {
+  font-weight: 600;
+}
+.agent-step-skipped {
+  color: var(--text-tertiary);
+}
+.agent-step-skipped .agent-text {
+  font-size: var(--fs-xs);
+}
+.agent-step-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.agent-step-note .sub {
+  margin-right: var(--sp-1);
+  color: var(--text-tertiary);
+}
+.agent-changes del {
+  text-decoration: line-through;
+}
+.agent-changes ins {
+  text-decoration: none;
+  font-weight: 600;
+}
+.agent-raw summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.agent-raw[open] summary {
+  margin-bottom: var(--sp-3);
+}
+.agent-config {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--sp-5) var(--sp-6);
+}
+.agent-config-group {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.agent-config-group h4 {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.agent-config-group dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.agent-config-group dt {
+  color: var(--text-secondary);
+}
+.agent-config-group dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -4,6 +4,7 @@
 """
 
 import threading
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -32,6 +33,8 @@ class CommandRepository(Protocol):
     def get(self, job_id: str, command_id: str) -> CutoverCommand | None: ...
 
     def claim(self, job_id: str, started_at: datetime) -> CutoverCommand | None: ...
+
+    def claim_any(self, job_ids: Sequence[str], started_at: datetime) -> CutoverCommand | None: ...
 
     def finish(
         self,
@@ -105,6 +108,18 @@ class CutoverCommandJournal:
             ).fetchone()
         return CutoverCommand.model_validate(row) if row else None
 
+    def claim_any(self, job_ids: Sequence[str], started_at: datetime) -> CutoverCommand | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "UPDATE fleet_cutover_commands SET status='running', started_at=%s "
+                "WHERE id = (SELECT id FROM fleet_cutover_commands "
+                "WHERE job_id = ANY(%s) AND status='pending' "
+                "ORDER BY requested_at LIMIT 1 FOR UPDATE SKIP LOCKED) "
+                f"RETURNING {COLUMNS}",
+                (started_at, list(job_ids)),
+            ).fetchone()
+        return CutoverCommand.model_validate(row) if row else None
+
     def claim(self, job_id: str, started_at: datetime) -> CutoverCommand | None:
         with self.connect() as conn:
             row = conn.execute(
@@ -170,6 +185,24 @@ class MemoryCutoverCommands:
         rows = self._rows[job_id]
         rows[[c.id for c in rows].index(updated.id)] = updated
         return updated
+
+    def claim_any(self, job_ids: Sequence[str], started_at: datetime) -> CutoverCommand | None:
+        with self._lock:
+            pending = sorted(
+                (
+                    c
+                    for job_id in job_ids
+                    for c in self._rows.get(job_id, [])
+                    if c.status == "pending"
+                ),
+                key=lambda c: c.requested_at,
+            )
+            if not pending:
+                return None
+            return self._replace(
+                pending[0].job_id,
+                pending[0].model_copy(update={"status": "running", "started_at": started_at}),
+            )
 
     def claim(self, job_id: str, started_at: datetime) -> CutoverCommand | None:
         with self._lock:
