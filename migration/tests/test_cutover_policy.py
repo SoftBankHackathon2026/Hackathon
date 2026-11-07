@@ -134,7 +134,7 @@ def test_transient_observation_reloads_and_recovers(setup_gate, monkeypatch):
         sleeps.append(seconds)
         doc["checks"]["target_app_db"] = good
         file.write_text(json.dumps(doc))
-    monkeypatch.setattr("time.sleep", recover)
+    monkeypatch.setattr(gate, "_sleep", recover, raising=False)
     assert gate("pre_cutover")["stage"] == "pre_cutover"
     assert sleeps == [2]
 
@@ -146,7 +146,7 @@ def test_only_known_transient_errors_retry_bounded(setup_gate, monkeypatch, code
     doc["checks"]["target_app_db"] = pc.build_check("error", {"code": code}, source="test")
     file.write_text(json.dumps(doc))
     sleeps = []
-    monkeypatch.setattr("time.sleep", sleeps.append)
+    monkeypatch.setattr(gate, "_sleep", sleeps.append)
     with pytest.raises(CutoverPolicyError):
         gate("pre_cutover")
     assert len(sleeps) == expected_sleeps
@@ -155,8 +155,8 @@ def test_only_known_transient_errors_retry_bounded(setup_gate, monkeypatch, code
 def test_retry_elapsed_wait_is_not_reset(setup_gate, monkeypatch):
     gate, _, _ = setup_gate
     clock = [10.0]
-    monkeypatch.setattr("migration.cutover_policy.time.monotonic", lambda: clock[0])
-    monkeypatch.setattr("time.sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(gate, "_clock", lambda: clock[0])
+    monkeypatch.setattr(gate, "_sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
     elapsed = []
     def evaluate(stage, checks):
         elapsed.append(checks["write_wait"]["detail"]["elapsed_seconds"])

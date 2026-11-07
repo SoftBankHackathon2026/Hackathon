@@ -34,6 +34,8 @@ def execution_digest(config: Config) -> str:
 class CutoverPolicyGate:
     def __init__(self, config: Config, state_dir: Path, *, evidence_file: str | None = None,
                  evaluator: pc.Evaluator | None = None, collector_settings: str | None = None) -> None:
+        self._sleep = time.sleep
+        self._clock = time.monotonic
         self.config = config
         self.state_dir = state_dir
         self.evidence_file = evidence_file or os.environ.get("CUTOVER_POLICY_EVIDENCE")
@@ -43,21 +45,21 @@ class CutoverPolicyGate:
         self.collector_settings = collector_settings or os.environ.get("CUTOVER_POLICY_COLLECTOR_SETTINGS")
 
     def __call__(self, stage: str, local_checks: dict[str, Any] | None = None) -> dict[str, Any]:
-        started = time.monotonic()
+        started = self._clock()
         for attempt in range(3):
             checks = deepcopy(local_checks)
             if checks and "write_wait" in checks:
-                checks["write_wait"]["detail"]["elapsed_seconds"] += time.monotonic() - started
+                checks["write_wait"]["detail"]["elapsed_seconds"] += self._clock() - started
             try:
                 return self._evaluate_once(stage, checks)
             except CutoverPolicyError as exc:
                 if not exc.retryable or attempt == 2:
                     raise
-                time.sleep(2)
+                self._sleep(2)
         raise AssertionError("unreachable")
 
     def _evaluate_once(self, stage: str, local_checks: dict[str, Any] | None = None) -> dict[str, Any]:
-        refresh_started = time.monotonic()
+        refresh_started = self._clock()
         if not self.evidence_file or self.evaluator is None:
             raise CutoverPolicyError("CUTOVER_POLICY_NOT_CONFIGURED")
         if self.collector_settings:
@@ -87,7 +89,7 @@ class CutoverPolicyGate:
             checks = dict(doc['checks'])
             checks.update(deepcopy(local_checks or {}))
             if "write_wait" in checks and local_checks and "write_wait" in local_checks:
-                elapsed = checks["write_wait"]["detail"]["elapsed_seconds"] + time.monotonic() - refresh_started
+                elapsed = checks["write_wait"]["detail"]["elapsed_seconds"] + self._clock() - refresh_started
                 checks["write_wait"] = pc.build_check(checks["write_wait"]["status"], {"elapsed_seconds": elapsed},
                                                      source="migration.cutover")
             now = datetime.now(UTC)
