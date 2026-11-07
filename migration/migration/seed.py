@@ -101,7 +101,11 @@ def verify_seed(conn: psycopg.Connection[Any], table: str, records: list[Request
     return problems
 
 
-def run(config: Config, target: str, *, state_dir: Path | None, count: int = SEED_COUNT) -> int:
+def run(config: Config, target: str, *, state_dir: Path | None, count: int | None = None) -> int:
+    demo = config.cutover.demo_total_rows is not None
+    count = (800 if demo else SEED_COUNT) if count is None else count
+    if demo and count != 800:
+        raise ConfigError("1000-row demo requires exactly 800 seed rows")
     records = seed_records(count)
     spec = config.connection(target, "app", application_name="migration-seed")
     log.info("seed 삽입 대상 %s, %d건", spec, count)
@@ -133,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="seed 1,000건 결정적 삽입")
     p.add_argument("--config", default=os.environ.get("MIGRATION_CONFIG", "config.yaml"))
     p.add_argument("--target", default=None, help="기본: job.source")
-    p.add_argument("--count", type=int, default=SEED_COUNT)
+    p.add_argument("--count", type=int, default=None, help="기본 1000; demo_total_rows=1000이면 800")
     p.add_argument("--state-dir", default=os.environ.get("WORKER_STATE_DIR"),
                    help="지정하면 seed 를 요청 기록에도 committed 로 남긴다 (verify 의 S 집합에 포함)")
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))

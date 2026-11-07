@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
+import pytest
+
+from migration.config import ConfigError
+from migration.seed import run
 
 from migration.seed import SEED_COUNT, seed_records, seed_request_id
 
@@ -20,3 +25,10 @@ def test_seed_records_fields():
     assert all(r.phase == "seed" and r.run_id == "seed" for r in recs)
     assert recs[0].created_at == "2026-01-01T00:00:01.000000+00:00"
     assert seed_records(3) == recs
+
+
+def test_demo_wrong_seed_count_is_rejected_before_connecting(config):
+    config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000,
+                     min_live_rows_after_snapshot=100, min_rows_after_switch=100))
+    with pytest.raises(ConfigError, match='800 seed'):
+        run(config, 'onprem', state_dir=None, count=1000)

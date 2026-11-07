@@ -147,6 +147,7 @@ class WorkerConfig:
 
 @dataclass(frozen=True)
 class CutoverConfig:
+    demo_total_rows: int | None = None  # opt-in: 800 seed + 100 CDC + 100 target
     state_dir: str = "/var/lib/worker"
     drop_source_slot_on_complete: bool = True   # COMPLETED 직전에 원본 slot·publication 제거 (WAL 축적 방지)
     min_live_rows_after_snapshot: int = 100
@@ -154,6 +155,13 @@ class CutoverConfig:
     offset_stable_seconds: float = 10.0
     poll_interval_seconds: float = 5.0
     stage_timeout_seconds: float = 1800.0
+
+    def __post_init__(self) -> None:
+        if self.demo_total_rows is not None and (
+            type(self.demo_total_rows) is not int or self.demo_total_rows != 1000
+            or self.min_live_rows_after_snapshot != 100 or self.min_rows_after_switch != 100
+        ):
+            raise ConfigError("demo_total_rows requires 1000 total and 100/100 live rows")
 
 
 @dataclass(frozen=True)
@@ -314,6 +322,10 @@ def _dataclass_from(cls: type, raw: Mapping[str, Any] | None, section: str) -> A
         ftype = allowed[key].type
         if ftype in ("bool", bool):
             kwargs[key] = _as_bool(value, f"{section}.{key}")
+        elif ftype in ("int | None", int | None):
+            if value is not None and type(value) is not int:
+                raise ConfigError(f"{section}.{key}: 정수 또는 null 이어야 한다")
+            kwargs[key] = value
         elif ftype in ("int", int):
             kwargs[key] = _as_int(value, f"{section}.{key}")
         elif ftype in ("float", float):

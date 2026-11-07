@@ -54,6 +54,9 @@ class HttpWorkerClient:
     def resume(self) -> dict[str, Any]:
         return self._call("POST", "/resume")
 
+    def set_generation_limit(self, limit: int) -> dict[str, Any]:
+        return self._call("POST", "/generation-limit", {"limit": limit})
+
     def drain(self, timeout: float = 60.0) -> dict[str, Any]:
         try:
             return self._call("POST", "/drain", {"timeout": timeout}, timeout=timeout + 10)

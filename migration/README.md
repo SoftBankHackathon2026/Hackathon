@@ -107,14 +107,47 @@ python -m migration.init_db --config config.yaml --target aws
    `allow` / `deny` 로 강제할 수 있다.
 7. `wal_level`, `ssl` 등 서버 설정과 역할별 테이블 권한을 로그로 남긴다.
 
-### seed — 초기 1,000건
+### 총 1,000건 시연
+
+`config.example.yaml`은 `cutover.demo_total_rows: 1000`을 사용한다.
+seed 800건을 복사한 뒤 전환기가 워커 생성 상한을 100건으로 열고,
+대상 전환 후 누적 상한을 200건으로 연다. 최종 원본 900건·대상 1,000건이어야 성공한다.
+워커와 seed, 전환기에 **같은 설정 파일**을 사용한다. 배포 시 runner와 worker 양쪽 ConfigMap에
+이 값을 넣어야 하며, 한쪽만 새 버전이면 PRECHECK에서 멈춘다.
+
+기존 시연 DB를 지우거나 재사용하지 말고 새 DB·job_id·상태 디렉터리로 준비한다.
+별도 traffic-bot과 수동 INSERT는 이 시연 동안 멈춰 둔다. 이 상한은 워커 생성 건수를 제어하며
+외부 클라이언트의 쓰기를 제한하지 않는다. 외부 요청이 섞여 최종 건수가 달라지면 성공으로 처리하지 않는다.
+durable-ingress를 통한 앱 요청 부하 시험은 별도로 수행한다.
+
+```sh
+# config.yaml의 연결·job_id·state_dir 및 기존 정책 승인 설정을 준비한 뒤:
+python -m migration.seed --config config.yaml --state-dir /var/lib/worker
+python -m migration.loadgen --config config.yaml --rate 10 --state-dir /var/lib/worker
+# 다른 터미널에서 실행. READY에 도달하면 승인 ID로 재개한다.
+python -m migration.cutover --config config.yaml run
+python -m migration.cutover --config config.yaml run --approve "검토한-승인-ID"
+```
+
+생성 상한과 요청 번호를 영속 저장하므로 재시작·같은 단계 재실행이 요청을 추가로 만들지 않는다.
+이 모드에서는 PAUSED 중 생성도 멈추며, 200건을 다 만든 뒤에는 정상 대기한다.
+`GET /status`의 `max_generated`, `generation_limit`, `generated_total`로 진행을 볼 수 있다.
+`POST /generation-limit`은 전환기가 쓰는 내부 제어 API이며 누적 상한만 받는다(100 → 200).
+이 설정이 없거나 null이면 기존 지속 생성 동작을 유지한다.
+
+전환기의 관리자 DB 연결은 대상별 풀(최소 1·최대 2개)을 사용한다.
+반납 시 트랜잭션을 commit/rollback하고 다음 대여 때 연결을 확인하며, CLI 종료 시 풀을 닫는다.
+원본 쓰기 차단을 확인하는 앱 계정의 시험 INSERT는 새 연결로 검사한다.
+
+### seed — 초기 데이터
 
 ```
 python -m migration.seed --config config.yaml --target onprem --state-dir /var/lib/worker
 ```
 
-`request_id = uuid5(고정 namespace, "seed-{n}")`, `request_no 1..1000`, `phase=seed`, `created_at = 2026-01-01T00:00:00Z + n초`.
-`ON CONFLICT DO NOTHING` 으로 넣고 phase=seed 행이 정확히 1,000건이며 모든 필드가 기대와 같은지 확인한다.
+`request_id = uuid5(고정 namespace, "seed-{n}")`, `request_no 1..count`, `phase=seed`, `created_at = 2026-01-01T00:00:00Z + n초`.
+기본 seed는 1,000건이며, 총 1,000건 시연 모드에서는 800건이다.
+`ON CONFLICT DO NOTHING` 으로 넣고 phase=seed 행이 정확히 지정 건수이며 모든 필드가 기대와 같은지 확인한다.
 `--state-dir` 를 주면 요청 기록에도 committed 로 남겨 verify 의 S 집합에 포함된다.
 
 ### loadgen — INSERT 워커
