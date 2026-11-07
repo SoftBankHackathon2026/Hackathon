@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 from psycopg import sql
 from psycopg.rows import tuple_row
+from psycopg_pool import ConnectionPool
 
 from .config import ConnectionSpec, redact
 
@@ -67,6 +68,19 @@ def connect(
         conn.close()
         raise
     return conn
+
+
+def connection_pool(spec: ConnectionSpec) -> ConnectionPool:
+    """A small, lazy pool for one target/role; transactions finish on return."""
+    def configure(conn: psycopg.Connection[Any]) -> None:
+        conn.execute("SET statement_timeout = 30000")
+        conn.commit()
+
+    return ConnectionPool(
+        spec.conninfo(), kwargs={"password": spec.password, "row_factory": tuple_row},
+        min_size=1, max_size=2, timeout=10, open=True,
+        configure=configure, check=ConnectionPool.check_connection,
+    )
 
 
 def server_identity(conn: psycopg.Connection[Any]) -> ServerIdentity:
