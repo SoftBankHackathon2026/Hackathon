@@ -13,7 +13,11 @@ LABEL_SELECTOR = "oneport.io/cost-reading=node"
 DEFAULT_NAMESPACE = "oneport-cost"
 DATA_KEY = "reading.json"
 DEFAULT_MAX_AGE_SECONDS = 600
-METHOD_NOTES = {"model": "CPU 사용률 기반 추정", "rapl": "RAPL 전력 측정"}
+METHOD_NOTES = {
+    "model": "CPU 사용률 기반 추정",
+    "host": "호스트 전력 모델 추정",
+    "rapl": "RAPL 전력 측정",
+}
 
 ConfigMapLister = Callable[[EnvironmentConfig, str], list[dict[str, str]]]
 
