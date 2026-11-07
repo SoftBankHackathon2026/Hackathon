@@ -180,6 +180,7 @@ HTTP 제어 API (포트 8080):
 | `POST /resume` | RUNNING 으로 전환 (ERROR 에서도 가능) | status JSON |
 | `POST /drain` body `{"timeout": 60}` | 진행 중 요청이 확정될 때까지 대기. 대기열은 비우지 않음 | `{"settled", "in_flight", "queue_length", "last_committed"}` (미확정이면 409) |
 | `POST /target` body `{"target": "aws", "phase": "aws_live"}` | 기존 연결을 닫고 새 target 에 연결·식별 확인. **PAUSED 이고 진행 중 요청이 없을 때만** 허용, 실패 시 target 유지 | status JSON (거부 시 409) |
+| `POST /generation` body `{"enabled": false}` | 새 요청 생성만 켜고 끈다. 대기열 전송은 계속한다(`/pause` 와 다름). `worker.json` 에 저장해 재시작 뒤에도 유지. **연속 모드 전용** — `max_generated`(총 1,000건 시연)가 있으면 409. 전환 중에는 쓰지 않는다(CATCHING_UP·VERIFYING 이 새 요청을 기다린다) | status JSON(`generation_enabled`) |
 
 ### cdc — Kafka Connect 제어
 
