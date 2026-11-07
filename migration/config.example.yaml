@@ -79,6 +79,9 @@ cutover:
   min_rows_after_switch: 100
   offset_stable_seconds: 10
   poll_interval_seconds: 5
+  # 기준점(COPYING 시작 때 원본 max(created_at)) 이전 집합을 CATCHING_UP 에서 한 번 확정하는 방식.
+  # digest: 서버측 버킷 해시(행 전송 없음, 기본), rows: 행 전체 읽기. 전환 구간(DRAINING 이후)은 행을 읽지 않고 건수만 센다.
+  snapshot_compare: digest
   stage_timeout_seconds: 1800
 
 # 접수 서비스(durable-ingress) 자동 제어. 이 절이 없으면 cutover 는 큐를 건드리지 않고 운영자가 수동으로

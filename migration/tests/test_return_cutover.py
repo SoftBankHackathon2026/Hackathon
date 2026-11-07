@@ -93,6 +93,7 @@ def _run_to_failure(config, state_dir, fakes, match: str) -> Cutover:
     _simulate_replication(fakes)
     _grow_target_commits(fakes)
     cut = _build(config, state_dir, fakes, approve="return-approval")
+    fakes["_cut"] = cut  # 실패 주입 헬퍼가 현재 단계를 볼 수 있게 둔다
     with pytest.raises(CutoverError, match=match):
         cut.run()
     return cut
@@ -236,7 +237,20 @@ def _fail_worker_target(fakes) -> None:
 
 
 def _fail_final_verify(fakes) -> None:
-    fakes["verify"].results = [True, True, True, False]
+    """전환 후 건수 확인(VERIFYING)에서 대상 delta 가 한 번 모자란다. 재시도(force-retry)에서는 맞는다."""
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+    state = {"failed": False}
+
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == TARGET and upto is None and not state["failed"] and fakes.get("_cut") is not None \
+                and fakes["_cut"].job.stage == VERIFYING:
+            state["failed"] = True
+            return n - 1
+        return n
+
+    db.count_rows_in_scope = count_rows_in_scope
 
 
 @pytest.mark.parametrize(("arrange", "failed_stage"), [
@@ -277,7 +291,18 @@ def _fail_fence(fakes) -> None:
 
 
 def _fail_pre_verify(fakes) -> None:
-    fakes["verify"].results = [False]
+    """SYNC_CONFIRMED 첫 건수 확인(pre-stop)에서 기준점 이전 건수가 어긋난다."""
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == TARGET and upto is not None and fakes.get("_cut") is not None \
+                and fakes["_cut"].job.stage == SYNC_CONFIRMED:
+            return n - 1
+        return n
+
+    db.count_rows_in_scope = count_rows_in_scope
 
 
 @pytest.mark.parametrize(("arrange", "failed_stage"), [

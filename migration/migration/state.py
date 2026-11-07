@@ -170,6 +170,31 @@ class RequestStore(_SqliteBase):
             cur = self._exec("SELECT request_id FROM requests WHERE status = ? AND target = ?", (COMMITTED, target))
         return {row[0] for row in cur.fetchall()}
 
+    def committed_ids_in_scope(self, target: str | None = None, *, since: datetime | None = None,
+                               upto: datetime | None = None) -> set[str]:
+        """created_at 이 (since, upto] 범위인 커밋 확인 요청 ID. 기준점 이후 집합만 비교할 때 쓴다.
+
+        created_at 은 ISO 문자열이라 형식 차이(마이크로초 생략 등)에 흔들리지 않게 파싱해서 비교한다.
+        """
+        if since is None and upto is None:
+            return self.committed_ids(target)
+        if target is None:
+            cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ?", (COMMITTED,))
+        else:
+            cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ? AND target = ?",
+                             (COMMITTED, target))
+        out: set[str] = set()
+        for rid, created in cur.fetchall():
+            ts = datetime.fromisoformat(str(created))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            if since is not None and ts <= since:
+                continue
+            if upto is not None and ts > upto:
+                continue
+            out.add(str(rid))
+        return out
+
     def iter_committed(self, target: str | None = None) -> Iterator[RequestRecord]:
         if target is None:
             cur = self._exec("SELECT * FROM requests WHERE status = ? ORDER BY committed_at", (COMMITTED,))
