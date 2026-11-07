@@ -79,10 +79,12 @@ class CutoverCommandService:
         config: FleetConfig,
         store: CommandRepository,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        blocker: Callable[[str], str | None] = lambda job_id: None,
     ) -> None:
         self._config = config
         self._store = store
         self._now = now
+        self._blocker = blocker
 
     def _check_job(self, job_id: str) -> None:
         if self._config.migration(job_id) is None:
@@ -97,6 +99,10 @@ class CutoverCommandService:
             raise InvalidRequest(APPROVAL_ID_REQUIRED)
         if self._store.active(job_id) is not None:
             raise RequestConflict(COMMAND_IN_PROGRESS)
+        if body.action == "run":
+            blocked = self._blocker(job_id)
+            if blocked:
+                raise RequestConflict(blocked)
         command = CutoverCommand(
             id=f"cmd_{secrets.token_hex(8)}",
             job_id=job_id,

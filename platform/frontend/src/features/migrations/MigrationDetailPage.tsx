@@ -10,6 +10,7 @@ import { StatTiles } from "../../components/StatTiles";
 import { formatCount, formatRatio, formatSeconds } from "../../lib/format";
 import { CdcPath } from "./CdcPath";
 import { CutoverControls } from "./CutoverControls";
+import { DataMappingPanel, DataMappingStatus } from "./DataMappingPanel";
 import { EnvironmentGraphs, EnvironmentTable } from "./EnvironmentWrites";
 import { EventRail } from "./EventRail";
 import { envShortName } from "./fleetView";
@@ -195,6 +196,12 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
       <div className="detail-layout">
         <EventRail events={events.data} />
         <div className="detail-main">
+          <DashSection
+            title="데이터 자원 매핑"
+            aside={<DataMappingStatus jobId={jobId} />}
+          >
+            <DataMappingPanel jobId={jobId} />
+          </DashSection>
           <DashSection
             title="전환 제어"
             aside={
