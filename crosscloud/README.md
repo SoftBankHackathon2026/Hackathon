@@ -17,6 +17,12 @@
 |---|---|
 | `src/crosscloud/model.py` | 공통 자원 모델. 바꿀 수 없는 dataclass 값 객체 |
 | `src/crosscloud/inventory_json.py` | `Inventory` ↔ JSON 변환. 두 방향 모두 스키마로 검사 |
+| `src/crosscloud/handoff.py` | 원가연 `config.cloud.yaml`·접수 큐 `ingress.env`·대상 앱 DB TLS env 렌더링 |
+| `src/crosscloud/control_adapter.py` | 원가연 앱 제어 API 6개 → 접수 큐(durable-ingress) 제어 |
+| `src/crosscloud/ingress_control.py` | 접수 큐 제어 API 클라이언트 |
+| `src/crosscloud/health_probe.py` | 앱 `/readyz`·`/api/info` 점검 |
+| `src/crosscloud/cli.py` | `crosscloud ingress-start` · `serve-adapter` |
+| `deploy/operator-pc/` | 운영자 PC compose 예시(접수 큐·Redis·Connect)와 순서 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `tests/` | 단위 시험 |
 

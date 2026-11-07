@@ -1,0 +1,31 @@
+# 접수 큐(durable-ingress)와 Redis — 운영자 PC 예시. compose 프로젝트 ccx-ingress.
+#
+# Connect 와 다른 프로젝트로 둔다. 취소할 때 Connect 만 내려도 접수 기록
+# (Redis AOF)이 남는다. 포트는 호스트 127.0.0.1 에만 공개한다.
+#
+# 필요한 셸 env(값은 Secret 에서, 파일에 쓰지 않는다):
+#   SAMPLE_APP_IMAGE       팀 sample-app 이미지 그대로. 제어 바인드·토큰을
+#                          env 로 받는 커밋(4ecee72) 이후 빌드여야 한다.
+#   INGRESS_CONTROL_TOKEN  제어 API Bearer 토큰.
+# ingress.env 는 crosscloud handoff.render_ingress_env 가 만든다.
+name: ccx-ingress
+services:
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes"]
+    volumes: [redis-data:/data]
+    labels: {com.crosscloud.bench: ingress}
+  durable-ingress:
+    image: ${SAMPLE_APP_IMAGE:?팀 sample-app 이미지 태그}
+    command: [node, src/durable-ingress/server.js]
+    env_file: [./out/ingress.env]
+    environment:
+      INGRESS_CONTROL_TOKEN: ${INGRESS_CONTROL_TOKEN:?제어 토큰}
+    ports:
+      - "127.0.0.1:8080:8080"  # 요청 접수 API(봇·클라이언트가 여기로)
+      - "127.0.0.1:9092:9092"  # 제어 API(어댑터만)
+    depends_on: [redis]
+    labels: {com.crosscloud.bench: ingress}
+volumes:
+  redis-data:
+    labels: {com.crosscloud.bench: ingress}
