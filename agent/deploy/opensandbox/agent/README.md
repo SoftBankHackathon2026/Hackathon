@@ -93,3 +93,15 @@ oneport-agent fault restore                            # 에이전트가 못 고
 
 AI 에게 묻기 전에 지금 설정으로 DB 에 붙어 보고(진단), 실패 종류(DNS, 연결 거부, `SQLSTATE 3D000` DB 없음, `28P01` 인증 실패, TLS 등)를 근거로 넘긴다. 지금 설정으로 접속되면 설정 문제가 아니라고 보고 사람에게 넘긴다.
 
+
+## 플랫폼 화면 연결
+
+`platform.url` 과 `agent.env` 의 `ONEPORT_INGEST_TOKEN`(플랫폼 보고기와 같은 ingest 토큰)을 넣으면 watch 가 주기마다 플랫폼에 보고한다.
+호스트는 밖에서 들어오는 연결을 받지 않으므로 모두 에이전트가 먼저 부른다.
+
+- 상태: `POST /api/v1/ingest/agent/heartbeat`
+- 실행 기록: 바뀐 실행만 `PUT /api/v1/ingest/agent/runs/<run_id>`
+- 승인·거절: `GET /api/v1/ingest/agent/approvals` 로 가져와 처리하고 `POST .../approvals/<id>/ack` 로 결과를 알린다. 승인자는 실행 기록에 남는다.
+- Slack 승인 대기 메시지에 플랫폼 링크가 붙는다.
+
+플랫폼에 닿지 않아도 판정·수정은 그대로 하고 로그만 남긴다.

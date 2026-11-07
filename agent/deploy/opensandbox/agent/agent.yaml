@@ -72,3 +72,8 @@ restart:
 slack:
   channel: ""
   thread_ts: ""
+
+platform:
+  url: ""
+  agent_id: oneport-sandbox
+  token_env: ONEPORT_INGEST_TOKEN

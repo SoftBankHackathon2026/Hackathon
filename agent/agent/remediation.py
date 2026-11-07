@@ -64,10 +64,11 @@ class Remediator:
     def __init__(
         self, deps: Deps, *, job_id: str, plan: Mapping[str, Any],
         declared_evidence: Mapping[str, Mapping[str, Any]], auto_apply: bool, stage: str = "pre_cutover",
-        approve_command: str = "python -m agent approve",
+        approve_command: str = "python -m agent approve", approve_url: str | None = None,
     ) -> None:
         self.d = deps
         self.approve_command = approve_command
+        self.approve_url = approve_url
         self.job_id, self.auto_apply, self.stage = job_id, auto_apply, stage
         self.declared_evidence = declared_evidence
         self.plan = {**plan, "digest": digest_of(dict(plan))}
@@ -105,11 +106,22 @@ class Remediator:
             self._finish(run, R.ERROR, f"예기치 않은 오류 {type(exc).__name__}. 사람이 확인한다")
         return run
 
-    def approve(self, run_id: str) -> Run:
+    def reject(self, run_id: str, by: str | None = None) -> Run:
         run = self.d.runs.get(run_id)
         if run is None:
             raise ValueError(f"실행 기록이 없다: {run_id}")
-        if not self.d.runs.claim_approval(run_id):
+        if not self.d.runs.claim_rejection(run_id, by):
+            raise ValueError(f"승인 대기 상태가 아니다: {run_id} ({run.state})")
+        rejected = self.d.runs.get(run_id) or run
+        who = f"{by} 님이 " if by else ""
+        self._notify(rejected, f"{TITLES[R.REJECTED]}  `{run_id}`\n{who}제안을 거절했어요. 저장소는 바꾸지 않았어요")
+        return rejected
+
+    def approve(self, run_id: str, by: str | None = None) -> Run:
+        run = self.d.runs.get(run_id)
+        if run is None:
+            raise ValueError(f"실행 기록이 없다: {run_id}")
+        if not self.d.runs.claim_approval(run_id, by):
             raise ValueError(f"승인 대기 상태가 아니다: {run_id} ({run.state})")
         run.state = R.APPLYING
         try:
@@ -169,7 +181,7 @@ class Remediator:
             return
         if not self.auto_apply:
             self.d.runs.update(run, R.WAITING_APPROVAL, "승인 대기")
-            self._notify(run, f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}\n*승인*  `{self.approve_command} {run.run_id}`")
+            self._notify(run, f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}\n*승인*  {self._approve_hint(run.run_id)}")
             return
         self.d.runs.update(run, R.APPLYING, "자동 적용")
         self._apply(run, proposal, snapshot.version)
@@ -246,6 +258,12 @@ class Remediator:
             log.info("[%s] 같은 사유로 다시 넘김. 알림은 생략한다: %s", run.run_id, message)
             return
         self._notify(run, f"{TITLES.get(state, state)}  `{run.run_id}`\n{message}")
+
+    def _approve_hint(self, run_id: str) -> str:
+        command = f"`{self.approve_command} {run_id}`"
+        if not self.approve_url:
+            return command
+        return f"<{self.approve_url.rstrip('/')}/#agent/{run_id}|플랫폼에서 승인> 또는 {command}"
 
     def _last_message(self, run: Run) -> str | None:
         events = self.d.runs.events(run.run_id)

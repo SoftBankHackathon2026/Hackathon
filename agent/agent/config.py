@@ -99,6 +99,9 @@ class AgentConfig:
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
     approve_command: str = "python -m agent approve"
+    platform_url: str | None = None
+    platform_agent_id: str = "oneport-agent"
+    platform_token_env: str = "ONEPORT_INGEST_TOKEN"
 
     @property
     def target_db(self) -> Mapping[str, Any]:
@@ -180,6 +183,9 @@ def parse_config(raw: Mapping[str, Any], env: Mapping[str, str] | None = None) -
         slack_channel=(raw.get("slack") or {}).get("channel"),
         slack_thread_ts=_thread_ts((raw.get("slack") or {}).get("thread_ts")),
         approve_command=str(raw.get("approve_command") or "python -m agent approve"),
+        platform_url=(raw.get("platform") or {}).get("url") or None,
+        platform_agent_id=str((raw.get("platform") or {}).get("agent_id") or "oneport-agent"),
+        platform_token_env=str((raw.get("platform") or {}).get("token_env") or "ONEPORT_INGEST_TOKEN"),
     )
 
 

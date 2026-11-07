@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from datetime import UTC, datetime
-from typing import Callable
+from typing import Callable, Mapping
 
 from migration.policy_client import DecisionStore, OpaHttpEvaluator
 from migration.smoke import SmokeConfigError, run_smoke, token_from_env
@@ -23,12 +23,14 @@ from .kv import OpenBaoKv
 from .notify import build_notifier
 from .probe import PostgresProber
 from .proposer import ProposerError, build_proposer
+from .platform import PlatformClient, handle_approvals
 from .remediation import Deps, Remediator
 from .restart import InClusterKubeApi, RolloutRestarter
 from . import runs as R
 from .runs import OK_STATES, Run, RunStore
 
 EXIT_OK, EXIT_CONFIG, EXIT_ATTENTION = 0, 1, 2
+AGENT_VERSION = "0.1.0"
 
 
 def smoke_with_retry(
@@ -67,7 +69,8 @@ def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore)
         runs=runs,
     )
     return Remediator(deps, job_id=cfg.job_id, plan=cfg.plan, declared_evidence=cfg.declared_evidence,
-                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command)
+                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command,
+                      approve_url=cfg.platform_url)
 
 
 BUSY_STATES = frozenset({R.WAITING_APPROVAL, R.APPLYING})
@@ -80,19 +83,39 @@ def _stale(run: Run, at: datetime) -> bool:
     return (at - datetime.fromisoformat(run.updated_at.replace("Z", "+00:00"))).total_seconds() > APPLYING_STALE_SECONDS
 
 
+def build_platform(cfg: AgentConfig, env: Mapping[str, str] | None = None) -> PlatformClient | None:
+    environ = os.environ if env is None else env
+    token = environ.get(cfg.platform_token_env)
+    if not cfg.platform_url or not token:
+        return None
+    try:
+        return PlatformClient(cfg.platform_url, token, cfg.platform_agent_id)
+    except ValueError as exc:
+        logging.getLogger("agent").warning("플랫폼 보고를 끈다: %s", exc)
+        return None
+
+
 def watch(
     remediator: Remediator, runs: RunStore, *, interval: float, iterations: int | None = None,
     sleep: Callable[[float], None] = time.sleep, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    platform: PlatformClient | None = None,
 ) -> None:
     log = logging.getLogger("agent.watch")
     done = 0
     while iterations is None or done < iterations:
+        if platform is not None:
+            platform.heartbeat(version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(interval))
+            for run_id, state in handle_approvals(platform, remediator, runs):
+                log.info("플랫폼 결정 처리 %s: %s", run_id, state)
+            platform.sync(runs)
         latest = next(iter(runs.recent()), None)
         if latest is not None and latest.state in BUSY_STATES and not _stale(latest, now()):
             log.info("진행 중인 실행 %s (%s) 이 있어 새로 판정하지 않는다", latest.run_id, latest.state)
         else:
             run = remediator.run()
             log.info("실행 %s 끝: %s", run.run_id, run.state)
+        if platform is not None:
+            platform.sync(runs)
         done += 1
         if iterations is None or done < iterations:
             sleep(interval)
@@ -153,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             logging.getLogger("agent").error("초기화 실패: %s", type(exc).__name__)
             return EXIT_CONFIG
         if args.command == "watch":
-            watch(remediator, runs, interval=max(args.interval, 10.0))
+            watch(remediator, runs, interval=max(args.interval, 10.0), platform=build_platform(cfg))
             return EXIT_OK
         try:
             run = remediator.run() if args.command == "run" else remediator.approve(args.run_id)
