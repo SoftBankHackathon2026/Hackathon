@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SoftBankHackathon2026/Hackathon/agent/schema/proposal.schema.json",
+  "title": "Codex 수정안 최종 보고",
+  "description": "codex exec --output-schema 로 강제하는 최종 메시지. 변경 자체는 config/target.json 의 diff 로 따로 뽑는다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["analysis", "root_cause", "impact", "verification_plan", "cannot_fix_reason"],
+  "properties": {
+    "analysis": {"type": "string", "description": "탐침 결과·설정을 비교해 본 것 (근거)"},
+    "root_cause": {"type": "string", "description": "원인 한 문장"},
+    "impact": {"type": "string", "description": "바꾼 키와 그 영향. 바꾼 것이 없으면 '변경 없음'"},
+    "verification_plan": {"type": "string", "description": "적용 뒤 무엇을 확인해야 하는지"},
+    "cannot_fix_reason": {"type": ["string", "null"], "description": "허용 범위 안에서 고칠 수 없을 때 이유. 고쳤으면 null"}
+  }
+}
