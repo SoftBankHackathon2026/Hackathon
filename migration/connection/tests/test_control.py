@@ -768,3 +768,8 @@ def test_environment_registration_does_not_require_a_direction(svc):
     )
     assert registered["environmentId"]
     assert "role" not in registered["target"]
+    environment_id = registered["environmentId"]
+    assert svc.registered_provider(environment_id, OWNER.team) == "onprem"
+    assert svc.registered_provider(environment_id, OTHER.team) is None
+    svc.browser(request_id, OWNER, "revoke", {})
+    assert svc.registered_provider(environment_id, OWNER.team) is None

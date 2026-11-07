@@ -338,6 +338,23 @@ class ConnectionService:
         require(row is not None, "CONNECTION_NOT_FOUND", 404)
         return self.snapshot(row, actor)
 
+    def registered_provider(self, environment_id: str, team: str) -> str | None:
+        request_id = environment_id.removeprefix("connected-")
+        if request_id == environment_id or not IDENTIFIER.fullmatch(request_id):
+            return None
+        row = self.store.get(request_id)
+        if (
+            row is None
+            or row["team"] != team
+            or row.get("environment_id") != environment_id
+        ):
+            return None
+        self._expire(row)
+        if row["device"] != "APPROVED":
+            return None
+        kind = row["target"]["kind"]
+        return "onprem" if kind == "kubernetes" else kind
+
     def create(self, actor, public_key, operation_id, provider="kubernetes"):
         require(actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
         self.limiter.check(actor_scope(actor), self.clock())

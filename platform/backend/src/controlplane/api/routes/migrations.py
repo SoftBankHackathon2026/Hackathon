@@ -83,22 +83,11 @@ def create_migration(
         connection = container.connections
         if connection is None or (identity is None and container.auth_mode != AuthMode.DEMO):
             raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
-        from migration_connection.control.errors import ConnectionError
-        from migration_connection.control.service import Actor
-
-        actor = (
-            Actor(identity.team, identity.email, False)
-            if identity
-            else Actor(connection.runtime_tenant_id, "demo", False)
-        )
-        try:
-            snapshot = connection.get(env_id.removeprefix("connected-"), actor)
-        except ConnectionError:
-            raise InvalidRequest("등록한 환경을 확인할 수 없어요.") from None
-        if snapshot.get("environmentId") != env_id or snapshot["device"] != "APPROVED":
+        team = identity.team if identity else connection.runtime_tenant_id
+        provider = connection.registered_provider(env_id, team)
+        if provider is None:
             raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
-        kind = snapshot["target"]["kind"]
-        providers[f"{side}_provider"] = "onprem" if kind == "kubernetes" else kind
+        providers[f"{side}_provider"] = provider
     return tasks.create(body.model_copy(update=providers), identity.email if identity else None)
 
 

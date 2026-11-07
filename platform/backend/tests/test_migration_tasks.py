@@ -125,14 +125,16 @@ def test_task_resolves_a_registered_environment_from_the_current_team(monkeypatc
     body = {"source_env": "aws", "target_env": registered_id, "target_provider": "onprem"}
     assert client.post("/api/v1/migrations", json=body).status_code == 422
 
-    def registered(connection_id, actor):
-        assert connection_id == request_id
-        assert actor.team == "test-team"
-        return {"environmentId": registered_id, "device": "APPROVED", "target": {"kind": "gcp"}}
+    def registered_provider(environment_id, team):
+        assert environment_id == registered_id
+        assert team == "test-team"
+        return "gcp"
 
     app.state.container = replace(
         app.state.container,
-        connections=SimpleNamespace(runtime_tenant_id="test-team", get=registered),
+        connections=SimpleNamespace(
+            runtime_tenant_id="test-team", registered_provider=registered_provider
+        ),
     )
     created = client.post("/api/v1/migrations", json=body)
     assert created.status_code == 201
