@@ -50,6 +50,9 @@ def test_classify_gives_operator_readable_cause() -> None:
     assert classify("tcp", ConnectionRefusedError()) == "TCP: 연결 거부(포트에 받는 곳이 없음)"
     assert classify("login", SimpleNamespace(sqlstate="3D000")) == "DB 가 없음 (SQLSTATE 3D000)"
     assert classify("login", Exception("SSL error: certificate verify failed")) == "TLS: 인증서 또는 SSL 설정 오류"
+    assert classify("login", Exception('connection failed: FATAL:  database "sample_app_prod" does not exist')) == "DB 가 없음 (SQLSTATE 3D000)"
+    assert classify("login", Exception('FATAL:  role "app" does not exist')) == "DB 사용자가 없음 (SQLSTATE 28000)"
+    assert classify("login", Exception('FATAL:  password authentication failed for user "u"')) == "비밀번호 인증 실패 (SQLSTATE 28P01)"
 
 
 def test_probe_uses_sslmode_from_config(monkeypatch: pytest.MonkeyPatch) -> None:

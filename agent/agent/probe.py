@@ -56,6 +56,14 @@ def classify(step: str, exc: BaseException) -> str:
     if code:
         return f"{SQLSTATES.get(code, '접속 오류')} (SQLSTATE {code})"
     text = str(exc).lower()
+    if "database" in text and "does not exist" in text:
+        return "DB 가 없음 (SQLSTATE 3D000)"
+    if "role" in text and "does not exist" in text:
+        return "DB 사용자가 없음 (SQLSTATE 28000)"
+    if "password authentication failed" in text:
+        return "비밀번호 인증 실패 (SQLSTATE 28P01)"
+    if "no pg_hba.conf entry" in text:
+        return "접속 규칙(pg_hba)에 막힘 (SQLSTATE 28000)"
     if "certificate" in text or "ssl" in text or "tls" in text:
         return "TLS: 인증서 또는 SSL 설정 오류"
     if "timeout" in text or "timed out" in text:
