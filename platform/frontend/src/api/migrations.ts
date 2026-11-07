@@ -43,6 +43,8 @@ export type EnvComponent = {
   detail: string;
   depends_on: string[];
   placement?: string[];
+  namespace?: string | null;
+  logs?: boolean;
   /**
    * 이 구성 요소(워크로드)에 속한 파드. 클러스터 워크로드만 채우고 관리형 서비스는 비운다.
    * 백엔드가 아직 보내지 않으면 undefined: 화면은 detail 의 "준비 x/y" 로 수만 그린다.
@@ -262,6 +264,45 @@ export type MigrationEvent = {
 
 export function getFleet(signal?: AbortSignal) {
   return request<Fleet>("fleet", { signal });
+}
+
+export type PodLogLine = { at: string | null; message: string };
+export type PodLogs = {
+  env_id: string;
+  component_id: string;
+  pod: string;
+  container: string;
+  containers: string[];
+  previous: boolean;
+  tail: number;
+  lines: PodLogLine[];
+  truncated: boolean;
+  redacted: number;
+  fetched_at: string;
+};
+export type PodLogQuery = {
+  container?: string;
+  tail: number;
+  previous: boolean;
+};
+
+export function getPodLogs(
+  envId: string,
+  componentId: string,
+  pod: string,
+  query: PodLogQuery,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    tail: String(query.tail),
+    previous: String(query.previous),
+  });
+  if (query.container) params.set("container", query.container);
+  const e = encodeURIComponent;
+  return request<PodLogs>(
+    `fleet/environments/${e(envId)}/components/${e(componentId)}/pods/${e(pod)}/logs?${params}`,
+    { signal },
+  );
 }
 
 export function getMigration(jobId: string, signal?: AbortSignal) {
