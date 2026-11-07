@@ -46,6 +46,29 @@ CouplingCategory = Literal[
     "cloud_sdk_default_credentials",
 ]
 Coverage = Literal["complete", "unknown"]
+# 호환성 4분류(equivalent·substitute·self_managed·no_equivalent)와 표에 행이
+# 없는 unclassified, 그리고 옮기지 않고 원본 서비스를 계속 쓰는 retained.
+Verdict = Literal[
+    "equivalent",
+    "substitute",
+    "self_managed",
+    "no_equivalent",
+    "unclassified",
+    "retained",
+]
+DecisionReason = Literal[
+    "no_equivalent",
+    "unclassified",
+    "omission",
+    "non_http_entry",
+    "plaintext_secret_in_env",
+    "env_value_unconfirmed",
+    "file_injected_config",
+    "source_not_scanned",
+    "infra_coupling",
+    "coupling_unconfirmed",
+    "transition_support_limit",
+]
 RestrictionKind = Literal[
     "scp",
     "rcp",
@@ -290,3 +313,20 @@ class Inventory:
     couplings: tuple[InfraCoupling, ...]
     omissions: tuple[Omission, ...]
     attestation: CollectionAttestation
+
+
+@dataclasses.dataclass(frozen=True)
+class HumanDecision:
+    """자동으로 진행하지 않고 사람이 골라야 하는 일 한 건.
+
+    Attributes:
+        subject: 결정 대상(자원 식별자·워크로드 이름·워크로드/env 키).
+        reason: 사람 결정으로 올린 이유.
+        signal: 판정 근거 한 줄. 비밀값은 담지 않는다.
+        options: 고를 수 있는 선택지.
+    """
+
+    subject: str
+    reason: DecisionReason
+    signal: str
+    options: tuple[str, ...]

@@ -1,2 +1,13 @@
 # pytest-cov 가 남기는 커버리지 데이터.
 .coverage
+
+# Terraform 작업 산출물. provider 잠금 파일(.terraform.lock.hcl)은 커밋한다.
+# state·plan·변수 파일은 실행마다 생기고 자원 정보를 담아 올리지 않는다.
+.terraform/
+# 실행기의 TF_DATA_DIR(<state 파일 이름>.terraform/).
+*.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json

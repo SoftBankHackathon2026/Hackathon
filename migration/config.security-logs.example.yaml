@@ -1,0 +1,34 @@
+schema_version: 1
+wazuh_result: /secure/wazuh-verify.json
+# Match storage.reserve_bytes from the Wazuh installation input.
+reserve_bytes: 1073741824
+plan_pages: 10
+
+sources:
+  - id: cloudtrail-prod
+    type: s3
+    account_id: "111111111111"
+    bucket_owner: "222222222222"
+    region: ap-northeast-2
+    bucket: example-audit-archive
+    prefix: AWSLogs/111111111111/CloudTrail/
+    # Optional. Otherwise use the archive account's AWS credential chain.
+    profile: audit-read
+    # Enable after confirming the field and a known indexed sample on your node.
+    # match:
+    #   format: cloudtrail
+    #   field: data.aws.eventID
+    #   sample_id: 00000000-0000-0000-0000-000000000000
+  - id: audit-application
+    type: cloudwatch
+    account_id: "111111111111"
+    region: ap-northeast-2
+    log_group: /example/audit
+    lookback_days: 14
+    # Set match.format to cloudwatch for the CloudWatch event ID,
+    # or cloudtrail for eventID inside a CloudTrail JSON message.
+
+# Enable with a verified indexer CA and the protected oneport_reader password.
+# search:
+#   ca_file: /secure/wazuh-indexer-ca.pem
+#   password_file: /secure/wazuh-reader-password
