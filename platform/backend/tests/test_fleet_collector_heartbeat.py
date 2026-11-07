@@ -17,7 +17,8 @@ def ticks(monkeypatch):
 
         def tick(self):
             for call in calls:
-                call()
+                if callable(call):
+                    call()
 
     store = SimpleNamespace(migrate=lambda: None)
     monkeypatch.setattr(
@@ -29,6 +30,12 @@ def ticks(monkeypatch):
     monkeypatch.setattr(fleet_collector, "FleetJournal", lambda store: None)
     monkeypatch.setattr(fleet_collector, "CostStore", lambda store: None)
     monkeypatch.setattr(fleet_collector.db, "pooling", contextlib.nullcontext)
+    monkeypatch.setattr(fleet_collector, "MigrationTaskJournal", lambda store: None)
+    monkeypatch.setattr(
+        fleet_collector,
+        "MigrationTaskService",
+        lambda config, journal: SimpleNamespace(sync=lambda: calls.append("sync") or None),
+    )
     return calls
 
 
@@ -48,3 +55,12 @@ def test_no_heartbeat_without_env(tmp_path, monkeypatch, ticks):
 
     assert fleet_collector.main(["--once"]) == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def test_saved_tasks_are_loaded_before_each_tick(monkeypatch, ticks):
+    monkeypatch.delenv(fleet_collector.HEARTBEAT_ENV, raising=False)
+    seen = []
+    ticks.append(lambda: seen.append(list(ticks)))
+
+    assert fleet_collector.main(["--once"]) == 0
+    assert seen and "sync" in seen[0]

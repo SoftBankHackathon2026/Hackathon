@@ -36,3 +36,20 @@ export function getTaskPlan(jobId: string, signal?: AbortSignal) {
     signal,
   });
 }
+
+export type Provider = "onprem" | "aws" | "gcp";
+
+export type MigrationCreate = {
+  source_env: string;
+  target_env: string;
+  source_provider?: Provider;
+  target_provider?: Provider;
+  apps: string[];
+};
+
+export function createMigration(body: MigrationCreate) {
+  return request<{ job_id: string; label: string }>("migrations", {
+    method: "POST",
+    body,
+  });
+}

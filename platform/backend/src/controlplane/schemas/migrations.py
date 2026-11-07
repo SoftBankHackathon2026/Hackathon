@@ -341,3 +341,16 @@ class TaskPlan(BaseModel):
     job_id: str
     route: PlanRoute
     phases: list[PlanPhaseView]
+
+
+class MigrationCreate(BaseModel):
+    source_env: str = Field(min_length=1, max_length=64)
+    target_env: str = Field(min_length=1, max_length=64)
+    source_provider: Literal["onprem", "aws", "gcp"] | None = None
+    target_provider: Literal["onprem", "aws", "gcp"] | None = None
+    apps: list[str] = Field(default_factory=list, max_length=50)
+
+
+class MigrationCreated(BaseModel):
+    job_id: str
+    label: str

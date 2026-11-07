@@ -88,6 +88,9 @@ class MigrationConfig(BaseModel):
     data_target: str
     worker_url: str | None = None
     connect_url: str | None = None
+    source_provider: Literal["onprem", "aws", "gcp"] | None = None
+    target_provider: Literal["onprem", "aws", "gcp"] | None = None
+    apps: list[str] = Field(default_factory=list)
 
 
 class FleetConfig(BaseModel):
