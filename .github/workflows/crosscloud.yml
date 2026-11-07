@@ -16,6 +16,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # datapath 통합 시험용 PostgreSQL. 러너의 pg_dump(16)와 주 버전을 맞춘다.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: crosscloud
@@ -32,5 +45,9 @@ jobs:
         run: ruff check .
       - name: Format check
         run: ruff format --check .
-      - name: Unit tests with coverage
-        run: python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
+      - name: Unit and PostgreSQL tests with coverage
+        env:
+          CROSSCLOUD_TEST_PG_DSN: host=localhost port=5432 user=postgres password=ci-only dbname=postgres sslmode=disable
+        run: |
+          pg_dump --version
+          python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
