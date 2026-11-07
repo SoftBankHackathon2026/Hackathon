@@ -140,7 +140,15 @@ class CutoverCommandService:
             target_env=task.target_env,
             data_source=task.data_source,
             data_target=task.data_target,
+            source_provider=self._provider(task.source_env, task.source_provider),
+            target_provider=self._provider(task.target_env, task.target_provider),
         )
+
+    def _provider(self, env_id: str, given: str | None) -> str | None:
+        try:
+            return self._config.environment(env_id).provider
+        except KeyError:
+            return given
 
     def finish(self, job_id: str, command_id: str, result: CommandResult) -> CutoverCommand:
         self._check_job(job_id)

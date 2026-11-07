@@ -1,4 +1,5 @@
-# migration/ 아래 이미지 2개(migration-tools, migration-connect)와 agent/ 의 ghost-agent 이미지를 빌드해 GHCR에 올린다.
+# migration/ 아래 이미지 3개(migration-tools, migration-connect, migration-runner)와 agent/ 의 ghost-agent 이미지를 빌드해 GHCR에 올린다.
+# migration-runner 는 migration 도구에 crosscloud(클라우드 간 앱 제어 어댑터)를 더한 전환 러너 이미지다(빌드 문맥: 저장소 루트).
 # 정책 이미지(policies/, migration-policy)는 policies.yml 이 맡는다.
 #
 # - push to main (migration/** 변경)     : 빌드 + push (태그: <full sha>, main)
@@ -14,11 +15,13 @@ on:
     branches: [main]
     paths:
       - "migration/**"
+      - "crosscloud/**"
       - "agent/**"
       - ".github/workflows/migration-images.yml"
   pull_request:
     paths:
       - "migration/**"
+      - "crosscloud/**"
       - "agent/**"
       - ".github/workflows/migration-images.yml"
   workflow_dispatch:
@@ -75,6 +78,9 @@ jobs:
           - image: ghost-agent
             context: .
             file: agent/Dockerfile
+          - image: migration-runner
+            context: .
+            file: migration/runner.Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@v5
