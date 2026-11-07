@@ -72,7 +72,7 @@
 | `POST /drain` | 접수 큐가 paused·`in_flight` 0 이 될 때까지 대기 |
 | `POST /target` | 대상 앱 `/readyz`·`/api/info` 로 대상 DB 신원 확인 뒤 `/target` |
 | `POST /resume` | 큐가 대상 라벨일 때만, 최신 epoch 로 `/resume` |
-| `GET /healthz` | 대상 앱 `/readyz` 연속 3 회(25초 안) |
+| `GET /healthz` | 큐가 그 라벨로 전달 중·오류 없음 + 대상 앱 `/readyz` 를 연속 3 회, 응답 직전 큐 재확인(25초 안) |
 
 ## 정리
 

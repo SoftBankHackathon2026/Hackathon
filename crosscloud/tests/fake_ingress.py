@@ -10,6 +10,7 @@ import contextlib
 import http.server
 import json
 import threading
+import time
 
 
 class FakeIngress:
@@ -25,6 +26,7 @@ class FakeIngress:
         }
         self.calls = []
         self.status_override = None
+        self.delays = {}
 
     def handle(self, method, path, body, authorization):
         self.calls.append((method, path, body))
@@ -65,6 +67,7 @@ class FakeIngress:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def _reply(self, method):
+                time.sleep(fake.delays.get(self.path, 0))
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b""
                 body = json.loads(raw) if raw else {}

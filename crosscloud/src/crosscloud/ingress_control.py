@@ -21,7 +21,12 @@ import urllib.request
 from typing import Any, Literal
 
 _EPOCH = re.compile(r"\d+")
-_DEFAULT_TIMEOUT_SECONDS = 20.0
+# 호출 하나의 상한. 원가연 HTTP 한도(30초) 안에서 어댑터가 여러 번 부를 수
+# 있게 짧게 둔다.
+CALL_TIMEOUT_SECONDS = 3.0
+# /pause 는 진행 중 전달 1건(앱 POST·GET 각 5초 상한, service.js)이 끝날 때까지
+# 기다리므로 더 길게 둔다.
+PAUSE_TIMEOUT_SECONDS = 15.0
 
 
 class IngressError(RuntimeError):
@@ -46,12 +51,16 @@ class IngressState:
         target: INGRESS_TARGETS 의 대상 이름.
         epoch: 대상 변경 세대. /target 마다 1 씩 는다.
         in_flight: 전달 중인 요청 수(0 또는 1).
+        last_error: 마지막 전달 오류 코드. 오류가 없으면 None. 멈춤 사유
+            (CONTENT_CONFLICT·APP_HTTP_409·LEASE_LOST)면 큐가 스스로 paused
+            가 되고, DELIVERY_RETRY 면 running 인 채 다시 시도 중이다.
     """
 
     mode: Literal["running", "paused"]
     target: str
     epoch: str
     in_flight: int
+    last_error: str | None
 
 
 class IngressControl:
@@ -62,12 +71,14 @@ class IngressControl:
         control_url: str,
         *,
         token: str | None,
-        timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+        timeout: float = CALL_TIMEOUT_SECONDS,
+        pause_timeout: float = PAUSE_TIMEOUT_SECONDS,
     ) -> None:
-        """제어 주소와 Bearer 토큰(없으면 None)을 받는다."""
+        """제어 주소와 Bearer 토큰(없으면 None), 호출 상한을 받는다."""
         self._base = control_url.rstrip("/")
         self._token = token
         self._timeout = timeout
+        self._pause_timeout = pause_timeout
 
     def status(self) -> IngressState:
         """GET /status."""
@@ -75,7 +86,7 @@ class IngressControl:
 
     def pause(self) -> IngressState:
         """POST /pause. 진행 중 전달이 끝나 settled:true 일 때만 성공이다."""
-        body = self._call("POST", "/pause", {})
+        body = self._call("POST", "/pause", {}, self._pause_timeout)
         if body.get("settled") is not True:
             raise IngressError("pause 응답이 settled:true 가 아니다")
         return _parse_state(body)
@@ -97,7 +108,11 @@ class IngressControl:
         )
 
     def _call(
-        self, method: str, path: str, body: dict[str, Any] | None
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
         data = None
@@ -111,7 +126,7 @@ class IngressControl:
         )
         try:
             with urllib.request.urlopen(
-                request, timeout=self._timeout
+                request, timeout=timeout or self._timeout
             ) as response:
                 return _json_object(response.read())
         except urllib.error.HTTPError as error:
@@ -148,6 +163,7 @@ def _error_code(raw: bytes) -> str:
 def _parse_state(body: dict[str, Any]) -> IngressState:
     mode, target = body.get("mode"), body.get("target")
     epoch, in_flight = body.get("epoch"), body.get("in_flight")
+    last_error = body.get("last_error")
     valid = (
         mode in ("running", "paused")
         and isinstance(target, str)
@@ -156,7 +172,8 @@ def _parse_state(body: dict[str, Any]) -> IngressState:
         and bool(_EPOCH.fullmatch(epoch))
         and type(in_flight) is int
         and in_flight >= 0
+        and (last_error is None or isinstance(last_error, str))
     )
     if not valid:
         raise IngressError("ingress 상태 응답이 모호하다")
-    return IngressState(mode, target, epoch, in_flight)
+    return IngressState(mode, target, epoch, in_flight, last_error)

@@ -1,3 +1,5 @@
+import time
+
 import fake_ingress
 import pytest
 
@@ -10,7 +12,11 @@ def test_status_parses_control_state():
         state = ingress_control.IngressControl(url, token=None).status()
 
     assert state == ingress_control.IngressState(
-        mode="paused", target="onprem", epoch="0", in_flight=0
+        mode="paused",
+        target="onprem",
+        epoch="0",
+        in_flight=0,
+        last_error=None,
     )
 
 
@@ -116,3 +122,41 @@ def test_unreachable_ingress_is_an_error():
         ingress_control.IngressControl(
             "http://127.0.0.1:9", token=None, timeout=1
         ).status()
+
+
+def test_status_carries_last_error():
+    fake = fake_ingress.FakeIngress()
+    fake.state.update(mode="paused", last_error="CONTENT_CONFLICT")
+    with fake.serve() as url:
+        state = ingress_control.IngressControl(url, token=None).status()
+
+    assert state.last_error == "CONTENT_CONFLICT"
+
+
+def test_non_string_last_error_is_ambiguous():
+    fake = fake_ingress.FakeIngress()
+    fake.state["last_error"] = 7
+    with fake.serve() as url:
+        with pytest.raises(ingress_control.IngressError, match="모호"):
+            ingress_control.IngressControl(url, token=None).status()
+
+
+def test_short_call_timeout_keeps_adapter_inside_migration_limit():
+    fake = fake_ingress.FakeIngress()
+    fake.delays["/status"] = 4
+    with fake.serve() as url:
+        started = time.monotonic()
+        with pytest.raises(ingress_control.IngressError):
+            ingress_control.IngressControl(url, token=None).status()
+        elapsed = time.monotonic() - started
+
+    assert elapsed < ingress_control.CALL_TIMEOUT_SECONDS + 0.9
+
+
+def test_pause_waits_longer_for_in_flight_delivery():
+    fake = fake_ingress.FakeIngress()
+    fake.delays["/pause"] = ingress_control.CALL_TIMEOUT_SECONDS + 1
+    with fake.serve() as url:
+        state = ingress_control.IngressControl(url, token=None).pause()
+
+    assert state.mode == "paused"

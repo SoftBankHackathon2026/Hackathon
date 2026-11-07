@@ -13,7 +13,7 @@ migration/worker_client.py). 어댑터는 플랫폼을 바꾸지 않는다. 쓰�
 | POST /drain        | GET /status 를 paused·in_flight 0 이 될 때까지 되풀이  |
 | POST /target       | 대상 앱 DB 신원 확인 → POST /target (expected_epoch)   |
 | POST /resume       | POST /resume (expected_epoch). 대상 라벨일 때만        |
-| GET /healthz       | 대상 앱 /readyz 연속 N 회(25초 안)                     |
+| GET /healthz       | 큐 running·오류 없음 + 대상 앱 /readyz, 연속 N 회      |
 
 대상 앱 DB 신원은 /readyz 와 /api/info 의 database.name(·environment)으로
 본다(원가연 check_app_ready). 접수 큐의 대상 이름은 기본으로 클라우드
@@ -44,7 +44,12 @@ Reply = tuple[int, dict[str, Any]]
 
 _LISTEN_HOST = "127.0.0.1"
 _READYZ_PATH = "/readyz"
-_READYZ_TIMEOUT_SECONDS = 5.0
+_READYZ_TIMEOUT_SECONDS = 3.0
+# /healthz 표본 하나의 최악 시간(큐 상태 + /readyz)과 응답 직전 재확인 시간.
+_SAMPLE_WORST_SECONDS = (
+    ingress_control.CALL_TIMEOUT_SECONDS + _READYZ_TIMEOUT_SECONDS
+)
+_RECHECK_WORST_SECONDS = ingress_control.CALL_TIMEOUT_SECONDS
 _READYZ_INTERVAL_SECONDS = 1.0
 _DRAIN_POLL_SECONDS = 0.5
 _MAX_BODY_BYTES = 65536
@@ -159,7 +164,7 @@ class ControlAdapter:
         return self._changed(self._resume)
 
     def healthz(self) -> Reply:
-        """GET /healthz — 큐가 가리키는 앱의 /readyz 연속 N 회."""
+        """GET /healthz — 큐가 전달 중이고 그 대상 앱이 준비됐는지 연속 N 회."""
         return self._guard(self._healthz)
 
     def start_on_source(self) -> Reply:
@@ -228,18 +233,50 @@ class ControlAdapter:
         return 200, self._app_status(state)
 
     def _healthz(self) -> Reply:
+        # 표본마다 ① 큐가 그 라벨로 전달 중이고 오류가 없는지 ② 그 라벨 앱이
+        # 준비됐는지 본다. resume 직후 첫 전달 실패로 큐가 스스로 멈춘 경우를
+        # 넘기지 않게, 연속 N 회 뒤 응답 직전에 ① 을 한 번 더 본다. 전체는
+        # readiness_deadline_seconds 안에 끝난다(원가연 HTTP 한도 30초).
+        started = self._clock()
         label = self._label(self._read())
         url = self._config.app_url(label) + _READYZ_PATH
+
+        def sample() -> bool:
+            return self._delivering(label) and self._check_ready(
+                url, _READYZ_TIMEOUT_SECONDS
+            )
+
+        sampling_budget = (
+            self._config.readiness_deadline_seconds
+            - (self._clock() - started)
+            - _SAMPLE_WORST_SECONDS
+            - _RECHECK_WORST_SECONDS
+        )
         streak = health_probe.consecutive_successes(
-            lambda: self._check_ready(url, _READYZ_TIMEOUT_SECONDS),
+            sample,
             needed=self._config.readiness_successes,
-            deadline_seconds=self._config.readiness_deadline_seconds,
+            deadline_seconds=sampling_budget,
             interval=_READYZ_INTERVAL_SECONDS,
             clock=self._clock,
             sleep=self._sleep,
         )
-        healthy = streak >= self._config.readiness_successes
+        healthy = (
+            streak >= self._config.readiness_successes
+            and self._delivering(label)
+        )
         return (200 if healthy else 503), {"healthy": healthy, "target": label}
+
+    def _delivering(self, label: str) -> bool:
+        # last_error 는 오류가 없을 때만 None 이다(멈춤 사유·DELIVERY_RETRY).
+        try:
+            state = self._read()
+        except ingress_control.IngressError:
+            return False
+        return (
+            state.mode == "running"
+            and self._config.label_of(state.target) == label
+            and state.last_error is None
+        )
 
     def _start_on_source(self) -> Reply:
         state = self._read()

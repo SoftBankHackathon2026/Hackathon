@@ -458,3 +458,65 @@ def test_load_config_refuses_malformed_cloud_config(tmp_path, cloud_yaml):
         control_adapter.load_adapter_config(
             tmp_path / "config.cloud.yaml", tmp_path / "ingress.env"
         )
+
+
+def test_healthz_unhealthy_when_ingress_paused_itself_after_resume(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="gcp")
+    readiness = _Readiness()
+
+    def stop_delivery():
+        fake.state.update(mode="paused", last_error="CONTENT_CONFLICT")
+        return True
+
+    readiness.ready = stop_delivery
+
+    code, body = _adapter(url, readiness).healthz()
+
+    assert code == 503
+    assert body == {"healthy": False, "target": "gcp"}
+
+
+def test_healthz_unhealthy_while_delivery_retrying(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="gcp", last_error="DELIVERY_RETRY")
+
+    code, body = _adapter(url).healthz()
+
+    assert code == 503
+    assert body["healthy"] is False
+
+
+def test_healthz_rechecks_ingress_just_before_answering(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="gcp")
+    calls = []
+
+    def ready_then_ingress_stops():
+        calls.append(1)
+        if len(calls) == 3:
+            fake.state.update(mode="paused", last_error="LEASE_LOST")
+        return True
+
+    code, body = _adapter(url, _Readiness(ready_then_ingress_stops)).healthz()
+
+    assert len(calls) == 3
+    assert code == 503
+    assert body["healthy"] is False
+
+
+def test_healthz_answers_within_migration_http_limit(ingress):
+    fake, url = ingress
+    fake.state.update(mode="running", target="gcp")
+    fake_time = _FakeTime()
+
+    def slow_not_ready():
+        fake_time.now += 3  # /readyz 호출 상한만큼 걸린다고 본다
+        return False
+
+    code, _ = _adapter(
+        url, _Readiness(slow_not_ready), fake_time=fake_time
+    ).healthz()
+
+    assert code == 503
+    assert fake_time.now <= 25 - ingress_control.CALL_TIMEOUT_SECONDS
