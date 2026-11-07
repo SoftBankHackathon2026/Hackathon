@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 from .config import CodexSettings
 from .scope import VISIBLE_KEYS, Change, Proposal, allowed_keys, planned_values
+from .trace import file_record, parse_trace
 
 log = logging.getLogger("agent.proposer")
 
@@ -36,7 +37,9 @@ REQUEST_FILE, DONE_FILE, SCHEMA_FILE, OUTPUT_FILE, WORKSPACE_DIR = (
 )
 # 사이드카가 1초마다 고쳐 쓰는 상태 파일. job-* 와 겹치지 않는 이름이다.
 STATUS_FILE = ".runner-status.json"
+TRACE_FILE = "trace.jsonl"
 MAX_RESULT_BYTES = 256 * 1024
+MAX_TRACE_BYTES = 2 * 1024 * 1024
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -144,9 +147,11 @@ def codex_command(job_dir: Path, prompt: str, *, bin_path: str, sandbox: str, mo
         bin_path, "exec",
         "--sandbox", sandbox,
         "-c", "approval_policy='never'",
+        "-c", "model_reasoning_summary='detailed'",
         "--ephemeral",
         "--ignore-user-config",
         "--skip-git-repo-check",  # 임시 디렉터리는 git 저장소가 아니다
+        "--json",
         "--output-schema", str(job_dir / SCHEMA_FILE),
         "--output-last-message", str(job_dir / OUTPUT_FILE),
         "-C", str(job_dir / WORKSPACE_DIR),
@@ -209,6 +214,7 @@ class LocalCodexRunner:
             raise ProposerError(f"codex 시간 초과 ({self.settings.timeout:.0f}초)") from None
         except OSError as exc:
             raise ProposerError(f"codex 실행 실패: {type(exc).__name__}") from None
+        (job.job_dir / TRACE_FILE).write_text(proc.stdout or "", encoding="utf-8")
         if proc.returncode != 0:
             log.error("codex 비정상 종료 code=%s stderr=%s", proc.returncode, scrub(proc.stderr, self._env)[-500:])
             raise ProposerError(f"codex 종료 코드 {proc.returncode}")
@@ -349,6 +355,7 @@ class OpenSandboxCodexRunner:
             raise
         except Exception as exc:
             raise ProposerError(f"샌드박스 실행 실패: {type(exc).__name__}") from None
+        (job.job_dir / TRACE_FILE).write_text("".join(m.text for m in execution.logs.stdout), encoding="utf-8")
         if execution.exit_code != 0:
             stderr = "".join(m.text for m in execution.logs.stderr)
             log.error("codex 비정상 종료 code=%s stderr=%s", execution.exit_code, scrub(stderr, self._env)[-500:])
@@ -375,17 +382,21 @@ class CodexProposer:
     def __init__(self, settings: CodexSettings, *, env: Mapping[str, str] | None = None, runner: Any = None) -> None:
         self.settings = settings
         self.runner = runner or LocalCodexRunner(settings, env=env)
+        self._env = os.environ if env is None else env
+        self.last_trace: dict[str, Any] | None = None
 
     def propose(
         self, *, current: Mapping[str, Any], reasons: Sequence[Mapping[str, Any]], target_db: Mapping[str, Any]
     ) -> tuple[Proposal, dict[str, str]]:
         original = visible_config(current)
+        before = json.dumps(original, indent=2) + "\n"
+        self.last_trace = None
         job_dir = self.runner.new_job_dir()
+        target = job_dir / WORKSPACE_DIR / "config" / "target.json"
+        started = time.monotonic()
         try:
-            workspace = job_dir / WORKSPACE_DIR
-            (workspace / "config").mkdir(parents=True)
-            target = workspace / "config" / "target.json"
-            target.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+            target.parent.mkdir(parents=True)
+            target.write_text(before, encoding="utf-8")
             (job_dir / SCHEMA_FILE).write_text(json.dumps(OUTPUT_SCHEMA), encoding="utf-8")
             self.runner.run(CodexJob(job_dir, build_prompt(reasons, target_db)))
             output = job_dir / OUTPUT_FILE
@@ -393,7 +404,32 @@ class CodexProposer:
                 raise ProposalInvalid("codex 가 최종 메시지를 남기지 않았다")
             return parse_output(read_untrusted(output, job_dir)), _file_changes(original, target, job_dir)
         finally:
+            self.last_trace = self._trace(job_dir, target, before, time.monotonic() - started)
             shutil.rmtree(job_dir, ignore_errors=True)
+
+    def _trace(self, job_dir: Path, target: Path, before: str, seconds: float) -> dict[str, Any]:
+        key = self._env.get("CODEX_API_KEY")
+
+        def clean(text: str) -> str:
+            text = text.replace(key, "***") if key else text
+            return _PROVIDED_KEY_RE.sub(r"\1***", text)
+
+        try:
+            raw = read_untrusted(job_dir / TRACE_FILE, job_dir, limit=MAX_TRACE_BYTES)
+        except ProposalInvalid:
+            raw = ""
+        try:
+            after: str | None = read_untrusted(target, job_dir)
+        except ProposalInvalid:
+            after = None
+        return {
+            "runner": self.settings.runner,
+            "image": self.settings.sandbox_image if self.settings.runner == "opensandbox" else None,
+            "model": self.settings.model,
+            "seconds": round(seconds, 1),
+            "steps": parse_trace(raw, clean),
+            "file": file_record("config/target.json", before, after),
+        }
 
 
 def build_proposer(settings: CodexSettings) -> CodexProposer:
@@ -412,16 +448,16 @@ def build_proposer(settings: CodexSettings) -> CodexProposer:
     return CodexProposer(settings)
 
 
-def read_untrusted(path: Path, root: Path) -> str:
+def read_untrusted(path: Path, root: Path, limit: int = MAX_RESULT_BYTES) -> str:
     """AI 쪽이 쓴 파일을 읽는다. 심볼릭 링크로 이 컨테이너의 토큰 파일을 읽게 만드는 경로를 막는다."""
     try:
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
             raise ProposalInvalid(f"{path.name} 가 작업 폴더 밖을 가리킨다")
         with path.open(encoding="utf-8") as fh:
-            text = fh.read(MAX_RESULT_BYTES + 1)
+            text = fh.read(limit + 1)
     except (OSError, UnicodeDecodeError):
         raise ProposalInvalid(f"{path.name} 를 읽지 못했다") from None
-    if len(text) > MAX_RESULT_BYTES:
+    if len(text) > limit:
         raise ProposalInvalid(f"{path.name} 가 너무 크다")
     return text
 

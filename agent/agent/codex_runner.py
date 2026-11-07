@@ -22,7 +22,9 @@ import time
 from pathlib import Path
 from typing import Mapping
 
-from .proposer import DONE_FILE, REQUEST_FILE, STATUS_FILE, WORKSPACE_DIR, child_env, codex_command, run_codex, scrub
+from .proposer import (
+    DONE_FILE, REQUEST_FILE, STATUS_FILE, TRACE_FILE, WORKSPACE_DIR, child_env, codex_command, run_codex, scrub,
+)
 
 log = logging.getLogger("agent.codex_runner")
 EXIT_TIMEOUT, EXIT_START_FAILED, EXIT_BAD_REQUEST, EXIT_INTERNAL = 124, 127, 2, 70
@@ -46,6 +48,7 @@ def _execute(job_dir: Path, *, bin_path: str, timeout: float, env: Mapping[str, 
         except OSError as exc:
             log.error("codex 실행 실패: %s", type(exc).__name__)
             return EXIT_START_FAILED
+    (job_dir / TRACE_FILE).write_text(proc.stdout or "", encoding="utf-8")
     if proc.returncode != 0:
         log.error("codex 비정상 종료 code=%s stderr=%s", proc.returncode, scrub(proc.stderr, env)[-500:])
     return proc.returncode
