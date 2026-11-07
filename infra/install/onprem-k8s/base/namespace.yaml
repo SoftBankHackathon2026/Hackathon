@@ -13,8 +13,8 @@ spec:
   hard:
     requests.cpu: "3"
     requests.memory: 7Gi
-    limits.cpu: "12"
-    limits.memory: 16Gi
+    limits.cpu: "13"
+    limits.memory: 18Gi
     requests.storage: 30Gi
     persistentvolumeclaims: "16"
     pods: "50"

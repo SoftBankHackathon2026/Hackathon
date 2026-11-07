@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # EC2 에서 root 로 실행한다. CD 가 SSM 으로 compose.yaml·Caddyfile·fleet.json·cost.json·이 스크립트를 release 폴더에 풀고 부른다.
-#   deploy.sh <release 폴더> <레지스트리> <이미지 태그>
+#   deploy.sh <release 폴더> <레지스트리> <이미지 태그> [중계 이미지 태그]
+# 중계 이미지 태그가 있고 /opt/oneport/connection 에 서버·중계 설정이 있으면 환경 연결(profile connection)도 띄운다.
 # 새 버전이 pull·up --wait·/healthz 중 하나라도 실패하면 직전 태그와 설정 파일로 되돌려 다시 띄우고 0 이 아닌 값으로 끝난다.
 set -euo pipefail
 release=${1:?release 폴더}
 registry=${2:?레지스트리}
 tag=${3:?이미지 태그}
+broker_tag=${4:-}
 root=/opt/oneport
 
 for f in secrets/postgres-password secrets/database-url secrets/ingest-token settings.env; do
@@ -13,6 +15,15 @@ for f in secrets/postgres-password secrets/database-url secrets/ingest-token set
 done
 domain=$(sed -n 's/^ONEPORT_DOMAIN=//p' "$root/settings.env")
 [[ -n "$domain" ]] || { echo "$root/settings.env 에 ONEPORT_DOMAIN 이 없습니다." >&2; exit 1; }
+
+install -d -m 0755 "$root/connection" "$root/connection/public"
+install -d -m 0700 -o 10001 -g 10001 "$root/connection/server"
+install -d -m 0700 "$root/connection/broker"
+profiles=""
+if [[ -n "$broker_tag" && -s "$root/connection/server.env" && -s "$root/connection/broker/broker.json" ]]; then
+  profiles=connection
+  modprobe wireguard
+fi
 
 # 레지스트리 로그인은 설정을 바꾸기 전에 한다. 여기서 실패하면 돌던 버전이 그대로 남는다.
 aws ecr get-login-password --region "${AWS_REGION:-ap-northeast-2}" | docker login --username AWS --password-stdin "$registry" >/dev/null
@@ -46,7 +57,8 @@ install -m 0644 "$release/compose.yaml" "$root/compose.yaml"
 install -m 0644 "$release/Caddyfile" "$root/Caddyfile"
 install -m 0644 "$release/fleet.json" "$root/fleet.json"
 install -m 0644 "$release/cost.json" "$root/cost.json"
-printf 'ONEPORT_REGISTRY=%s\nONEPORT_TAG=%s\n' "$registry" "$tag" >"$root/.env"
+printf 'ONEPORT_REGISTRY=%s\nONEPORT_TAG=%s\nONEPORT_BROKER_TAG=%s\nONEPORT_DOMAIN=%s\nCOMPOSE_PROFILES=%s\n' \
+  "$registry" "$tag" "${broker_tag:-none}" "$domain" "$profiles" >"$root/.env"
 
 cd "$root"
 if ! docker compose pull --quiet; then
@@ -66,4 +78,4 @@ if ! curl -fsS -o /dev/null --retry 12 --retry-delay 5 --retry-all-errors --reso
   exit 1
 fi
 docker image prune -af --filter "until=168h" >/dev/null
-echo "배포 완료: $tag"
+echo "배포 완료: $tag${profiles:+ (환경 연결 중계 $broker_tag)}"

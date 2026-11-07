@@ -7,6 +7,9 @@
 #
 # 순서: platform-ci.yml 검사(workflow_call) → 이미지 빌드·push → SSM 배포. 검사가 실패하면 이미지도 배포도 하지 않는다.
 # ECR 저장소는 태그를 덮어쓸 수 없어서, 같은 커밋을 다시 돌리면 이미 있는 이미지는 빌드·push 를 건너뛰고 배포만 한다.
+# API 이미지는 platform/backend 이미지(<커밋>-base) 위에 환경 연결 패키지(migration/connection/platform_bridge)를 얹어 <커밋> 으로 올린다.
+# 환경 연결 중계(broker) 이미지는 저장소 변수 ONEPORT_CONNECTION_RELEASE_MLDSA_PUBLIC_KEY 가 있을 때만 만든다.
+# 태그는 중계 소스와 공개 검증키의 해시라서 그것이 바뀔 때만 다시 빌드한다.
 name: platform-ec2
 
 on:
@@ -18,6 +21,7 @@ on:
       - "platform/deploy/ec2/**"
       - "platform/deploy/aws/fleet.json"
       - "platform/deploy/aws/cost.json"
+      - "migration/connection/**"
       - ".github/workflows/platform-ec2.yml"
       - ".github/workflows/platform-ci.yml"
   workflow_dispatch:
@@ -99,12 +103,90 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.ecr.outputs.registry }}/ghost/${{ matrix.image }}:${{ github.sha }}
+          tags: ${{ steps.ecr.outputs.registry }}/ghost/${{ matrix.image }}:${{ github.sha }}${{ matrix.image == 'oneport-platform-api' && '-base' || '' }}
           cache-from: type=gha,scope=ec2-${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=ec2-${{ matrix.image }}
 
+      - if: steps.existing.outputs.exists != 'true' && matrix.image == 'oneport-platform-api'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: migration/connection/platform_bridge/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: PLATFORM_IMAGE=${{ steps.ecr.outputs.registry }}/ghost/${{ matrix.image }}:${{ github.sha }}-base
+          tags: ${{ steps.ecr.outputs.registry }}/ghost/${{ matrix.image }}:${{ github.sha }}
+
+  broker:
+    name: image oneport-platform-broker
+    needs: ci
+    if: vars.ONEPORT_CONNECTION_RELEASE_MLDSA_PUBLIC_KEY != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: tag
+        name: Compute broker tag
+        env:
+          MLDSA: ${{ vars.ONEPORT_CONNECTION_RELEASE_MLDSA_PUBLIC_KEY }}
+          ED25519: ${{ vars.ONEPORT_CONNECTION_RELEASE_ED25519_PUBLIC_KEY }}
+          SEQUENCE: ${{ vars.ONEPORT_CONNECTION_MIN_RELEASE_SEQUENCE }}
+        run: |
+          hash=$( { git ls-files -s migration/connection/agent platform/deploy/ec2/broker.Dockerfile; printf '%s\n' "$MLDSA" "$ED25519" "${SEQUENCE:-1}"; } | sha256sum | cut -c1-20)
+          echo "tag=broker-$hash" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.ONEPORT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - id: existing
+        name: Check existing image
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          found=$(aws ecr batch-get-image --repository-name ghost/oneport-platform-broker --image-ids imageTag="$TAG" \
+            --query 'length(images)' --output text)
+          if [ "$found" -gt 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "중계 이미지 $TAG 가 이미 있어 빌드와 push 를 건너뜁니다."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: ecr
+        if: steps.existing.outputs.exists != 'true'
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - if: steps.existing.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - if: steps.existing.outputs.exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: migration/connection
+          file: platform/deploy/ec2/broker.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            MIGRATION_RELEASE_MLDSA_PUBLIC_KEY=${{ vars.ONEPORT_CONNECTION_RELEASE_MLDSA_PUBLIC_KEY }}
+            MIGRATION_RELEASE_ED25519_PUBLIC_KEY=${{ vars.ONEPORT_CONNECTION_RELEASE_ED25519_PUBLIC_KEY }}
+            MIGRATION_MIN_RELEASE_SEQUENCE=${{ vars.ONEPORT_CONNECTION_MIN_RELEASE_SEQUENCE || '1' }}
+          tags: ${{ steps.ecr.outputs.registry }}/ghost/oneport-platform-broker:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=ec2-broker
+          cache-to: type=gha,mode=max,scope=ec2-broker
+
   deploy:
-    needs: images
+    needs: [images, broker]
+    if: ${{ !cancelled() && needs.images.result == 'success' && (needs.broker.result == 'success' || needs.broker.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -135,14 +217,15 @@ jobs:
       - name: Deploy over SSM
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          BROKER_TAG: ${{ needs.broker.outputs.tag }}
         run: |
           payload=$(base64 -w0 release.tgz)
           dir=/opt/oneport/releases/${GITHUB_SHA}
-          jq -n --arg p "$payload" --arg d "$dir" --arg r "$REGISTRY" --arg t "$GITHUB_SHA" '{commands: [
+          jq -n --arg p "$payload" --arg d "$dir" --arg r "$REGISTRY" --arg t "$GITHUB_SHA" --arg b "$BROKER_TAG" '{commands: [
             "set -euo pipefail",
             "mkdir -p \($d)",
             "echo \($p) | base64 -d | tar -xzf - -C \($d)",
-            "bash \($d)/deploy.sh \($d) \($r) \($t)",
+            "bash \($d)/deploy.sh \($d) \($r) \($t) \($b)",
             "ls -1dt /opt/oneport/releases/* | tail -n +6 | xargs -r rm -rf"
           ]}' > params.json
           id=$(aws ssm send-command --region "$INSTANCE_REGION" \

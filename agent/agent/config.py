@@ -1,4 +1,4 @@
-"""에이전트 설정. YAML 에는 비밀값을 적지 않는다. 토큰·키는 환경변수로만 받는다."""
+"""agent.yaml + 환경변수. 비밀값은 환경변수로만 받고 설정 파일에 두지 않는다."""
 
 from __future__ import annotations
 
@@ -9,186 +9,169 @@ from typing import Any, Mapping
 
 import yaml
 
-from migration.policy_client import digest_of
+DEFAULT_CONFIG_PATH = "/etc/agent/agent.yaml"
 
 
 class ConfigError(ValueError):
-    """설정 파일·환경변수 오류."""
-
-
-STORE_KINDS: tuple[str, ...] = ("file", "vault", "aws-secrets-manager")
+    """설정 오류. 메시지에 비밀값을 넣지 않는다."""
 
 
 @dataclass(frozen=True)
-class StoreConfig:
-    kind: str
-    # file
-    path: str | None = None
-    # vault (토큰은 VAULT_TOKEN)
-    addr: str | None = None
-    mount: str = "secret"
-    secret_path: str | None = None
-    # aws-secrets-manager (자격증명은 표준 AWS 환경변수/IRSA)
-    secret_id: str | None = None
-    region: str | None = None
+class SmokeSettings:
+    target_url: str
+    source_url: str | None = None
+    target_only: bool = False  # 대상 앱 DB 조회만 본다. 복제·쓰기는 검증하지 않는다
+    stage: str = "pre_cutover"
+    token_env: str = "SMOKE_API_TOKEN"
+    http_timeout: float = 5.0
+    replication_timeout: float = 30.0
+    poll_interval: float = 1.0
 
 
 @dataclass(frozen=True)
-class ScopeConfig:
-    """AI 가 바꿀 수 있는 범위. allowed_values 는 계획에서 채운다."""
-
-    allowed_keys: tuple[str, ...]
-    secret_keys: tuple[str, ...] = ("DB_PASSWORD",)
-    host_key: str = "DB_HOST"
-    port_key: str = "DB_PORT"
-    dbname_key: str = "DB_NAME"
-    user_key: str = "DB_USER"
-    password_key: str = "DB_PASSWORD"
-    sslmode_key: str = "DB_SSLMODE"
-    table: str = "orders"
+class OpenBaoSettings:
+    addr: str
+    mount: str
+    path: str
+    token: str = field(repr=False)
+    timeout: float = 5.0
 
 
 @dataclass(frozen=True)
-class CodexConfig:
+class CodexSettings:
     bin: str = "codex"
     model: str | None = None
-    timeout_seconds: float = 300.0
-    max_attempts: int = 2
-    # 환경변수 이름. 값은 설정에 쓰지 않는다.
-    api_key_env: str = "CODEX_API_KEY"
-    # CODEX_HOME. None 이면 실행마다 빈 임시 디렉터리(인증은 CODEX_API_KEY 환경변수). 로컬 개발에서만 ~/.codex 를 지정한다.
-    home: str | None = None
+    timeout: float = 300.0
+    home: str | None = None  # 로컬 전용. 설정하면 그 CODEX_HOME 의 로그인을 쓴다
+    # local: 이 프로세스에서 workspace-write 로 실행 (Mac·개발).
+    # sidecar: 비밀값 없는 옆 컨테이너에 맡긴다 (파드). agent.codex_runner 참고.
+    runner: str = "local"
+    shared_dir: str | None = None
+    sandbox_url: str | None = None
+    sandbox_api_key_env: str = "OPENSANDBOX_API_KEY"
+    sandbox_image: str = "oneport/codex-sandbox:latest"
+    sandbox_cpu: str = "1"
+    sandbox_memory: str = "1Gi"
+    sandbox_uid: int = 10001
 
 
 @dataclass(frozen=True)
-class OpaConfig:
-    url: str | None = None
-    policy_dir: str | None = None
-    timeout_seconds: float = 5.0
+class ProbeSettings:
+    sslmode: str = "verify-full"
+    sslrootcert: str | None = None
+    password_url_env: str = "SAMPLE_APP_DATABASE_URL"
+    connect_timeout: float = 5.0
 
 
 @dataclass(frozen=True)
-class SlackConfig:
-    channel: str | None = None
-    bot_token_env: str = "SLACK_BOT_TOKEN"
-    app_token_env: str = "SLACK_APP_TOKEN"
+class RestartSettings:
+    namespace: str = "hackathon"
+    rollout: str = "sample-app"
+    selector: str = "app=sample-app"
+    timeout: float = 180.0
+    poll_interval: float = 3.0
+    stuck_after: float = 45.0
 
 
 @dataclass(frozen=True)
 class AgentConfig:
     job_id: str
-    target_env: str
-    store: StoreConfig
-    scope: ScopeConfig
-    plan: Mapping[str, Any]
-    codex: CodexConfig
-    opa: OpaConfig
-    slack: SlackConfig
     state_dir: Path
-    evidence_extra_path: Path | None = None
-    probe_timeout_seconds: float = 5.0
-    stage: str = "pre_cutover"
-    raw: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    auto_apply: bool
+    opa_url: str
+    opa_timeout: float
+    plan: Mapping[str, Any]
+    declared_evidence: Mapping[str, Mapping[str, Any]]
+    smoke: SmokeSettings
+    openbao: OpenBaoSettings
+    codex: CodexSettings
+    probe: ProbeSettings
+    restart: RestartSettings
+    slack_channel: str | None = None
 
-    def extra_checks(self) -> dict[str, Any]:
-        """다른 수집기(SEC-02)가 만든 검사 결과 파일. 없으면 빈 dict (정책이 EVIDENCE-MISSING 으로 보류한다)."""
-        if self.evidence_extra_path is None or not self.evidence_extra_path.is_file():
-            return {}
-        with self.evidence_extra_path.open(encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        if not isinstance(data, Mapping):
-            raise ConfigError("evidence_extra 파일은 {검사이름: check} 객체여야 한다")
-        return dict(data)
+    @property
+    def target_db(self) -> Mapping[str, Any]:
+        return self.plan["target_db"]
 
 
-def _req(m: Mapping[str, Any], key: str, where: str) -> Any:
-    if key not in m or m[key] in (None, ""):
+def _section(raw: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    value = raw.get(name)
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"설정에 {name} 절이 없다")
+    return value
+
+
+def _required(section: Mapping[str, Any], key: str, where: str) -> Any:
+    value = section.get(key)
+    if value in (None, ""):
         raise ConfigError(f"{where}.{key} 가 없다")
-    return m[key]
+    return value
 
 
-def parse_config(raw: Mapping[str, Any], *, base_dir: Path | None = None) -> AgentConfig:
-    base = base_dir or Path.cwd()
-
-    def rel(p: str | None) -> Path | None:
-        if p is None:
-            return None
-        path = Path(p)
-        return path if path.is_absolute() else base / path
-
-    job_id = str(_req(raw, "job_id", "config"))
-    target_env = str(raw.get("target_env", "aws"))
-
-    s = raw.get("store") or {}
-    kind = str(_req(s, "kind", "store"))
-    if kind not in STORE_KINDS:
-        raise ConfigError(f"store.kind 는 {STORE_KINDS} 중 하나다: {kind!r}")
-    sub = s.get(kind.replace("-", "_")) or s.get(kind) or {}
-    if kind == "file":
-        store = StoreConfig(kind, path=str(rel(_req(sub, "path", "store.file"))))
-    elif kind == "vault":
-        store = StoreConfig(kind, addr=str(_req(sub, "addr", "store.vault")), mount=str(sub.get("mount", "secret")),
-                            secret_path=str(_req(sub, "path", "store.vault")))
-    else:
-        store = StoreConfig(kind, secret_id=str(_req(sub, "secret_id", "store.aws")), region=sub.get("region"))
-
-    sc = raw.get("scope") or {}
-    allowed = sc.get("allowed_keys") or ["DB_HOST", "DB_PORT"]
-    if not isinstance(allowed, list) or not all(isinstance(k, str) and k for k in allowed):
-        raise ConfigError("scope.allowed_keys 는 문자열 배열이어야 한다")
-    scope = ScopeConfig(
-        allowed_keys=tuple(allowed),
-        secret_keys=tuple(sc.get("secret_keys") or ["DB_PASSWORD"]),
-        host_key=sc.get("host_key", "DB_HOST"), port_key=sc.get("port_key", "DB_PORT"),
-        dbname_key=sc.get("dbname_key", "DB_NAME"), user_key=sc.get("user_key", "DB_USER"),
-        password_key=sc.get("password_key", "DB_PASSWORD"), sslmode_key=sc.get("sslmode_key", "DB_SSLMODE"),
-        table=str(sc.get("table", "orders")),
+def _smoke_settings(smoke: Mapping[str, Any]) -> SmokeSettings:
+    target_only = bool(smoke.get("target_only", False))
+    source_url = smoke.get("source_url") or None
+    if not target_only and not source_url:
+        raise ConfigError("smoke.source_url 이 없다 (smoke.target_only 가 아닐 때 필수)")
+    optional = ("stage", "token_env", "http_timeout", "replication_timeout", "poll_interval")
+    return SmokeSettings(
+        target_url=str(_required(smoke, "target_url", "smoke")), source_url=source_url, target_only=target_only,
+        **{k: smoke[k] for k in optional if k in smoke},
     )
 
-    plan = dict(raw.get("plan") or {})
-    if not isinstance(plan.get("limits"), Mapping) or not plan["limits"].get("evidence_ttl_seconds"):
-        raise ConfigError("plan.limits.evidence_ttl_seconds 가 필요하다")
-    if not isinstance(plan.get("target_db"), Mapping) or not plan["target_db"].get("host"):
-        raise ConfigError("plan.target_db.host 가 필요하다 (AI 가 쓸 수 있는 유일한 대상 주소)")
-    plan.setdefault("remediation", {"auto_apply": False})
-    if "digest" not in plan:
-        plan["digest"] = digest_of({k: v for k, v in plan.items() if k != "digest"})
 
-    cx = raw.get("codex") or {}
-    codex = CodexConfig(bin=str(cx.get("bin", "codex")), model=cx.get("model"),
-                        timeout_seconds=float(cx.get("timeout_seconds", 300)),
-                        max_attempts=int(cx.get("max_attempts", 2)), api_key_env=str(cx.get("api_key_env", "CODEX_API_KEY")),
-                        home=str(Path(cx["home"]).expanduser()) if cx.get("home") else None)
+def parse_config(raw: Mapping[str, Any], env: Mapping[str, str] | None = None) -> AgentConfig:
+    environ = os.environ if env is None else env
+    plan = _section(raw, "plan")
+    target_db = _section(plan, "target_db")
+    _required(target_db, "host", "plan.target_db")
+    _required(target_db, "port", "plan.target_db")
+    declared = _section(raw, "declared_evidence")
+    for name in ("target_db_exposure", "target_location"):
+        _section(declared, name)
 
-    op = raw.get("opa") or {}
-    opa = OpaConfig(url=op.get("url"), policy_dir=str(rel(op.get("policy_dir"))) if op.get("policy_dir") else None,
-                    timeout_seconds=float(op.get("timeout_seconds", 5)))
-    if not opa.url and not opa.policy_dir:
-        raise ConfigError("opa.url 또는 opa.policy_dir 중 하나가 필요하다")
+    bao = _section(raw, "openbao")
+    token = environ.get(str(bao.get("token_env", "VAULT_TOKEN")), "")
+    if not token:
+        raise ConfigError(f"환경변수 {bao.get('token_env', 'VAULT_TOKEN')} 에 OpenBao 토큰이 없다")
+    # Secret ai-agent-store 의 값이 환경변수로 들어오면 그것이 우선한다.
+    openbao = OpenBaoSettings(
+        addr=environ.get("VAULT_ADDR") or _required(bao, "addr", "openbao"),
+        mount=environ.get("VAULT_MOUNT") or _required(bao, "mount", "openbao"),
+        path=environ.get("VAULT_PATH") or _required(bao, "path", "openbao"),
+        token=token,
+        timeout=float(bao.get("timeout", 5.0)),
+    )
 
-    sl = raw.get("slack") or {}
-    slack = SlackConfig(channel=sl.get("channel"), bot_token_env=str(sl.get("bot_token_env", "SLACK_BOT_TOKEN")),
-                        app_token_env=str(sl.get("app_token_env", "SLACK_APP_TOKEN")))
-
-    state_dir = rel(str(raw.get("state_dir", "state"))) or base / "state"
+    smoke = _section(raw, "smoke")
     return AgentConfig(
-        job_id=job_id, target_env=target_env, store=store, scope=scope, plan=plan, codex=codex, opa=opa, slack=slack,
-        state_dir=state_dir, evidence_extra_path=rel(raw.get("evidence_extra")),
-        probe_timeout_seconds=float(raw.get("probe_timeout_seconds", 5)), stage=str(raw.get("stage", "pre_cutover")),
-        raw=dict(raw),
+        job_id=str(_required(raw, "job_id", "root")),
+        state_dir=Path(str(raw.get("state_dir", "/var/lib/agent"))),
+        auto_apply=bool(raw.get("auto_apply", True)),
+        opa_url=str(_required(_section(raw, "policy"), "opa_url", "policy")),
+        opa_timeout=float(_section(raw, "policy").get("timeout", 5.0)),
+        plan=dict(plan),
+        declared_evidence={k: dict(v) for k, v in declared.items()},
+        smoke=_smoke_settings(smoke),
+        openbao=openbao,
+        codex=CodexSettings(**dict(raw.get("codex") or {})),
+        probe=ProbeSettings(**dict(raw.get("probe") or {})),
+        restart=RestartSettings(**dict(raw.get("restart") or {})),
+        slack_channel=(raw.get("slack") or {}).get("channel"),
     )
 
 
-def load_config(path: str | Path) -> AgentConfig:
-    p = Path(path)
-    with p.open(encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -> AgentConfig:
+    environ = os.environ if env is None else env
+    resolved = path or environ.get("AGENT_CONFIG") or DEFAULT_CONFIG_PATH
+    try:
+        with open(resolved, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+    except OSError as exc:
+        raise ConfigError(f"설정 파일을 읽지 못했다: {resolved} ({type(exc).__name__})") from None
     if not isinstance(raw, Mapping):
-        raise ConfigError("설정 파일 최상위는 객체여야 한다")
-    return parse_config(raw, base_dir=p.resolve().parent)
-
-
-def env_secret(name: str) -> str | None:
-    """환경변수에서 비밀값을 읽는다. 값은 호출자가 로그에 남기지 않는다."""
-    v = os.environ.get(name)
-    return v.strip() if v else None
+        raise ConfigError(f"설정 파일 형식이 틀렸다: {resolved}")
+    try:
+        return parse_config(raw, environ)
+    except TypeError as exc:  # 설정 절에 모르는 키가 있으면 조용히 무시하지 않는다
+        raise ConfigError(f"설정에 모르는 키가 있다: {exc}") from None

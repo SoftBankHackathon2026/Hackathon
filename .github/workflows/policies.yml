@@ -96,8 +96,8 @@ jobs:
       - name: pytest policy_client
         working-directory: migration
         run: |
-          pip install -q ".[dev]"
-          python -m pytest tests/test_policy_client.py tests/test_cutover.py tests/test_cutover_policy.py tests/test_cutover_evidence.py tests/test_return_cutover.py -q
+          pip install -q ".[dev,policy-runtime]"
+          python -m pytest tests/test_policy_client.py tests/test_cutover.py tests/test_cutover_policy.py tests/test_cutover_evidence.py tests/test_cutover_refresh.py tests/test_return_cutover.py -q
 
   build:
     name: build migration-policy

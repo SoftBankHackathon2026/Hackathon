@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenSandbox lifecycle server
+After=docker.service network-online.target sandbox-egress.service
+Requires=docker.service
+
+[Service]
+User=opensandbox
+Group=opensandbox
+SupplementaryGroups=docker
+Environment=SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
+Environment=HOME=/var/lib/opensandbox
+EnvironmentFile=/etc/opensandbox/server.env
+WorkingDirectory=/var/lib/opensandbox
+ExecStart=/opt/opensandbox/venv/bin/opensandbox-server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/opensandbox
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

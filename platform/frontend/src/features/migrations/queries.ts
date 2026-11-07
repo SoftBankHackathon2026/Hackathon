@@ -1,9 +1,17 @@
-import { keepPreviousData, queryOptions } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   getEvents,
   getFleet,
   getMigration,
   getSeries,
+  listCommands,
+  requestCommand,
+  type CommandRequest,
   type Fleet,
 } from "../../api/migrations";
 import { isActive, pollInterval } from "./stages";
@@ -48,5 +56,23 @@ export function eventsQueryOptions(jobId: string, interval: number) {
     queryKey: ["migration", jobId, "events"] as const,
     queryFn: ({ signal }) => getEvents(jobId, signal),
     refetchInterval: interval,
+  });
+}
+
+export function commandsQueryOptions(jobId: string, interval: number) {
+  return queryOptions({
+    queryKey: ["migration", jobId, "commands"] as const,
+    queryFn: ({ signal }) => listCommands(jobId, signal),
+    refetchInterval: interval,
+  });
+}
+
+/** 명령을 보낸 뒤 이 작업의 상세·명령·이벤트 질의를 모두 다시 읽는다. */
+export function useRequestCommand(jobId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CommandRequest) => requestCommand(jobId, body),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["migration", jobId] }),
   });
 }

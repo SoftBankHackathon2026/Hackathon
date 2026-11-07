@@ -1,114 +1,117 @@
-"""AI 가 바꿀 수 있는 범위와 정적 검사(S1~S4). 정책(remediation.rego)과 같은 규칙을 호출 쪽에서 먼저 거른다.
+"""수정 제안과 정적 검사. 무엇을 고칠 수 있는지는 AI 가 아니라 이 규칙이 정한다.
 
-S1 범위   허용 키만 변경
-S2 값     계획에 등록된 값만 (호스트는 plan.target_db.host, 포트는 plan.target_db.port)
-S3 형식   키 이름·값이 문자열이고 제어문자 없음
-S4 비밀값 비밀값 키 변경 없음, 값 안에 비밀값 패턴 없음
+  S0 빈 제안 / S1 허용 키 밖 / S2 계획 값과 다름 / S3 비밀값 키 / S4 형식 오류
+  S5 현재 값과 같음(고칠 것 없음) / S6 같은 키 중복 / S7 제안과 실제 파일 수정 불일치
+
+문제를 전부 모아 돌려준다. 비어 있을 때만 다음 단계로 간다. 거절 메시지에 제안 값을 넣지 않는다
+(허용 키 밖의 값은 비밀값일 수 있다). 키 이름도 형식이 맞을 때만 넣는다.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
-from migration.policy_client import digest_of
+ALLOWED_KEYS: frozenset[str] = frozenset({"DB_HOST", "DB_PORT"})
+# AI 에게 보여 주는 키. 이 밖의 키(비밀번호 등)는 파일에 쓰지 않는다.
+VISIBLE_KEYS: tuple[str, ...] = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER")
+SECRET_KEY_PARTS: tuple[str, ...] = ("password", "passwd", "pwd", "secret", "token", "dsn", "conninfo", "credential", "private")
 
-from .config import ScopeConfig
-from .stores import _is_secret_key
+_HOST_RE = re.compile(r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*")
+_PORT_RE = re.compile(r"[1-9][0-9]{0,4}")
+_KEY_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
 @dataclass(frozen=True)
 class Change:
     key: str
-    old: str
-    new: str
-
-    def as_dict(self) -> dict[str, str]:
-        return {"key": self.key, "old": self.old, "new": self.new}
+    value: str
 
 
 @dataclass(frozen=True)
 class Proposal:
-    """제안 하나. digest 는 changes 만으로 만들어 검증·승인·적용이 같은 내용을 가리키게 한다."""
-
     changes: tuple[Change, ...]
-    analysis: str
-    root_cause: str
+    cause: str
     impact: str
-    verification_plan: str
-    cannot_fix_reason: str | None = None
-    proposer: str = "unknown"
-    model: str | None = None
-
-    @property
-    def digest(self) -> str:
-        return digest_of([c.as_dict() for c in self.changes])
-
-    def apply_to(self, values: Mapping[str, str]) -> dict[str, str]:
-        out = dict(values)
-        for c in self.changes:
-            out[c.key] = c.new
-        return out
+    verification: str
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "digest": self.digest,
-            "changes": [c.as_dict() for c in self.changes],
-            "analysis": self.analysis,
-            "root_cause": self.root_cause,
-            "impact": self.impact,
-            "verification_plan": self.verification_plan,
-            "cannot_fix_reason": self.cannot_fix_reason,
-            "proposer": self.proposer,
-            "model": self.model,
-        }
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "Proposal":
+        return cls(
+            changes=tuple(Change(c["key"], c["value"]) for c in raw["changes"]),
+            cause=raw["cause"], impact=raw["impact"], verification=raw["verification"],
+        )
+
+    def values(self) -> dict[str, str]:
+        return {c.key: c.value for c in self.changes}
 
 
-def diff_values(before: Mapping[str, str], after: Mapping[str, str]) -> tuple[Change, ...]:
-    """Codex 가 고친 파일과 원본의 차이. 키 추가·삭제도 변경으로 본다(삭제는 new="")."""
-    changes: list[Change] = []
-    for key in sorted(set(before) | set(after)):
-        old, new = before.get(key, ""), after.get(key, "")
-        if old != new:
-            changes.append(Change(key, old, new))
-    return tuple(changes)
+@dataclass(frozen=True)
+class Rejection:
+    code: str
+    message: str
 
 
-def allowed_values(scope: ScopeConfig, plan: Mapping[str, Any]) -> dict[str, list[str]]:
-    """계획이 허용하는 값 목록. 호스트·포트 외의 허용 키는 값 제한 없음(키 제한만)."""
-    target = plan.get("target_db") or {}
-    out: dict[str, list[str]] = {}
-    if target.get("host"):
-        out[scope.host_key] = [str(target["host"])]
-    out[scope.port_key] = [str(target.get("port", 5432))]
-    return out
+def _safe_key(key: str) -> str:
+    return key if _KEY_RE.fullmatch(key) else "<형식 오류 키>"
 
 
-def static_checks(scope: ScopeConfig, plan: Mapping[str, Any], proposal: Proposal) -> list[dict[str, Any]]:
-    """S1~S4. 각 항목 {name, status: pass|fail, detail}. 하나라도 fail 이면 정책에 보내지 않는다."""
-    allowed = allowed_values(scope, plan)
-    results: list[dict[str, Any]] = []
-
-    bad_keys = [c.key for c in proposal.changes if c.key not in scope.allowed_keys]
-    results.append({"name": "S1-scope", "status": "fail" if bad_keys else "pass",
-                    "detail": {"allowed_keys": list(scope.allowed_keys), "violating_keys": bad_keys}})
-
-    bad_values = [c.as_dict() for c in proposal.changes if c.key in allowed and c.new not in allowed[c.key]]
-    results.append({"name": "S2-value", "status": "fail" if bad_values else "pass",
-                    "detail": {"allowed_values": allowed, "violating": bad_values}})
-
-    bad_format = [c.key for c in proposal.changes
-                  if not c.key.isidentifier() or any(ord(ch) < 32 for ch in c.new) or len(c.new) > 512]
-    results.append({"name": "S3-format", "status": "fail" if bad_format else "pass", "detail": {"violating_keys": bad_format}})
-
-    secret_keys = [c.key for c in proposal.changes if _is_secret_key(c.key, scope.secret_keys)]
-    results.append({"name": "S4-secret", "status": "fail" if secret_keys else "pass", "detail": {"violating_keys": secret_keys}})
-
-    empty = len(proposal.changes) == 0
-    results.append({"name": "S0-nonempty", "status": "fail" if empty else "pass",
-                    "detail": {"changes": len(proposal.changes), "cannot_fix_reason": proposal.cannot_fix_reason}})
-    return results
+def _is_secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in SECRET_KEY_PARTS)
 
 
-def all_passed(results: list[dict[str, Any]]) -> bool:
-    return all(r["status"] == "pass" for r in results)
+def _valid_host(value: str) -> bool:
+    return _HOST_RE.fullmatch(value) is not None
+
+
+def _valid_port(value: str) -> bool:
+    return _PORT_RE.fullmatch(value) is not None and 1 <= int(value) <= 65535
+
+
+def check_proposal(
+    proposal: Proposal,
+    *,
+    current: Mapping[str, str],
+    target_db: Mapping[str, Any],
+    file_changes: Mapping[str, str] | None = None,
+) -> list[Rejection]:
+    """정적 검사. current 는 저장소의 현재 값, target_db 는 계획서 값, file_changes 는 AI 가 실제로 고친 파일 내용이다."""
+    if not proposal.changes:
+        return [Rejection("S0-EMPTY", "제안이 비어 있다")]
+
+    planned = {"DB_HOST": str(target_db["host"]), "DB_PORT": str(target_db["port"])}
+    problems: list[Rejection] = []
+    seen: set[str] = set()
+    effective = False
+    for change in proposal.changes:
+        key, value = change.key, change.value
+        name = _safe_key(key)
+        if key in seen:
+            problems.append(Rejection("S6-DUPLICATE-KEY", f"키 {name} 가 두 번 나온다"))
+        seen.add(key)
+        if _is_secret_key(key):
+            problems.append(Rejection("S3-SECRET-KEY", f"비밀값 키 {name} 는 건드릴 수 없다"))
+            continue
+        if key not in ALLOWED_KEYS:
+            problems.append(Rejection("S1-KEY-NOT-ALLOWED", f"키 {name} 는 허용 목록 밖이다"))
+            continue
+        valid = _valid_host(value) if key == "DB_HOST" else _valid_port(value)
+        if not valid:
+            problems.append(Rejection("S4-FORMAT", f"{key} 값의 형식이 틀렸다"))
+            continue
+        if value != planned[key]:
+            problems.append(Rejection("S2-VALUE-NOT-IN-PLAN", f"{key} 값이 계획서 plan.target_db 와 다르다"))
+            continue
+        if str(current.get(key, "")) != value:
+            effective = True
+
+    if not problems and not effective:
+        problems.append(Rejection("S5-NO-CHANGE", "제안 값이 현재 값과 같다. 설정 문제가 아닐 수 있다"))
+    if file_changes is not None and dict(file_changes) != proposal.values():
+        problems.append(Rejection("S7-FILE-MISMATCH", "보고한 변경과 실제 파일 변경이 다르다"))
+    return problems

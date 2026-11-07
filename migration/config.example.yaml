@@ -77,3 +77,20 @@ cutover:
   offset_stable_seconds: 10
   poll_interval_seconds: 5
   stage_timeout_seconds: 1800
+
+# 접수 서비스(durable-ingress) 자동 제어. 이 절이 없으면 cutover 는 큐를 건드리지 않고 운영자가 수동으로
+# port-forward 9092 로 /pause → /target → /resume 한다. 있으면 FENCING 에서 큐 pause(settled 확인) 뒤 원본을
+# 닫고, SWITCHING 에서 대상 GRANT → 워커 전환 → 대상 앱 readiness(app_checks) → 큐 /target → /resume 한다.
+ingress:
+  control_url: http://durable-ingress-control:9092   # gitops apps/durable-ingress 의 제어 Service
+  token_env: INGRESS_CONTROL_TOKEN                   # 제어 API Bearer 토큰 환경변수 (선택, 값은 Secret)
+  timeout_seconds: 30
+  targets:            # job 의 target 이름 → 접수 서비스 INGRESS_TARGETS 의 이름
+    onprem: onprem
+    aws: aws_db
+  app_checks:         # 큐를 이 대상으로 돌리기 전에 확인할 앱 (/readyz ok, /api/info 일치, writes_paused=false)
+    aws:
+      url: http://sample-app-rds
+      database: migration_demo
+      # environment: aws          # /api/info 의 environment 를 검사하려면 지정
+      # token_env: AWS_REQUEST_API_TOKEN   # HTTPS 대상이 Bearer 를 요구할 때

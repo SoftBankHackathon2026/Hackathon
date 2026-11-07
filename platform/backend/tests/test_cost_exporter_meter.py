@@ -80,6 +80,8 @@ def test_meter_drops_stale_nodes_and_says_so():
 def test_meter_names_each_method_and_bare_metal_nodes():
     m, _ = meter([reading("a", 5, method="rapl", virtual=False), reading("b", 5)])
     assert m.read(ONPREM).note == "노드 2대, VM 1대, CPU 사용률 기반 추정, RAPL 전력 측정"
+    host, _ = meter([reading("a", 5, method="host"), reading("b", 5, method="host")])
+    assert host.read(ONPREM).note == "노드 2대, VM 2대, 호스트 전력 모델 추정"
 
 
 def test_meter_ignores_broken_configmaps():
