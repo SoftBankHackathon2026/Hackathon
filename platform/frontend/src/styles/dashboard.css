@@ -3932,3 +3932,57 @@ body {
   color: var(--text-tertiary);
   font-size: var(--fs-xs);
 }
+
+.path-jobs {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.path-jobs-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.path-jobs-head a {
+  margin-left: auto;
+}
+.path-jobs-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.path-job {
+  display: grid;
+  gap: 2px;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--ink);
+  text-align: left;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.path-job.active {
+  border-color: var(--line-strong);
+}
+.path-job[aria-selected="true"] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--paper-3);
+}
+.path-job-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.path-job-route,
+.path-job-stage {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
