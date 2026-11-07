@@ -21,8 +21,10 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
+from datetime import timedelta
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Mapping, Protocol, Sequence
+from urllib.parse import urlsplit
 
 from .config import CodexSettings
 from .scope import ALLOWED_KEYS, VISIBLE_KEYS, Change, Proposal
@@ -259,6 +261,108 @@ class SidecarCodexRunner:
         return status if isinstance(status, dict) else {}
 
 
+SANDBOX_JOB_DIR = PurePosixPath("/work/job")
+SANDBOX_HOME = "/tmp/codex-home"
+
+
+def _sdk_sandbox(settings: CodexSettings, env: Mapping[str, str]) -> Any:
+    try:
+        from opensandbox import SandboxSync
+        from opensandbox.config import ConnectionConfigSync
+    except ImportError:
+        raise ProposerError("opensandbox 패키지가 없다 (pip install 'agent[opensandbox]')") from None
+    url = urlsplit(settings.sandbox_url or "")
+    if url.scheme not in ("http", "https") or not url.netloc:
+        raise ProposerError("codex.sandbox_url 형식이 틀렸다")
+    config = ConnectionConfigSync(
+        domain=url.netloc, protocol=url.scheme, api_key=env.get(settings.sandbox_api_key_env) or None,
+        request_timeout=timedelta(seconds=60),
+    )
+    return SandboxSync.create(
+        settings.sandbox_image, connection_config=config, timeout=timedelta(seconds=settings.timeout + 120),
+        resource={"cpu": settings.sandbox_cpu, "memory": settings.sandbox_memory},
+    )
+
+
+class OpenSandboxCodexRunner:
+    def __init__(
+        self, settings: CodexSettings, *, env: Mapping[str, str] | None = None,
+        create: Callable[[CodexSettings, Mapping[str, str]], Any] = _sdk_sandbox,
+    ) -> None:
+        if not settings.sandbox_url:
+            raise ProposerError("codex.runner=opensandbox 에는 codex.sandbox_url 이 필요하다")
+        self.settings = settings
+        self._env = os.environ if env is None else env
+        self._create = create
+
+    def new_job_dir(self) -> Path:
+        return Path(tempfile.mkdtemp(prefix="agent-codex-"))
+
+    def run(self, job: CodexJob) -> None:
+        key = self._env.get("CODEX_API_KEY")
+        if not key:
+            raise ProposerError("CODEX_API_KEY 가 없다")
+        try:
+            sandbox = self._create(self.settings, self._env)
+        except ProposerError:
+            raise
+        except Exception as exc:
+            raise ProposerError(f"샌드박스를 만들지 못했다: {type(exc).__name__}") from None
+        try:
+            self._run_in(sandbox, job, key)
+        finally:
+            for close in ("kill", "close"):
+                try:
+                    getattr(sandbox, close)()
+                except Exception as exc:
+                    log.warning("샌드박스 %s 실패: %s", close, type(exc).__name__)
+
+    def _run_in(self, sandbox: Any, job: CodexJob, key: str) -> None:
+        uid = self.settings.sandbox_uid
+        remote = SANDBOX_JOB_DIR
+        workspace = remote / WORKSPACE_DIR
+        target = PurePosixPath("config") / "target.json"
+        try:
+            from opensandbox.models.execd import RunCommandOpts
+
+            self._ok(sandbox.commands.run(["mkdir", "-p", str(workspace / "config"), SANDBOX_HOME]), "작업 폴더")
+            sandbox.files.write_file(str(remote / SCHEMA_FILE), (job.job_dir / SCHEMA_FILE).read_text(encoding="utf-8"))
+            sandbox.files.write_file(
+                str(workspace / target), (job.job_dir / WORKSPACE_DIR / target).read_text(encoding="utf-8"),
+            )
+            self._ok(sandbox.commands.run(["chown", "-R", f"{uid}:{uid}", str(remote), SANDBOX_HOME]), "권한")
+            cmd = codex_command(Path(str(remote)), job.prompt, bin_path=self.settings.bin,
+                                sandbox="danger-full-access", model=self.settings.model)
+            execution = sandbox.commands.run(cmd, opts=RunCommandOpts(
+                working_directory=str(workspace), timeout=timedelta(seconds=self.settings.timeout),
+                uid=uid, gid=uid, envs={"CODEX_API_KEY": key, "HOME": SANDBOX_HOME},
+            ))
+        except ProposerError:
+            raise
+        except Exception as exc:
+            raise ProposerError(f"샌드박스 실행 실패: {type(exc).__name__}") from None
+        if execution.exit_code != 0:
+            stderr = "".join(m.text for m in execution.logs.stderr)
+            log.error("codex 비정상 종료 code=%s stderr=%s", execution.exit_code, scrub(stderr, self._env)[-500:])
+            raise ProposerError(f"codex 종료 코드 {execution.exit_code}")
+        self._fetch(sandbox, remote / OUTPUT_FILE, job.job_dir / OUTPUT_FILE)
+        self._fetch(sandbox, workspace / target, job.job_dir / WORKSPACE_DIR / target)
+
+    @staticmethod
+    def _ok(execution: Any, step: str) -> None:
+        if execution.exit_code != 0:
+            raise ProposerError(f"샌드박스 {step} 준비 실패 (종료 코드 {execution.exit_code})")
+
+    @staticmethod
+    def _fetch(sandbox: Any, remote: PurePosixPath, local: Path) -> None:
+        try:
+            data = sandbox.files.read_bytes(str(remote), limit=MAX_RESULT_BYTES + 1)
+        except Exception:
+            local.unlink(missing_ok=True)
+            return
+        local.write_bytes(data)
+
+
 class CodexProposer:
     def __init__(self, settings: CodexSettings, *, env: Mapping[str, str] | None = None, runner: Any = None) -> None:
         self.settings = settings
@@ -291,6 +395,10 @@ def build_proposer(settings: CodexSettings) -> CodexProposer:
         if not settings.model:
             raise ProposerError("codex.runner=sidecar 에는 codex.model 이 필요하다")
         return CodexProposer(settings, runner=SidecarCodexRunner(settings))
+    if settings.runner == "opensandbox":
+        if not settings.model:
+            raise ProposerError("codex.runner=opensandbox 에는 codex.model 이 필요하다")
+        return CodexProposer(settings, runner=OpenSandboxCodexRunner(settings))
     if settings.runner != "local":
         raise ProposerError(f"알 수 없는 codex.runner: {settings.runner}")
     return CodexProposer(settings)

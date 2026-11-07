@@ -15,7 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "opensandbox>=1.2,<2"]
+opensandbox = ["opensandbox>=1.2,<2"]
 
 [tool.setuptools]
 packages = ["agent"]
