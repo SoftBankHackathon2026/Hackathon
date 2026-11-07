@@ -340,6 +340,19 @@ def load_adapter_config(
     )
 
 
+def read_job_id(cloud_config: pathlib.Path) -> str:
+    """config.cloud.yaml 의 job.job_id.
+
+    Raises:
+        ValueError: 없거나 문자열이 아닐 때.
+    """
+    document = yaml.safe_load(cloud_config.read_text())
+    job_id = ((document or {}).get("job") or {}).get("job_id")
+    if not isinstance(job_id, str) or not job_id:
+        raise ValueError("config.cloud.yaml 에 job.job_id 가 없다")
+    return job_id
+
+
 def make_server(
     adapter: ControlAdapter, port: int
 ) -> http.server.ThreadingHTTPServer:

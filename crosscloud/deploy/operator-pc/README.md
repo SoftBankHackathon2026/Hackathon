@@ -19,9 +19,12 @@
 
 ## 순서
 
-1.  인계 파일을 만든다. `handoff.render_cloud_config` 가 `out/config.cloud.yaml`
-    을, `handoff.render_ingress_env` 가 `out/ingress.env` 를 쓴다. 두 함수가
+1.  인계 파일을 만든다. readiness 네 항목이 준비되면
+    `handoff.render_cloud_config` 가 `out/config.cloud.yaml` 을,
+    `handoff.render_ingress_env` 가 `out/ingress.env` 를 쓴다. 두 함수가
     돌려준 env 이름(비밀번호·제어 토큰)을 운영자 셸에서 Secret 으로 채운다.
+    접수 큐가 원본을 가리키는지는 렌더링 조건이 아니다(이 다음 단계에서
+    맞추고, 원가연 PRECHECK 가 확인한다).
 1.  접수 큐를 띄운다.
 
     ```shell
@@ -30,11 +33,16 @@
 
 1.  접수 큐를 원본 라벨로 돌리고 전달을 연다. durable-ingress 는 처음에
     `onprem` 대상·paused 로 뜬다(`ingress.env` 의 `onprem` 은 원본 앱 별칭).
+    원가연 `cloud.lock` 을 쥔 채 `--state-dir` 의 단계를 읽어 승인 전일 때만
+    한다. 원가연을 아직 한 번도 돌리지 않아 상태 파일이 없으면
+    `--allow-no-state` 를 준다(디렉토리는 미리 만든다).
 
     ```shell
+    mkdir -p out/state
     crosscloud ingress-start --cloud-config out/config.cloud.yaml \
         --ingress-env out/ingress.env \
-        --ingress-control-url http://127.0.0.1:9092
+        --ingress-control-url http://127.0.0.1:9092 \
+        --state-dir out/state --allow-no-state
     ```
 
 1.  Connect 를 띄우고, 어댑터를 연다(같은 셸에 `INGRESS_CONTROL_TOKEN`).

@@ -13,9 +13,12 @@ discover 는 원본 클라우드를 읽고(파악) 서비스 대응표로 판정
 승인을 기다릴 때 쓰는 코드와 같다.
 
 ingress-start 는 새로 뜬 접수 큐(durable-ingress)를 원본 라벨로 돌리고 전달을
-연다(전환 전 한 번, 실패하면 1). serve-adapter 는 config.cloud.yaml 의
-control_url(127.0.0.1)에서 원가연 앱 제어 API 어댑터를 연다. 접수 큐 제어
-토큰은 INGRESS_CONTROL_TOKEN env 에서만 읽는다.
+연다(실패하면 1). 원가연 cloud.lock 을 쥔 채 --state-dir 의 단계를 읽어 승인
+전일 때만 한다. 상태 파일이 아직 없으면 --allow-no-state 를 줘야 한다.
+
+serve-adapter 는 config.cloud.yaml 의 control_url(127.0.0.1)에서 원가연 앱
+제어 API 어댑터를 연다. 접수 큐 제어 토큰은 INGRESS_CONTROL_TOKEN env
+에서만 읽는다.
 """
 
 import argparse
@@ -34,6 +37,7 @@ import requests
 
 from crosscloud import (
     control_adapter,
+    cutover_stage,
     handoff,
     ingress_control,
     inventory_json,
@@ -86,11 +90,26 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument(
         "--output", type=pathlib.Path, help="결과 JSON 파일. 없으면 표준 출력"
     )
-    for name, help_text in (
-        ("ingress-start", "접수 큐를 원본 라벨로 돌리고 전달을 연다"),
-        ("serve-adapter", "앱 제어 API 어댑터를 127.0.0.1 에서 연다"),
-    ):
-        _add_cutover_arguments(commands.add_parser(name, help=help_text))
+    start = commands.add_parser(
+        "ingress-start", help="접수 큐를 원본 라벨로 돌리고 전달을 연다"
+    )
+    _add_cutover_arguments(start)
+    start.add_argument(
+        "--state-dir",
+        required=True,
+        type=pathlib.Path,
+        help="원가연 migration.cloud 의 --state-dir",
+    )
+    start.add_argument(
+        "--allow-no-state",
+        action="store_true",
+        help="원가연 상태 파일이 아직 없을 때 승인 전으로 본다",
+    )
+    _add_cutover_arguments(
+        commands.add_parser(
+            "serve-adapter", help="앱 제어 API 어댑터를 127.0.0.1 에서 연다"
+        )
+    )
     return parser
 
 
@@ -177,9 +196,32 @@ def main(
 
 
 def _ingress_start(args: argparse.Namespace) -> int:
-    code, body = build_adapter(args)[1].start_on_source()
+    try:
+        with cutover_stage.cloud_lock(args.state_dir):
+            refusal = _stage_refusal(args)
+            if refusal:
+                code, body = 409, {"error": refusal}
+            else:
+                code, body = build_adapter(args)[1].start_on_source()
+    except (cutover_stage.CloudLockBusyError, ValueError, OSError) as error:
+        code, body = 409, {"error": str(error)}
     print(json.dumps(body, ensure_ascii=False))
     return 0 if code == 200 else 1
+
+
+def _stage_refusal(args: argparse.Namespace) -> str | None:
+    job_id = control_adapter.read_job_id(args.cloud_config)
+    try:
+        stage, failed = cutover_stage.read_cutover_stage(job_id, args.state_dir)
+    except cutover_stage.NoCutoverStateError as error:
+        if not args.allow_no_state:
+            return f"{error} — 승인 전이 맞으면 --allow-no-state"
+        stage, failed = "not_started", None
+    except cutover_stage.StageUnreadableError as error:
+        return str(error)
+    if not cutover_stage.cutover_not_begun(stage, failed):
+        return f"원가연 단계 {stage}(failed_stage={failed}) — 승인 뒤라 거부"
+    return None
 
 
 def _serve_adapter(args: argparse.Namespace) -> int:
