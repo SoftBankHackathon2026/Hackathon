@@ -210,7 +210,9 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await page
     .getByLabel("제가 실행한 단말이며, 환경정보 수집을 승인해요.")
     .check();
-  await page.getByLabel("교체할 연결", { exact: true }).selectOption(oldId);
+  await page
+    .getByRole("combobox", { name: "교체할 연결", exact: true })
+    .selectOption(oldId);
   await expect(
     page.getByText(/선택한 연결과 진행 중인 환경정보 수집이 종료/),
   ).toBeVisible();

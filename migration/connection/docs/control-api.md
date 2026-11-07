@@ -42,7 +42,7 @@ OpenSSL·Redis·배포 설정뿐 아니라 브로커의 **최근 60초 준비 �
 | POST 기본 경로 | publicKey, operationId | ConnectionSnapshot, deployment |
 | GET `/{id}` | 로그인 | 최신 ConnectionSnapshot |
 | POST `/{id}/cancel` | 빈 객체 | 미사용 요청 취소 |
-| POST `/{id}/approve` | candidateDigest, code | 단말 승인 |
+| POST `/{id}/approve` | candidateDigest, code, 선택 replaceId | 단말 승인 및 선택한 이전 연결 교체 |
 | POST `/{id}/reject` | 빈 객체 | 후보 폐기 |
 | POST `/{id}/collect` | discoveredId | 선택한 대상의 서명된 조회 작업 생성 |
 | POST `/{id}/register` | collectedId, inventoryDigest, target | 환경등록 |
