@@ -93,6 +93,16 @@
       "data_target": "onprem_return",
       "worker_url": "${ONEPORT_ONPREM_WORKER_URL}",
       "connect_url": "${ONEPORT_ONPREM_CONNECT_URL}"
+    },
+    {
+      "job_id": "durable_forward_001",
+      "direction": "forward",
+      "source_env": "onprem",
+      "target_env": "aws",
+      "data_source": "onprem_return",
+      "data_target": "aws",
+      "worker_url": "${ONEPORT_ONPREM_WORKER_URL}",
+      "connect_url": "${ONEPORT_ONPREM_CONNECT_URL}"
     }
   ],
   "sample_seconds": 5
