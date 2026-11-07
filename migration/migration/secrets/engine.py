@@ -134,6 +134,23 @@ def _run(config, plan, prepared, source, target, state, *, verify_only=False):
                 raise
             existing = target.read_document(path)
             require(existing is not None, "WRITE_UNCONFIRMED")
+        elif record is None and existing[0].get("copy_operation") != op:
+            require(
+                not verify_only
+                and prepared.get("supersedes", {}).get(row["binding_id"]) == existing[1]
+                and existing[0].get("owner") == row["binding_id"]
+                and existing[0].get("rotation") is None
+                and existing[0].get("pending") is None,
+                "EXISTING_TARGET_NOT_OWNED_BY_JOURNAL",
+            )
+            state.intent(op, row["source"]["arn"], "__copy__", path)
+            try:
+                target.write_document(path, expected, existing[1])
+            except Exception:
+                state.unknown(op, "WRITE_RESPONSE_UNKNOWN")
+                raise
+            existing = target.read_document(path)
+            require(existing is not None, "WRITE_UNCONFIRMED")
         else:
             require(record is not None, "EXISTING_TARGET_NOT_OWNED_BY_JOURNAL")
         verify_seed(existing[0], expected)

@@ -19,6 +19,7 @@ from .common import (
     source_fingerprint,
     string,
 )
+from .target import SCHEMA
 
 OPERATIONS = ("read", "create", "update", "delete", "restore", "destroy", "manage")
 
@@ -395,15 +396,28 @@ def preflight(config, plan, source, target):
     )
     observed = target.inspect([r["target"]["path"] for r in plan["rows"]])
     conflicts = []
+    supersedes = {}
     for row in plan["rows"]:
         existing = target.read_document(row["target"]["path"])
-        # Same plan retries are reconciled at apply; never adopt existing data by value alone.
-        if existing is not None and (
-            existing[0].get("owner") != row["binding_id"]
-            or existing[0].get("copy_operation")
-            != digest([plan["plan_hash"], row["binding_id"], "copy"])
+        if existing is None:
+            continue
+        document, version = existing
+        current = digest([plan["plan_hash"], row["binding_id"], "copy"])
+        if (
+            document.get("owner") == row["binding_id"]
+            and document.get("copy_operation") == current
         ):
-            conflicts.append(row["binding_id"])
+            continue
+        if (
+            document.get("schema") == SCHEMA
+            and document.get("owner") == row["binding_id"]
+            and document.get("source", {}).get("arn") == row["source"]["arn"]
+            and document.get("rotation") is None
+            and document.get("pending") is None
+        ):
+            supersedes[row["binding_id"]] = version
+            continue
+        conflicts.append(row["binding_id"])
     result = {
         "schema_version": 1,
         "kind": "secret_preflight",
@@ -411,6 +425,7 @@ def preflight(config, plan, source, target):
         "checked_at": now(),
         "target": observed,
         "conflicts": conflicts,
+        "supersedes": supersedes,
         "status": "blocked" if conflicts else "ready",
         "write_execution_verified": False,
     }

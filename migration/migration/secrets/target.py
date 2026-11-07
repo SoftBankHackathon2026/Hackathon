@@ -69,6 +69,8 @@ class Http:
                 require(len(raw) <= 2 * 1024 * 1024, "RESPONSE_TOO_LARGE")
                 return json_value(raw) if raw else {}
         except HTTPError as e:
+            if e.code == 404 and deleted_version(e):
+                raise SecretsError("TARGET_VERSION_DELETED") from None
             raise SecretsError(
                 {
                     403: "TARGET_ACCESS_DENIED",
@@ -78,6 +80,17 @@ class Http:
             ) from None
         except (OSError, ValueError):
             raise SecretsError("TARGET_UNAVAILABLE") from None
+
+
+def deleted_version(error):
+    try:
+        body = json_value(error.read(64 * 1024))
+        metadata = body["data"]["metadata"]
+    except Exception:
+        return False
+    return isinstance(metadata, dict) and bool(
+        metadata.get("deletion_time") or metadata.get("destroyed")
+    )
 
 
 def encode(value):
