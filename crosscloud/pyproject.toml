@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "AWS↔GCP 클라우드 간 이전 도구 (파악·판정·적응·샌드박스 검증)"
 requires-python = ">=3.12"
 dependencies = [
+    "boto3>=1.35,<2",
+    "google-cloud-secret-manager>=2.20,<3",
+    "google-crc32c>=1.5,<2",
     "jsonschema>=4.23,<5",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.optional-dependencies]

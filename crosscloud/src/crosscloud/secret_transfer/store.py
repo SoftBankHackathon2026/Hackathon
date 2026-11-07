@@ -1,0 +1,62 @@
+"""Secret 저장소 계약 — AWS Secrets Manager 와 GCP Secret Manager 공통.
+
+값은 bytes 로만 오간다. 구현은 클라이언트 예외를 SecretStoreError 로 바꿔
+던지며, 원래 예외를 잇지 않는다(`from None`). 클라이언트 오류 메시지가 요청
+인자(값)를 담는 경우가 있어서다(botocore ParamValidationError).
+"""
+
+import dataclasses
+from typing import Literal, Protocol
+
+RetireOutcome = Literal["retired", "kept", "left_current"]
+
+
+@dataclasses.dataclass(frozen=True)
+class WrittenVersion:
+    """이 실행이 대상 Secret 에 쓴(또는 이미 있던) 버전. 값은 담지 않는다.
+
+    Attributes:
+        secret_id: 대상 Secret 식별자.
+        version_id: 버전 식별자(AWS VersionId, GCP 버전 리소스 이름).
+        created: 이 실행이 만든 버전이면 True. 되돌리기는 이것만 폐기한다.
+        prior_labels: 쓰기 전 스테이지 레이블 → 버전(AWS 만). 되돌릴 때
+            레이블을 원래 자리로 옮기는 데 쓴다. GCP 는 빈 tuple.
+    """
+
+    secret_id: str
+    version_id: str
+    created: bool
+    prior_labels: tuple[tuple[str, str], ...]
+
+
+class SecretStoreError(Exception):
+    """저장소 호출 실패. 메시지는 동작·Secret 식별자·오류 코드뿐이다."""
+
+    def __init__(self, operation: str, secret_id: str, reason: str) -> None:
+        """Args: 실패한 동작, 대상 Secret 식별자, 클라이언트 오류 코드."""
+        super().__init__(f"{operation} 실패: {secret_id} ({reason})")
+        self.operation = operation
+        self.secret_id = secret_id
+        self.reason = reason
+
+
+class SecretStore(Protocol):
+    """Secret 서비스 하나(한 계정·한 프로젝트)."""
+
+    def read_current(self, secret_id: str) -> bytes | None:
+        """현재 값(AWSCURRENT·latest). 버전이 하나도 없으면 None."""
+        ...
+
+    def read_version(self, secret_id: str, version_id: str) -> bytes:
+        """특정 버전의 값. 쓰기 뒤 대조에 쓴다."""
+        ...
+
+    def add_version(
+        self, secret_id: str, value: bytes, token: str
+    ) -> WrittenVersion:
+        """새 버전을 쓴다. 같은 token 의 재시도는 새 버전을 만들지 않는다."""
+        ...
+
+    def retire_version(self, written: WrittenVersion) -> RetireOutcome:
+        """이 실행이 만든 버전을 폐기한다. created 가 False 면 손대지 않는다."""
+        ...
