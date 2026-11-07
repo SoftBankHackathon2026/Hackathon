@@ -31,9 +31,11 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-# 셸에서 물려받아도 되는 TF_* 환경 변수. 실행 대상을 바꾸지 않고 provider
-# 내려받기 방식만 정한다. 그 밖의 TF_* 는 넘기지 않는다.
+# 셸에서 물려받아도 되는 TF_* 환경 변수. 실행 대상을 바꾸지 않고 provider·모듈
+# 내려받기 방식과 레지스트리 인증(TF_TOKEN_<호스트>)만 정한다. 그 밖의 TF_* 는
+# 넘기지 않는다.
 _INHERITABLE_TF_ENV = frozenset({"TF_PLUGIN_CACHE_DIR", "TF_CLI_CONFIG_FILE"})
+_INHERITABLE_TF_ENV_PREFIX = "TF_TOKEN_"
 
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -121,7 +123,8 @@ class Terraform:
             )
             shown = self._call("show", "-json", "-no-color", str(plan_file))
             document = _load_json("show", shown.stdout)
-        except TerraformError:
+        except BaseException:
+            # 종료 코드 오류만이 아니라 실행 자체 실패(OSError 등)도 포함한다.
             plan_file.unlink(missing_ok=True)
             raise
         return tuple(
@@ -189,7 +192,7 @@ class Terraform:
             **{
                 name: value
                 for name, value in os.environ.items()
-                if not name.startswith("TF_") or name in _INHERITABLE_TF_ENV
+                if _inheritable(name)
             },
             "TF_DATA_DIR": str(self._sibling(".terraform")),
             "TF_IN_AUTOMATION": "1",
@@ -222,6 +225,15 @@ class Terraform:
         """State 파일 이름 전체 뒤에 접미사를 붙인 같은 자리의 경로."""
         state = self._state()
         return state.with_name(state.name + suffix)
+
+
+def _inheritable(name: str) -> bool:
+    """셸 환경 변수 name 을 terraform 실행에 물려줘도 되는지."""
+    return (
+        not name.startswith("TF_")
+        or name in _INHERITABLE_TF_ENV
+        or name.startswith(_INHERITABLE_TF_ENV_PREFIX)
+    )
 
 
 def _load_json(subcommand: str, text: str) -> dict[str, Any]:

@@ -184,6 +184,7 @@ def test_inherited_terraform_env_cannot_redirect_the_run(paths, monkeypatch):
     monkeypatch.setenv("TF_LOG_PATH", "/tmp/r2g_trace.log")
     monkeypatch.setenv("TF_VAR_project_id", "someone-else")
     monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", "/cache")
+    monkeypatch.setenv("TF_TOKEN_app_terraform_io", "registry-token")
     monkeypatch.setenv("CLOUDSDK_CORE_PROJECT", "kept")
     fake = FakeRun()
 
@@ -194,6 +195,7 @@ def test_inherited_terraform_env_cannot_redirect_the_run(paths, monkeypatch):
         assert name not in env
     assert "TF_VAR_project_id" not in env
     assert env["TF_PLUGIN_CACHE_DIR"] == "/cache"
+    assert env["TF_TOKEN_app_terraform_io"] == "registry-token"
     assert env["CLOUDSDK_CORE_PROJECT"] == "kept"
 
 
@@ -351,3 +353,21 @@ def test_outputs_reject_json_that_is_not_an_object(paths):
 
     with pytest.raises(terraform.TerraformError, match="객체"):
         _runner(paths, fake).outputs()
+
+
+def test_plan_removes_saved_plan_when_show_cannot_even_start(paths):
+    fake = FakeRun()
+
+    def run(args, **kwargs):
+        if args[2] == "show":
+            raise OSError("terraform binary vanished")
+        return fake(args, **kwargs)
+
+    runner = terraform.Terraform(
+        working_dir=paths[0], var_file=paths[1], state_path=paths[2], run=run
+    )
+
+    with pytest.raises(OSError):
+        runner.plan()
+
+    assert not (paths[2].parent / "target_base.tfstate.tfplan").exists()
