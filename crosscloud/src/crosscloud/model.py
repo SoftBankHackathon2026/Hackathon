@@ -80,7 +80,10 @@ class SecretRef:
 
 @dataclasses.dataclass(frozen=True)
 class Resource:
-    """워크로드 밖의 클라우드 자원 하나(DB·Secret·레지스트리 등)."""
+    """워크로드 밖의 클라우드 자원 하나(DB·Secret·레지스트리 등).
+
+    attributes 에는 env 값을 담지 않는다 — env 는 Workload.env(EnvEntry)로만.
+    """
 
     kind: ResourceKind
     cloud: Cloud
@@ -108,6 +111,20 @@ class EnvEntry:
     ]
     value: str | None
     confirmed_by: str | None
+
+    def __post_init__(self) -> None:
+        """plain_nonsecret 이 아닌데 값을 담으면 거부한다.
+
+        Raises:
+            ValueError: plain_nonsecret 이 아닌 분류에 value 가 있을 때.
+                메시지에는 키와 분류만 담고 값은 담지 않는다.
+        """
+        if self.classification == "plain_nonsecret" or self.value is None:
+            return
+        raise ValueError(
+            f"EnvEntry {self.key}: '{self.classification}' 분류는 값을"
+            " 담지 않는다"
+        )
 
 
 @dataclasses.dataclass(frozen=True)

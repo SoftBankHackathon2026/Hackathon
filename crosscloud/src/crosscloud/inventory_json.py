@@ -66,7 +66,8 @@ def inventory_from_json(document: object) -> model.Inventory:
         문서와 같은 내용의 Inventory.
 
     Raises:
-        InvalidInventoryError: 문서가 스키마를 어길 때.
+        InvalidInventoryError: 문서가 스키마를 어기거나, 시각이 실제
+            날짜·시각이 아닐 때.
     """
     _validate(document)
     return _decode(model.Inventory, document)
@@ -126,5 +127,21 @@ def _decode(hint: Any, value: Any) -> Any:
             return _decode(members[0], value)
         return value
     if hint is datetime.datetime:
-        return datetime.datetime.fromisoformat(value)
+        return _decode_datetime(value)
     return value
+
+
+def _decode_datetime(value: str) -> datetime.datetime:
+    # 스키마 pattern 의 \d 는 비ASCII 숫자를, $ 는 끝 줄바꿈 앞을 받고,
+    # 13월 같은 범위도 따지지 않는다. 그런 값은 여기서 실패한다.
+    # fromisoformat 의 메시지는 값을 담으므로, except 밖에서 새로 올려 원래
+    # 예외가 체인(__context__)에 남지 않게 한다.
+    try:
+        decoded = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        decoded = None
+    if decoded is None:
+        raise InvalidInventoryError(
+            "inventory 시각 변환 실패 — 실제 날짜·시각이 아니다"
+        )
+    return decoded

@@ -307,3 +307,24 @@ def test_error_message_does_not_echo_rejected_value():
 
     assert canary not in str(excinfo.value)
     assert canary not in repr(excinfo.value.args)
+
+
+@pytest.mark.parametrize(
+    "collected_at",
+    [
+        "2026-13-45T25:61:61Z",
+        "2026-11-07T09:30:00Z\n",
+        "٢٠٢٦-11-07T09:30:00Z",
+    ],
+    ids=["out_of_range", "trailing_newline", "non_ascii_digits"],
+)
+def test_rejects_collected_at_that_is_not_a_real_time(collected_at):
+    document = _sample_document()
+    document["collected_at"] = collected_at
+
+    with pytest.raises(inventory_json.InvalidInventoryError) as excinfo:
+        inventory_json.inventory_from_json(document)
+
+    assert collected_at.strip() not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None

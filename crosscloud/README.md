@@ -28,6 +28,8 @@
 
 Python 3.12 이상이 필요하다. 이 디렉토리에서 실행한다.
 
+editable 설치(-e)만 지원한다 — 스키마를 저장소 경로에서 읽는다.
+
 ```shell
 python3.12 -m venv .venv
 . .venv/bin/activate

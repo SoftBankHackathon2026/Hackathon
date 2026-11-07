@@ -15,7 +15,9 @@ from crosscloud import inventory_json, model
 
 
 def _load_schema() -> dict:
-    return json.loads(inventory_json.INVENTORY_SCHEMA_PATH.read_text())
+    return json.loads(
+        inventory_json.INVENTORY_SCHEMA_PATH.read_text(encoding="utf-8")
+    )
 
 
 def _dataclasses_reachable_from(root: type) -> list[type]:
