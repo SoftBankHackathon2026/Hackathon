@@ -33,6 +33,9 @@ _ECR_TAGGED_IMAGE = re.compile(
     r"(?P<repository>[^:@]+):(?P<tag>[^:@/]+)"
 )
 _RECORD_TYPES = frozenset({"A", "AAAA", "CNAME"})
+_SECRETS_MANAGER_ARN = re.compile(r"arn:[^:]+:secretsmanager:")
+# Secrets Manager 비밀 ARN 의 콜론 조각 수. 그 뒤는 JSON 키·버전 선택자다.
+_SECRET_ARN_PARTS = 7
 # describe_services 가 한 번에 받는 서비스 수 상한.
 _DESCRIBE_SERVICES_LIMIT = 10
 
@@ -163,11 +166,15 @@ class AwsInventoryReader:
         (container,) = task["containerDefinitions"]
         name = service["serviceName"]
         secret_refs = tuple(
-            model.SecretRef(
-                cloud="aws", native_id=s["valueFrom"], version="AWSCURRENT"
-            )
-            for s in container.get("secrets", [])
+            _secret_ref(name, secret, omissions)
+            for secret in container.get("secrets", [])
         )
+        if container.get("environmentFiles"):
+            omissions.append(
+                model.Omission(f"env_files:{name}", "unsupported_type", None)
+            )
+        if task.get("taskRoleArn"):
+            omissions.append(_identity_omission(task["taskRoleArn"]))
         return model.Workload(
             name=name,
             cloud="aws",
@@ -342,6 +349,43 @@ def _is_fargate(service: dict[str, Any]) -> bool:
     return any(
         strategy["capacityProvider"].startswith("FARGATE")
         for strategy in service.get("capacityProviderStrategy", [])
+    )
+
+
+def _secret_ref(
+    workload: str, secret: dict[str, Any], omissions: list[model.Omission]
+) -> model.SecretRef:
+    value_from = secret["valueFrom"]
+    subject = f"{workload}/{secret['name']}"
+    # SSM Parameter Store 등 Secrets Manager 밖 공급원은 대응표에 없다.
+    if not _SECRETS_MANAGER_ARN.match(value_from):
+        omissions.append(
+            model.Omission(f"secret_source:{subject}", "unsupported_type", None)
+        )
+        return model.SecretRef(
+            cloud="aws", native_id=value_from, version="latest"
+        )
+    parts = value_from.split(":")
+    selectors = (parts[_SECRET_ARN_PARTS:] + ["", "", ""])[:3]
+    # JSON 키·버전 선택자는 대상에서 같은 의미로 옮길 수 있는지 사람이 본다.
+    if any(selectors):
+        omissions.append(
+            model.Omission(
+                f"secret_selector:{subject}", "unsupported_type", None
+            )
+        )
+    _, version_stage, version_id = selectors
+    return model.SecretRef(
+        cloud="aws",
+        native_id=":".join(parts[:_SECRET_ARN_PARTS]),
+        version=version_id or version_stage or "AWSCURRENT",
+    )
+
+
+def _identity_omission(identity_id: str) -> model.Omission:
+    # 신원의 권한(S3·SQS 등 대응표 밖 의존)은 수집하지 않는다.
+    return model.Omission(
+        f"identity_grants:{identity_id}", "unsupported_type", None
     )
 
 

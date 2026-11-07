@@ -320,6 +320,8 @@ def test_unsupported_resources_become_omissions(first_slice):
     assert {o.subject for o in first_slice.omissions} == {
         f"rds:{_DB}-legacy",
         "elbv2:nlb-arn",
+        # 작업 역할로 닿는 S3·SQS 등 대응표 밖 의존은 수집하지 않는다.
+        f"identity_grants:arn:aws:iam::{_ACCOUNT}:role/request-api",
     }
 
 
@@ -421,3 +423,59 @@ def test_other_client_errors_propagate():
         aws.AwsInventoryReader(
             region=_REGION, client_factory=clients, clock=lambda: _NOW
         ).read()
+
+
+def _omitted_subjects(container):
+    clients = _Clients()
+    _stub_ecs(clients, containers=[container])
+    _stub_image_digest(clients)
+    _stub_resources(clients)
+    inventory = _read(clients)
+    return inventory, {o.subject for o in inventory.omissions}
+
+
+def test_environment_files_are_omitted():
+    _, subjects = _omitted_subjects(
+        _container(
+            environmentFiles=[
+                {"value": "arn:aws:s3:::cfg/app.env", "type": "s3"}
+            ]
+        )
+    )
+
+    assert "env_files:request-api" in subjects
+
+
+def test_secret_json_key_selector_is_omitted_and_ref_points_to_secret():
+    inventory, subjects = _omitted_subjects(
+        _container(
+            secrets=[
+                {
+                    "name": "DB_HOST",
+                    "valueFrom": f"{_SECRET}:host:AWSPREVIOUS:",
+                }
+            ]
+        )
+    )
+
+    assert "secret_selector:request-api/DB_HOST" in subjects
+    assert inventory.workloads[0].secret_refs == (
+        model.SecretRef(cloud="aws", native_id=_SECRET, version="AWSPREVIOUS"),
+    )
+
+
+def test_ssm_parameter_secret_is_omitted():
+    inventory, subjects = _omitted_subjects(
+        _container(
+            secrets=[
+                {
+                    "name": "API_URL",
+                    "valueFrom": f"arn:aws:ssm:{_REGION}:{_ACCOUNT}"
+                    ":parameter/a",
+                }
+            ]
+        )
+    )
+
+    assert "secret_source:request-api/API_URL" in subjects
+    assert inventory.workloads[0].env[-1].classification == "secret_ref"
