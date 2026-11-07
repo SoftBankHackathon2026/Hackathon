@@ -27,7 +27,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.parse import urlsplit
 
 from .config import CodexSettings
-from .scope import ALLOWED_KEYS, VISIBLE_KEYS, Change, Proposal
+from .scope import VISIBLE_KEYS, Change, Proposal, allowed_keys, planned_values
 
 log = logging.getLogger("agent.proposer")
 
@@ -115,14 +115,18 @@ def build_prompt(reasons: Sequence[Mapping[str, Any]], target_db: Mapping[str, A
         "온프렘 sample-app 이 대상 DB 에 연결하지 못해 이전 정책(OPA)이 막았다. 설정 파일을 고쳐라.",
         "",
         "[OPA 거절 사유]",
-        json.dumps([{"code": r.get("code"), "message": r.get("message")} for r in reasons], ensure_ascii=False),
+        json.dumps([{"code": r.get("code"), "message": r.get("message")} for r in reasons if not str(r.get("code", "")).startswith("DIAG-")], ensure_ascii=False),
+        "",
+        "[진단]",
+        json.dumps([{"code": r.get("code"), "message": r.get("message")} for r in reasons if str(r.get("code", "")).startswith("DIAG-")], ensure_ascii=False),
         "",
         "[계획서상 대상 DB (plan.target_db)]",
-        json.dumps({"host": target_db["host"], "port": target_db["port"]}),
+        json.dumps(planned_values(target_db), ensure_ascii=False),
         "",
         "[작업]",
         "- ./config/target.json 을 읽고, 계획서와 다른 값을 계획서 값으로 고쳐 저장한다.",
-        f"- 바꿔도 되는 키는 {', '.join(sorted(ALLOWED_KEYS))} 뿐이다. 다른 키와 다른 파일은 건드리지 않는다.",
+        f"- 바꿔도 되는 키는 {', '.join(allowed_keys(target_db))} 뿐이다. 다른 키와 다른 파일은 건드리지 않는다.",
+        "- [진단] 은 지금 설정으로 DB 에 실제로 붙어 본 결과다. 어떤 키가 원인인지 이것을 근거로 고른다.",
         "- 네트워크 접속이나 명령 실행으로 원인을 더 찾지 않는다. 이 파일과 위 사유만 근거로 삼는다.",
         "- 값은 모두 문자열이다. DB_PORT 도 문자열로 둔다.",
         "",

@@ -68,6 +68,7 @@ AWS → 온프렘으로 옮겼는데 앱 설정이 아직 AWS RDS 주소를 가�
 
 ```sh
 oneport-agent fault inject --host "$OLD_RDS_ENDPOINT"   # 주소는 저장소에 두지 않고 그때 넣는다
+oneport-agent fault inject --set DB_NAME=migration_demo  # 이전 전 DB 이름이 남은 상황
 journalctl -u oneport-agent -f                         # 다음 주기에 APP-01 → Codex(샌드박스) 제안
 oneport-agent status                                   # 실행 기록
 oneport-agent approve <run_id>                         # auto_apply: false 일 때 사람이 승인
@@ -77,3 +78,18 @@ oneport-agent fault restore                            # 에이전트가 못 고
 - 승인 시연: `/etc/oneport-agent/agent.yaml` 의 `auto_apply: false` 로 두면 제안·검사·탐침까지 하고 멈춘다. 승인하면 쓰기·재시작·재판정을 한다.
 - Slack: `agent.env` 에 `SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...`(Incoming Webhook, 채널 하나에만 쓸 수 있어 권한이 가장 좁다)를 넣으면 시작·제안·반영·결과가 그 채널에 올라간다. 봇 토큰을 쓰려면 `SLACK_BOT_TOKEN=xoxb-...`(`chat:write`)와 `agent.yaml` 의 `slack.channel` 을 넣는다. 웹훅이 있으면 웹훅을 쓴다.
 - `oneport-agent` 는 서비스와 같은 사용자·환경변수로 `python -m agent` 를 부른다. `fault` 는 `agent.demo_fault` 다.
+
+## 고칠 수 있는 범위
+
+`plan.target_db` 에 적은 항목만 고친다. 값은 계획서 값과 같아야 한다.
+
+| 계획서 필드 | 키 | 형식 검사 |
+|---|---|---|
+| `host` | `DB_HOST` | 호스트 이름 |
+| `port` | `DB_PORT` | 1~65535 |
+| `name` | `DB_NAME` | 식별자 |
+| `user` | `DB_USER` | 식별자 |
+| `sslmode` | `DB_SSLMODE` | libpq sslmode 값 |
+
+AI 에게 묻기 전에 지금 설정으로 DB 에 붙어 보고(진단), 실패 종류(DNS, 연결 거부, `SQLSTATE 3D000` DB 없음, `28P01` 인증 실패, TLS 등)를 근거로 넘긴다. 지금 설정으로 접속되면 설정 문제가 아니라고 보고 사람에게 넘긴다.
+

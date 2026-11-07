@@ -139,10 +139,17 @@ class Remediator:
         except KvError as exc:
             self._finish(run, R.ERROR, f"설정 저장소를 읽지 못했다: {exc}")
             return
+        diagnosis = self._diagnose(snapshot.data)
+        run.detail["diagnosis"] = {"ok": diagnosis.ok, "step": diagnosis.step, "detail": diagnosis.detail}
+        if diagnosis.ok:
+            self._finish(run, R.HANDED_OFF, "지금 설정으로 DB 에 접속된다. 설정 문제가 아닐 수 있어 사람에게 넘긴다")
+            return
+        reasons = [dict(v) for v in decision.violations]
+        reasons.append({"code": f"DIAG-{diagnosis.step.upper()}", "message": diagnosis.detail or diagnosis.error or "-"})
         try:
             proposal, file_changes = self.d.proposer.propose(
                 current=snapshot.data,
-                reasons=[dict(v) for v in decision.violations],
+                reasons=reasons,
                 target_db=self.target_db,
             )
         except (ProposalInvalid, ProposerError) as exc:
@@ -186,6 +193,10 @@ class Remediator:
             return
         if self._probe(run, proposal, snapshot.data):
             self._apply(run, proposal, expected)
+
+    def _diagnose(self, current: Mapping[str, Any]):
+        diagnose = getattr(self.d.prober, "diagnose", self.d.prober.probe)
+        return diagnose(visible_config(current))
 
     def _probe(self, run: Run, proposal: Proposal, current: Mapping[str, Any]) -> bool:
         result = self.d.prober.probe({**visible_config(current), **proposal.values()})
