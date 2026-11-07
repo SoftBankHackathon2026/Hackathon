@@ -129,9 +129,12 @@ class RunStore:
         ).fetchone()
         return self._to_run(row) if row else None
 
-    def recent(self, limit: int = 20) -> list[Run]:
+    def recent(self, limit: int = 20, exclude: frozenset[str] = frozenset()) -> list[Run]:
+        skip = sorted(exclude)
+        where = f"WHERE state NOT IN ({', '.join('?' for _ in skip)}) " if skip else ""
         rows = self._conn.execute(
-            "SELECT run_id, job_id, state, detail, created_at, updated_at FROM runs ORDER BY rowid DESC LIMIT ?", (limit,)
+            f"SELECT run_id, job_id, state, detail, created_at, updated_at FROM runs {where}ORDER BY rowid DESC LIMIT ?",
+            (*skip, limit),
         ).fetchall()
         return [self._to_run(row) for row in rows]
 

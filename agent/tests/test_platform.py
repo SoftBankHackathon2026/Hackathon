@@ -196,3 +196,17 @@ def test_recorded_proposal_keeps_before_value(make_world) -> None:
     assert change["key"] == "DB_HOST" and change["before"] and change["before"] != change["value"]
     assert w.remediator.approve(run.run_id).state == "RESOLVED"
 
+
+def test_sync_reaches_older_runs_behind_quiet_ones(tmp_path: Path) -> None:
+    runs = RunStore(tmp_path)
+    fixed = runs.create("job")
+    runs.update(fixed, R.RESOLVED, "끝")
+    for _ in range(30):
+        quiet = runs.create("job")
+        runs.update(quiet, R.NOTHING_TO_FIX, "정상")
+    opener = FakeOpener()
+    assert client(opener).sync(runs) == 1
+    assert opener.requests[0][1] == f"/api/v1/ingest/agent/runs/{fixed.run_id}"
+    assert [r.run_id for r in runs.recent(5)][0] != fixed.run_id
+    runs.close()
+
