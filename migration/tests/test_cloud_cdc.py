@@ -8,7 +8,7 @@ from psycopg import sql
 from test_cloud_pg import insert
 from test_cloud_pg import pg as pg  # reuse disposable databases/roles
 
-from migration.cdc import ConnectClient
+from migration.cdc import ConnectClient, ConnectError
 from migration.cloud.postgres import Postgres
 from migration.cloud.runner import Runner
 from migration.cutover import ApprovalRequired
@@ -20,6 +20,14 @@ pytestmark = pytest.mark.skipif(
 
 
 class DockerConnect(ConnectClient):
+    def _request(self, method, path, body=None):
+        try:
+            return super()._request(method, path, body)
+        except ConnectError as exc:
+            # Report only operation/status, never connector configs or response bodies.
+            print(f"Connect request failed: {method} {path}, HTTP {exc.status}")
+            raise
+
     def put_config(self, name, config):
         # Test runner connects through published localhost port; Connect runs
         # inside Docker and reaches the same test database by its network alias.
