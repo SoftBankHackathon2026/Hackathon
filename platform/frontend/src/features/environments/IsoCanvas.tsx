@@ -197,7 +197,7 @@ function Block({
   found: boolean;
   selected: boolean;
   onHover: (id: string | null) => void;
-  onActivate: () => void;
+  onActivate: (pointer: boolean) => void;
 }) {
   const [cx, cy] = tileCenter(tile);
   const [px, py] = project(mode, cx, cy);
@@ -235,12 +235,12 @@ function Block({
       onPointerLeave={() => onHover(null)}
       onClick={(event) => {
         event.stopPropagation();
-        onActivate();
+        onActivate(true);
       }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onActivate();
+          onActivate(false);
         }
       }}
     >
@@ -988,8 +988,8 @@ export function IsoCanvas({
                   selected?.envId === env.id && selected.id === component.id
                 }
                 onHover={setHover}
-                onActivate={() => {
-                  if (moved()) return;
+                onActivate={(pointer) => {
+                  if (pointer && moved()) return;
                   onSelect(
                     selected?.envId === env.id && selected.id === component.id
                       ? null

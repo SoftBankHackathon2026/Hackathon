@@ -12,17 +12,22 @@ export async function readPinStatus(): Promise<PinStatus> {
   return (await response.json()) as PinStatus;
 }
 
+export const PIN_RETRY_MESSAGE = "확인하지 못했어요. 잠시 후 다시 시도하세요.";
+
 export async function submitPin(pin: string): Promise<string | null> {
-  const response = await fetch("/api/v1/access-pin", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/access-pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+  } catch {
+    return PIN_RETRY_MESSAGE;
+  }
   if (response.ok) return null;
   const body = (await response.json().catch(() => ({}))) as {
     detail?: unknown;
   };
-  return typeof body.detail === "string"
-    ? body.detail
-    : "확인하지 못했어요. 잠시 후 다시 시도하세요.";
+  return typeof body.detail === "string" ? body.detail : PIN_RETRY_MESSAGE;
 }

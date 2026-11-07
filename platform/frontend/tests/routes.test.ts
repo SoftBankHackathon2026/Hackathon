@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ROUTE_EVENT } from "../src/app/routes.ts";
 import {
   controlHash,
   migrationHash,
   nodesHash,
+  onRouteChange,
   readRoute,
+  replaceHash,
   resourceHash,
   routeTitle,
 } from "../src/app/routes.ts";
@@ -56,4 +59,66 @@ test("node view links open the cluster or node panel", () => {
     nodes: { envId: "onprem", node: "worker-1" },
   });
   assert.equal(nodesHash(), "#environments/nodes");
+});
+
+test("malformed escapes fall back to the raw segment instead of throwing", () => {
+  assert.deepEqual(readRoute("#migrations/50%"), {
+    view: "migration",
+    id: "50%",
+  });
+  assert.deepEqual(readRoute("#environments/aws/%E0%A4%A"), {
+    view: "environments",
+    select: { envId: "aws", id: "%E0%A4%A" },
+  });
+  assert.deepEqual(readRoute("#environments/nodes/%/w%2"), {
+    view: "environments",
+    nodes: { envId: "%", node: "w%2" },
+  });
+  assert.deepEqual(readRoute("#security/%zz"), {
+    view: "security",
+    control: "%zz",
+  });
+  assert.deepEqual(readRoute("#costs/%"), { view: "costs", tab: "%" });
+  assert.deepEqual(readRoute("#prepare/%"), {
+    view: "prepare",
+    requestId: "invalid-request",
+  });
+});
+
+test("route listeners hear both hashchange and the replaceHash event", () => {
+  const target = new EventTarget();
+  let calls = 0;
+  const stop = onRouteChange(target, () => calls++);
+  target.dispatchEvent(new Event("hashchange"));
+  target.dispatchEvent(new Event(ROUTE_EVENT));
+  assert.equal(calls, 2);
+  stop();
+  target.dispatchEvent(new Event("hashchange"));
+  target.dispatchEvent(new Event(ROUTE_EVENT));
+  assert.equal(calls, 2);
+});
+
+test("replaceHash notifies route listeners without a hashchange", () => {
+  const target = new EventTarget();
+  const location = { hash: "#environments/aws/rds" };
+  const history = {
+    replaceState: (_: unknown, __: string, hash: string) => {
+      location.hash = hash;
+    },
+  };
+  Object.assign(target, { location, history });
+  const saved = globalThis.window;
+  globalThis.window = target as unknown as typeof globalThis.window;
+  try {
+    let calls = 0;
+    const stop = onRouteChange(target, () => calls++);
+    replaceHash("#environments");
+    assert.equal(location.hash, "#environments");
+    assert.equal(calls, 1);
+    replaceHash("#environments");
+    assert.equal(calls, 1);
+    stop();
+  } finally {
+    globalThis.window = saved;
+  }
 });

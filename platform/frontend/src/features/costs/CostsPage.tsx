@@ -21,6 +21,7 @@ import {
   dataHealth,
   envTotals,
   mainBreakdown,
+  pickJob,
   sortedChanges,
   topResources,
 } from "./costView";
@@ -801,7 +802,8 @@ export function CostsPage({ tab: initial }: { tab?: string } = {}) {
     const hash = next === "overview" ? "#costs" : `#costs/${next}`;
     if (window.location.hash !== hash) window.location.hash = hash;
   };
-  const [jobId, setJobId] = useState(overview.migrations[0]?.job_id ?? "");
+  const [picked, setJobId] = useState("");
+  const jobId = pickJob(overview.migrations, picked);
   const totals = envTotals(overview);
   return (
     <div className="pk-page">

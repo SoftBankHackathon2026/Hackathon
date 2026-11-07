@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { CLOSE_PANELS_EVENT, onRouteChange } from "../../app/routes";
 import type { FleetEnvironment } from "../../api/migrations";
 import { StatusLabel } from "../../components/PageKit";
 import { ProviderLogo } from "../../components/ProviderLogo";
@@ -33,11 +34,12 @@ export function ComponentsList({
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | undefined>();
   // "다이어그램에서 보기"처럼 주소가 바뀌면 표 패널은 닫는다(패널은 하나만).
-  useEffect(() => {
-    const close = () => setSelected(undefined);
-    window.addEventListener("hashchange", close);
-    return () => window.removeEventListener("hashchange", close);
-  }, []);
+  useEffect(() => onRouteChange(window, () => setSelected(undefined)), []);
+  const toggle = (id: string) => {
+    if (id === selected) return setSelected(undefined);
+    window.dispatchEvent(new Event(CLOSE_PANELS_EVENT));
+    setSelected(id);
+  };
   const rows = filterComponentRows(componentRows(environments), "all", query);
   const { sorted, th } = useSort(rows, {
     name: (r) => r.component.name,
@@ -100,11 +102,11 @@ export function ComponentsList({
                   className={`clickable${c.status === "unknown" || c.status === "idle" ? " dim" : ""}${isOpen ? " selected" : ""}`}
                   tabIndex={0}
                   aria-selected={isOpen}
-                  onClick={() => setSelected(isOpen ? undefined : key(row))}
+                  onClick={() => toggle(key(row))}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      setSelected(isOpen ? undefined : key(row));
+                      toggle(key(row));
                     }
                   }}
                 >

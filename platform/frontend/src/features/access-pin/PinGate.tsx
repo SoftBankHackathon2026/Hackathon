@@ -7,7 +7,13 @@ import {
 } from "react";
 import { UNAUTHORIZED_EVENT } from "../../api/client";
 import { Icon } from "../../components/Icon";
-import { PIN_LENGTH, pinDigits, readPinStatus, submitPin } from "./pin";
+import {
+  PIN_LENGTH,
+  PIN_RETRY_MESSAGE,
+  pinDigits,
+  readPinStatus,
+  submitPin,
+} from "./pin";
 import "./pin.css";
 
 type State = "checking" | "open" | "locked";
@@ -38,8 +44,14 @@ function PinPage({ onUnlocked }: { onUnlocked: () => void }) {
   async function unlock(value: string) {
     if (busy || value.length !== PIN_LENGTH) return;
     setBusy(true);
-    const failure = await submitPin(value);
-    setBusy(false);
+    let failure: string | null;
+    try {
+      failure = await submitPin(value);
+    } catch {
+      failure = PIN_RETRY_MESSAGE;
+    } finally {
+      setBusy(false);
+    }
     if (failure === null) return onUnlocked();
     setError(failure);
     setPin("");
