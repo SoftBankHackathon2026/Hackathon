@@ -1,0 +1,16 @@
+{
+  "product": "postgresql",
+  "format": "json",
+  "password_pointer": "/credentials/password",
+  "postgres": {
+    "host": "db.example.internal",
+    "port": 5432,
+    "dbname": "orders",
+    "role": "orders_app",
+    "admin_user": "rotation_operator",
+    "admin_password_ref": "file:/secure/postgres-admin.password",
+    "expected_system_identifier": "1234567890123456789",
+    "sslmode": "verify-full",
+    "sslrootcert": "/secure/postgres-ca.pem"
+  }
+}

@@ -7,3 +7,6 @@ recursive-include docs/wazuh-infra *.md *.json
 recursive-include tests/wazuh_infra *.py
 recursive-include migration/wazuh_infra/ansible *.cfg *.yml *.py
 global-exclude *.py[cod]
+recursive-include secrets-examples *.json *.yaml
+recursive-include docs/secrets *.md
+recursive-include tests/secrets_migration *.py

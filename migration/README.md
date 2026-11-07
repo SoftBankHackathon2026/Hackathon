@@ -268,3 +268,7 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 # Wazuh 온프레미스 감사로그 기반 준비
 
 `python -m migration.wazuh_infra`로 기존 환경 조사·점검, 선택한 Ubuntu 노드 한 대의 Wazuh 설치·전체 이벤트 검색 설정·원본 보관공간·용량 정보를 준비합니다. 실제 원본 파일 이관과 AWS 설정 변경은 수행하지 않습니다. [사용법과 플랫폼 연결](docs/wazuh-infra/README.md), [입력 예시](config.wazuh-infra.example.yaml), [검증 범위](docs/wazuh-infra/VALIDATION.md)를 참고하십시오.
+
+## AWS 비밀값의 OpenBao 이관
+
+`python -m migration.secrets`로 준비된 OpenBao에 AWS Secrets Manager의 현재·직전 값을 이관하고 검증합니다. 계정 이관 PR #51의 신원·경로·정책 결과를 연결하며, 별도 명령으로 PostgreSQL 일반 접속 계정의 단일 비밀번호 또는 명시한 JSON 필드를 교체합니다. 앱 변경과 원본 삭제는 수행하지 않습니다. [구현 흐름](migration/secrets/README.md), [운영 명령](docs/secrets/operations.md), [결정과 후속 작업](docs/secrets/decisions-and-followups.md), [검증 범위](docs/secrets/validation.md)를 참고하십시오.

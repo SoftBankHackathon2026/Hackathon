@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "plan_hash": "REPLACE-WITH-SECRET-PLAN-HASH",
+  "source_arn": "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:/example/orders/db-AbCdEf",
+  "operation_id": "orders-rotation-001",
+  "prepared_by": "REPLACE-WITH-OPERATOR-REFERENCE",
+  "issued_at": "2026-11-07T00:00:00+00:00",
+  "expires_at": "2026-11-07T00:10:00+00:00",
+  "application_prepared": false,
+  "source_rotation_paused": false
+}
