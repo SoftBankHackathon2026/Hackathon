@@ -112,3 +112,31 @@ def test_multiline_value_is_unknown():
 
     assert entry.classification == "unknown"
     assert entry.value is None
+
+
+@pytest.mark.parametrize("key", ["DB_PW", "PGPASS", "SSH_PASSPHRASE", "DBPASS"])
+def test_short_password_key_names_drop_value(key):
+    entry = env.classify_env(key, "hunter2")
+
+    assert entry.classification == "suspected_secret"
+    assert entry.value is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "redis://:canary-pw@cache.internal:6379/0",
+        "postgres://app:pa/ss@db.internal:5432/shop",
+        "Bearer abc.def",
+        "basic dXNlcjpwYXNz",
+        '{"password":"x"}',
+        '{"db": {"secret": "x"}}',
+        "{'token': 'x'}",
+        "api_key: x",
+    ],
+)
+def test_embedded_credentials_drop_value(value):
+    entry = env.classify_env("CONFIG", value)
+
+    assert entry.classification == "suspected_secret"
+    assert entry.value is None

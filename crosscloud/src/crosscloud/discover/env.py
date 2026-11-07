@@ -19,6 +19,7 @@ from crosscloud import model
 _SECRET_KEY_WORDS = (
     "PASSWORD",
     "PASSWD",
+    "PASSPHRASE",
     "SECRET",
     "TOKEN",
     "CREDENTIAL",
@@ -29,7 +30,9 @@ _SECRET_KEY_WORDS = (
 )
 # 키를 '_' 로 나눈 조각이 이것과 같으면 비밀로 본다. 짧은 단어라 부분 문자열로
 # 찾으면 오탐이 많다.
-_SECRET_KEY_SEGMENTS = frozenset({"KEY", "PWD", "PASS"})
+_SECRET_KEY_SEGMENTS = frozenset({"KEY", "PWD", "PW", "PASS"})
+# 조각이 이것으로 끝나도 비밀로 본다(PGPASS·DBPASS·DBPWD 처럼 붙여 쓴 이름).
+_SECRET_KEY_SEGMENT_SUFFIXES = ("PASS", "PWD")
 # 비밀일 수도 아닐 수도 있는 조각. 값을 버리고 사람이 확인한다.
 _AMBIGUOUS_KEY_SEGMENTS = frozenset(
     {"AUTH", "SESSION", "SALT", "DSN", "CERT", "SIGNING"}
@@ -38,8 +41,13 @@ _AMBIGUOUS_KEY_SEGMENTS = frozenset(
 _SECRET_VALUE_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
-        r"://[^/\s:@]+:[^/\s@]+@",  # 자격 증명이 든 URL
-        r"(?i)\b(password|passwd|pwd|secret|token)\s*=",  # key=value DSN
+        # 자격 증명이 든 URL. 사용자 이름이 비거나(redis://:pw@) 비밀번호에
+        # '/' 가 들어 있어도 잡는다.
+        r"://[^/\s:@]*:[^\s@]+@",
+        # key=value DSN, JSON·YAML 안의 비밀 키("password": ..., token: ...).
+        r"(?i)\b(password|passwd|passphrase|pwd|secret|token|api_?key"
+        r"|private_?key|credentials?)[\"']?\s*[:=]",
+        r"(?i)^\s*(bearer|basic)\s+\S",  # HTTP Authorization 값
         r"\b(AKIA|ASIA)[0-9A-Z]{16}\b",  # AWS 액세스 키
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
         r"\beyJ[\w-]+\.eyJ[\w-]+\.",  # JWT
@@ -104,6 +112,10 @@ def _looks_secret(key: str, value: str) -> bool:
     if any(word in normalized for word in _SECRET_KEY_WORDS):
         return True
     if segments & _SECRET_KEY_SEGMENTS:
+        return True
+    if any(
+        segment.endswith(_SECRET_KEY_SEGMENT_SUFFIXES) for segment in segments
+    ):
         return True
     if any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS):
         return True
