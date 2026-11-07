@@ -152,83 +152,98 @@ function SettingsCard({
   );
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+function ConfigFacts({ config }: { config: ConfigView }) {
+  const fixRows = config.fixKeys.map((key) => ({
+    key,
+    value: config.plan.find((entry) => entry.key === key)?.value ?? "-",
+  }));
   return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
+    <div className="agent-config">
+      <ConfigGroup title="동작">
+        <ConfigRow label="승인 모드">
+          {config.autoApply === null
+            ? "-"
+            : approvalModeLabel(config.autoApply)}
+        </ConfigRow>
+        <ConfigRow label="판정 주기">
+          {config.intervalSeconds === null
+            ? "-"
+            : `${config.intervalSeconds}초`}
+        </ConfigRow>
+        <ConfigRow label="마지막 반영">
+          {config.appliedAt === null ? "-" : formatDateTime(config.appliedAt)}
+        </ConfigRow>
+      </ConfigGroup>
+      <ConfigGroup title="Slack 알림">
+        <ConfigRow label="연결">
+          {config.slack.mode} · {onOffLabel(config.slack.enabled)}
+        </ConfigRow>
+        {config.slack.channel && (
+          <ConfigRow label="채널" mono>
+            {config.slack.channel}
+          </ConfigRow>
+        )}
+        <ConfigRow label="스레드" mono={config.slack.threadTs !== null}>
+          {config.slack.threadTs ?? "채널에 바로 보내요"}
+        </ConfigRow>
+      </ConfigGroup>
+      <ConfigGroup title="AI가 고칠 수 있는 값">
+        {fixRows.length === 0 ? (
+          <ConfigRow label="-">없음</ConfigRow>
+        ) : (
+          fixRows.map((row) => (
+            <ConfigRow key={row.key} label={row.key} mono monoLabel>
+              {row.value}
+            </ConfigRow>
+          ))
+        )}
+      </ConfigGroup>
+      <ConfigGroup title="샌드박스">
+        <ConfigRow label="실행 방식" mono>
+          {config.sandbox.runner ?? "-"}
+        </ConfigRow>
+        <ConfigRow label="이미지" mono>
+          {config.sandbox.image ?? "-"}
+        </ConfigRow>
+        <ConfigRow label="모델" mono>
+          {config.sandbox.model ?? "-"}
+        </ConfigRow>
+      </ConfigGroup>
     </div>
   );
 }
 
-function ConfigFacts({ config }: { config: ConfigView }) {
+function ConfigGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
-    <dl className="agent-facts">
-      <Fact label="승인 모드">
-        {config.autoApply === null ? "-" : approvalModeLabel(config.autoApply)}
-      </Fact>
-      <Fact label="판정 주기">
-        {config.intervalSeconds === null ? "-" : `${config.intervalSeconds}초`}
-      </Fact>
-      <Fact label="Slack">
-        <span className="agent-text">
-          {config.slack.mode}, 알림 {onOffLabel(config.slack.enabled)}
-        </span>
-        <span className="agent-text sub">
-          채널 <span className="mono">{config.slack.channel ?? "-"}</span>
-        </span>
-        <span className="agent-text sub">
-          스레드 ts{" "}
-          <span className="mono">
-            {config.slack.threadTs ?? "없음 (채널에 바로)"}
-          </span>
-        </span>
-      </Fact>
-      <Fact label="고칠 수 있는 키">
-        {config.fixKeys.length === 0 ? (
-          "-"
-        ) : (
-          <ul className="agent-codes">
-            {config.fixKeys.map((key) => (
-              <li key={key} className="mono">
-                {key}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Fact>
-      <Fact label="계획서 값">
-        {config.plan.length === 0 ? (
-          "-"
-        ) : (
-          <ul className="agent-plan">
-            {config.plan.map((entry) => (
-              <li key={entry.key} className="mono">
-                {entry.key}
-                <span className="agent-arrow" aria-hidden="true">
-                  →
-                </span>
-                {entry.value}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Fact>
-      <Fact label="샌드박스">
-        <span className="agent-text">
-          실행 방식 <span className="mono">{config.sandbox.runner ?? "-"}</span>
-        </span>
-        <span className="agent-text sub">
-          이미지 <span className="mono">{config.sandbox.image ?? "-"}</span>
-        </span>
-        <span className="agent-text sub">
-          모델 <span className="mono">{config.sandbox.model ?? "-"}</span>
-        </span>
-      </Fact>
-      <Fact label="마지막 설정 반영">
-        {config.appliedAt === null ? "-" : formatDateTime(config.appliedAt)}
-      </Fact>
-    </dl>
+    <div className="agent-config-group">
+      <h4>{title}</h4>
+      <dl>{children}</dl>
+    </div>
+  );
+}
+
+function ConfigRow({
+  label,
+  mono = false,
+  monoLabel = false,
+  children,
+}: {
+  label: string;
+  mono?: boolean;
+  monoLabel?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <dt className={monoLabel ? "mono" : undefined}>{label}</dt>
+      <dd className={mono ? "mono" : undefined}>{children}</dd>
+    </>
   );
 }
 
