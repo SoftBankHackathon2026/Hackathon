@@ -18,6 +18,8 @@ def build(releases):
     if not token_path.is_file() or token_path.stat().st_mode & 0o077:
         return None
     token = token_path.read_text().strip()
+    if not token:
+        return None
     redis_url = os.environ.get("ONEPORT_CONNECTION_REDIS_URL", "")
     if not redis_url:
         return None
