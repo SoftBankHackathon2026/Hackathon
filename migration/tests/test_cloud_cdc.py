@@ -5,7 +5,8 @@ from dataclasses import replace
 
 import pytest
 from psycopg import sql
-from test_cloud_pg import insert  # reuse disposable databases/roles
+from test_cloud_pg import insert
+from test_cloud_pg import pg as pg  # reuse disposable databases/roles
 
 from migration.cdc import ConnectClient
 from migration.cloud.postgres import Postgres
