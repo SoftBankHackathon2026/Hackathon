@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 import json
+import shutil
 
 import pytest
 
@@ -24,6 +25,7 @@ def setup(config, **overrides):
     return config, args, instance
 
 
+@pytest.mark.skipif(shutil.which("opa") is None, reason="OPA required; policies CI installs OPA")
 def test_real_opa_accepts_observed_facts(config, state_dir, tmp_path):
     config, args, _ = setup(config)
     doc = collect(config, **args)
