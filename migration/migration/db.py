@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from itertools import islice
+from typing import Any, Iterable
 
 import psycopg
 from psycopg import sql
@@ -196,34 +197,37 @@ def latest_ids_in_scope(conn: psycopg.Connection[Any], qualified: str, n: int, *
 
 def bucket_digests(conn: psycopg.Connection[Any], qualified: str, *, since: datetime | None = None,
                    upto: datetime | None = None) -> dict[str, tuple[int, str]]:
-    """버킷별 (건수, 모든 필드의 md5). 행을 전송하지 않고 서버에서 계산한다.
+    """버킷별 (건수, digest). 행을 전송하지 않고 서버에서 계산한다.
 
+    행마다 모든 필드를 이어 붙인 md5(32자)를 먼저 만들고, 그 지문들을 request_id 순으로 이어 붙여 다시 md5 를 낸다.
+    서버가 집계 중 들고 있는 것은 행 수 × 32바이트뿐이라 payload 크기와 무관하다(행 원문을 이어 붙이면 표 전체 크기만큼 든다).
     정렬은 uuid 타입(바이트 순)으로 해 collation 차이에 영향받지 않고, created_at 은 UTC 마이크로초 문자열로 고정한다.
     """
     where, params = scope_clause(since, upto)
+    row_hash = ("md5(request_id::text || chr(31) || run_id || chr(31) || phase || chr(31) || request_no::text "
+                "|| chr(31) || payload || chr(31) || to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US+00:00'))")
     query = sql.SQL(
         "SELECT substr(request_id::text, 1, 2) AS bucket, count(*), "
-        "md5(string_agg(request_id::text || chr(31) || run_id || chr(31) || phase || chr(31) || request_no::text "
-        "|| chr(31) || payload || chr(31) || to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US+00:00'), "
-        "chr(30) ORDER BY request_id)) FROM {}"
+        "md5(string_agg(" + row_hash + ", '' ORDER BY request_id)) FROM {}"
     ).format(table_ident(qualified)) + where + sql.SQL(" GROUP BY 1")
     with conn.cursor() as cur:
         cur.execute(query, params)
         return {str(b): (int(n), str(d)) for b, n, d in cur.fetchall()}
 
 
-def missing_ids(conn: psycopg.Connection[Any], qualified: str, ids: set[str], batch: int = 5000) -> set[str]:
-    """ids 중 테이블에 없는 request_id. 묶음 조회라 행 전체를 읽지 않는다."""
+def missing_ids(conn: psycopg.Connection[Any], qualified: str, ids: Iterable[str], batch: int = 5000) -> set[str]:
+    """ids 중 테이블에 없는 request_id. batch 개씩 `= ANY(uuid[])` 로 묻고 빠진 것만 모은다. 행도, ids 전체도 메모리에 두지 않는다."""
     missing: set[str] = set()
-    ordered = sorted(ids)
-    for i in range(0, len(ordered), batch):
-        chunk = ordered[i:i + batch]
+    it = iter(ids)
+    while True:
+        chunk = list(islice(it, batch))
+        if not chunk:
+            return missing
         with conn.cursor() as cur:
             cur.execute(sql.SQL("SELECT request_id::text FROM {} WHERE request_id = ANY(%s::uuid[])")
                         .format(table_ident(qualified)), (chunk,))
             found = {str(r[0]) for r in cur.fetchall()}
         missing.update(set(chunk) - found)
-    return missing
 
 
 def is_transient(exc: BaseException) -> bool:

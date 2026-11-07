@@ -103,6 +103,15 @@ class _SqliteBase:
             return self._conn.execute(query, params)
 
 
+def _created_in_scope(created: str, since: datetime | None, upto: datetime | None) -> bool:
+    ts = datetime.fromisoformat(created)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    if since is not None and ts <= since:
+        return False
+    return not (upto is not None and ts > upto)
+
+
 class RequestStore(_SqliteBase):
     """워커 요청 기록. 요청은 DB 전송 전에 pending 으로 먼저 저장한다."""
 
@@ -170,29 +179,40 @@ class RequestStore(_SqliteBase):
             cur = self._exec("SELECT request_id FROM requests WHERE status = ? AND target = ?", (COMMITTED, target))
         return {row[0] for row in cur.fetchall()}
 
-    def committed_ids_in_scope(self, target: str | None = None, *, since: datetime | None = None,
-                               upto: datetime | None = None) -> set[str]:
-        """created_at 이 (since, upto] 범위인 커밋 확인 요청 ID. 기준점 이후 집합만 비교할 때 쓴다.
+    def iter_committed_ids_in_scope(self, target: str | None = None, *, since: datetime | None = None,
+                                    upto: datetime | None = None, batch: int = 5000) -> Iterator[list[str]]:
+        """created_at 이 (since, upto] 범위인 커밋 확인 요청 ID 를 request_id 순으로 batch 개씩 낸다.
 
+        전체 집합을 메모리에 올리지 않는다. 페이지마다 새 조회(keyset: request_id > 마지막 ID, PK 인덱스)를 쓰므로
+        읽기 트랜잭션을 길게 잡지 않아 같은 SQLite 에 쓰는 워커를 막지 않는다.
         created_at 은 ISO 문자열이라 형식 차이(마이크로초 생략 등)에 흔들리지 않게 파싱해서 비교한다.
         """
+        last = ""
+        while True:
+            if target is None:
+                cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ? AND request_id > ? "
+                                 "ORDER BY request_id LIMIT ?", (COMMITTED, last, batch))
+            else:
+                cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ? AND target = ? "
+                                 "AND request_id > ? ORDER BY request_id LIMIT ?", (COMMITTED, target, last, batch))
+            rows = cur.fetchall()
+            if not rows:
+                return
+            last = str(rows[-1][0])
+            page = [str(rid) for rid, created in rows if _created_in_scope(str(created), since, upto)]
+            if page:
+                yield page
+            if len(rows) < batch:
+                return
+
+    def committed_ids_in_scope(self, target: str | None = None, *, since: datetime | None = None,
+                               upto: datetime | None = None) -> set[str]:
+        """iter_committed_ids_in_scope 를 한 집합으로 모은 것. 행 전체를 읽는 rows 비교처럼 어차피 메모리에 올리는 경로에서만 쓴다."""
         if since is None and upto is None:
             return self.committed_ids(target)
-        if target is None:
-            cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ?", (COMMITTED,))
-        else:
-            cur = self._exec("SELECT request_id, created_at FROM requests WHERE status = ? AND target = ?",
-                             (COMMITTED, target))
         out: set[str] = set()
-        for rid, created in cur.fetchall():
-            ts = datetime.fromisoformat(str(created))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=UTC)
-            if since is not None and ts <= since:
-                continue
-            if upto is not None and ts > upto:
-                continue
-            out.add(str(rid))
+        for page in self.iter_committed_ids_in_scope(target, since=since, upto=upto):
+            out.update(page)
         return out
 
     def iter_committed(self, target: str | None = None) -> Iterator[RequestRecord]:
