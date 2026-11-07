@@ -129,6 +129,15 @@ def https_api(tmp_path):
                     result = {"data": resources[path]}
                 else:
                     status = 404
+            elif path == "/admin/realms" and self.command == "POST":
+                status = 201
+            elif path.endswith("/users/profile"):
+                if self.command == "PUT":
+                    resources["profile"] = payload
+                else:
+                    result = resources.get(
+                        "profile", {"attributes": [{"name": "username"}]}
+                    )
             elif path.startswith("/admin/realms/"):
                 if "/users/" in path and path.endswith("/groups"):
                     result = []
@@ -234,6 +243,30 @@ def test_keycloak_users_created_disabled_without_credentials(
     )
     assert payload["enabled"] is False and "credentials" not in payload
     assert "CONFIGURE_TOTP" in payload["requiredActions"]
+
+
+def test_new_realm_keeps_unmanaged_identity_attributes(
+    identity_config, identity_plan, https_api, tmp_path, monkeypatch
+):
+    configure_local(identity_config, https_api, tmp_path, monkeypatch)
+    targets = Targets(identity_config, identity_plan)
+    realm = next(r for r in identity_plan["resources"] if r["kind"] == "kc_realm")
+    targets.write(realm)
+    calls = [(c[0], c[1]) for c in https_api[2]]
+    profile_path = (
+        "/admin/realms/"
+        + identity_config["targets"]["keycloak"]["realm"]
+        + "/users/profile"
+    )
+    assert calls[-3:] == [
+        ("POST", "/admin/realms"),
+        ("GET", profile_path),
+        ("PUT", profile_path),
+    ]
+    assert https_api[3]["profile"] == {
+        "attributes": [{"name": "username"}],
+        "unmanagedAttributePolicy": "ADMIN_EDIT",
+    }
 
 
 def test_real_token_probe_never_uses_admin_kube_identity(
