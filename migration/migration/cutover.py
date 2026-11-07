@@ -23,6 +23,7 @@ from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask
 from .config import Config, ConfigError, load_config
 from .state import CutoverJob, CutoverStore, RequestStore
 from .cutover_policy import CutoverPolicyGate
+from .ingress_client import HttpIngressClient, IngressClientError, check_app_ready
 from .policy_client import build_check
 from .worker_client import HttpWorkerClient, WorkerClientError
 
@@ -89,6 +90,16 @@ class DbPort(Protocol):
 
 class VerifyPort(Protocol):
     def run(self, mode: str, label: str) -> dict[str, Any]: ...
+
+
+class IngressPort(Protocol):
+    """접수 서비스(durable-ingress) 제어. 워커와 같은 순서로 pause → target → resume 한다."""
+
+    def status(self) -> dict[str, Any]: ...
+    def pause(self) -> dict[str, Any]: ...
+    def set_target(self, target: str, expected_epoch: str) -> dict[str, Any]: ...
+    def resume(self, expected_epoch: str) -> dict[str, Any]: ...
+    def check_app(self, job_target: str) -> dict[str, Any]: ...
 
 
 # ---- 실제 어댑터 -----------------------------------------------------------------
@@ -247,6 +258,35 @@ class VerifyAdapter:
 # ---- 상태 머신 --------------------------------------------------------------------
 
 
+class IngressAdapter:
+    """설정의 ingress 절로 HttpIngressClient 와 대상 앱 readiness 검사를 묶는다."""
+
+    def __init__(self, config: Config) -> None:
+        self.cfg = config.ingress
+        assert self.cfg.control_url
+        self.client = HttpIngressClient(self.cfg.control_url, token_env=self.cfg.token_env,
+                                        timeout=self.cfg.timeout_seconds)
+
+    def status(self) -> dict[str, Any]:
+        return self.client.status()
+
+    def pause(self) -> dict[str, Any]:
+        return self.client.pause()
+
+    def set_target(self, target: str, expected_epoch: str) -> dict[str, Any]:
+        return self.client.set_target(target, expected_epoch)
+
+    def resume(self, expected_epoch: str) -> dict[str, Any]:
+        return self.client.resume(expected_epoch)
+
+    def check_app(self, job_target: str) -> dict[str, Any]:
+        check = self.cfg.app_checks.get(job_target)
+        if check is None:
+            return {"skipped": True, "ok": True, "problems": []}
+        return check_app_ready(check.url, environment=check.environment, database=check.database,
+                               token_env=check.token_env, timeout=self.cfg.timeout_seconds)
+
+
 @dataclass
 class Ports:
     worker: WorkerPort
@@ -254,6 +294,7 @@ class Ports:
     db: DbPort
     verify: VerifyPort
     request_store: RequestStore | None = None
+    ingress: IngressPort | None = None   # None 이면 접수 큐는 운영자가 수동으로 제어한다
 
 
 class Cutover:
@@ -341,6 +382,19 @@ class Cutover:
             healthy = healthy and running
         return healthy, out
 
+    # ---- 접수 서비스 -----
+
+    @property
+    def ingress(self) -> IngressPort | None:
+        return self.p.ingress
+
+    def _ingress_name(self, job_target: str) -> str:
+        return self.config.ingress.ingress_target(job_target)
+
+    def _ingress_snapshot(self) -> dict[str, Any]:
+        st = self.ingress.status()  # type: ignore[union-attr]
+        return {k: st.get(k) for k in ("mode", "target", "epoch", "in_flight", "last_error")}
+
     # ---- 단계 -----
 
     def stage_precheck(self) -> None:
@@ -369,10 +423,20 @@ class Cutover:
                     problems.append(f"워커 설정에 target {name} 이 없다 (known_targets={list(known)}). "
                                     "워커 ConfigMap 에 추가하지 않으면 SWITCHING 의 /target 전환이 실패한다")
         connectors = self.p.connect.list_connectors()
+        ingress_info: dict[str, Any] | None = None
+        if self.ingress is not None:
+            try:
+                src_name, tgt_name = self._ingress_name(self.source), self._ingress_name(self.target)
+            except ConfigError as exc:
+                raise CutoverError(f"PRECHECK 실패: {exc}") from exc
+            ingress_info = self._ingress_snapshot()
+            if ingress_info.get("target") != src_name:
+                problems.append(f"접수 서비스 target={ingress_info.get('target')} 이 원본({src_name}) 이 아니다")
+            ingress_info["expected"] = {"source": src_name, "target": tgt_name}
         if problems:
             raise CutoverError("PRECHECK 실패: " + "; ".join(problems))
         self._save(COPYING, precheck={"source": src, "target": tgt, "worker": {k: ws.get(k) for k in ("state", "target", "phase", "counters")},
-                                     "connectors": connectors})
+                                     "connectors": connectors, "ingress": ingress_info})
 
     def stage_copying(self) -> None:
         self._policy_guard("pre_start")
@@ -422,6 +486,15 @@ class Cutover:
         drain = self._step("worker_drain", lambda: self.p.worker.drain(timeout=120))
         if not drain.get("settled"):
             raise CutoverError(f"워커 진행 중 요청이 정리되지 않았다: {drain}")
+        ingress_paused: dict[str, Any] | None = None
+        if self.ingress is not None:
+            # 접수는 계속 받되(202) 앱으로 보내는 것만 멈춘다. settled 가 아니면 원본을 닫지 않는다.
+            ingress_paused = self._step("ingress_pause", lambda: self.ingress.pause())  # type: ignore[union-attr]
+            snap = self._ingress_snapshot()
+            if snap.get("mode") != "paused" or snap.get("in_flight"):
+                raise CutoverError(f"접수 서비스가 paused 가 아니거나 전달 중 요청이 있다: {snap}")
+            if ingress_paused.get("settled") is False:
+                raise CutoverError(f"접수 서비스 pause 가 settled 되지 않았다: {ingress_paused}")
         self._step("revoke_source_app_insert", lambda: (self.p.db.revoke_app_insert(self.source), {"revoked": True})[1])
         self._step("terminate_source_app_sessions", lambda: {"terminated": self.p.db.terminate_app_sessions(self.source)})
         sentinel = str(uuid.uuid5(uuid.NAMESPACE_URL, f"migration-fence-test/{self.job_id}"))
@@ -433,7 +506,8 @@ class Cutover:
             raise CutoverError(f"워커가 PAUSED 가 아니거나 진행 중 요청이 있다: {ws.get('state')} {ws.get('in_flight')}")
         last = drain.get("last_committed") or {}
         self._save(DRAINING, fenced={"sentinel": sentinel, "rejected": True, "last_committed": last,
-                                    "queue_length": ws.get("queue_length")})
+                                    "queue_length": ws.get("queue_length"),
+                                    "ingress": ingress_paused})
 
     def stage_draining(self) -> None:
         last_id = ((self.job.checkpoint.get("fenced") or {}).get("last_committed") or {}).get("request_id")
@@ -532,9 +606,45 @@ class Cutover:
         if ident and ident.get("database") not in (None, expected_db):
             raise CutoverError(f"워커가 붙은 DB 가 기대와 다르다: {ident}")
         self._step("worker_resume", lambda: {"state": self.p.worker.resume().get("state")})
+        ingress_switch = self._switch_ingress() if self.ingress is not None else None
         before = int((ws.get("committed_by_target") or {}).get(self.target, 0))
         self._save(VERIFYING, switched=switched, committed_on_target_before=before,
-                   switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                   switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ingress=ingress_switch)
+
+    def _switch_ingress(self) -> dict[str, Any]:
+        """대상 앱이 준비됐는지 확인한 뒤 접수 큐를 대상으로 돌리고 재개한다. 대상 GRANT 이후에만 호출된다."""
+        desired = self._ingress_name(self.target)
+
+        def app_ready() -> tuple[bool, dict[str, Any]]:
+            res = self.ingress.check_app(self.target)  # type: ignore[union-attr]
+            return bool(res.get("ok")), res
+
+        # 대상 앱의 쓰기 열기(GitOps) 가 끝나기를 기다린다. 읽기만 하므로 _step 이 아니다.
+        ready = self._wait("target_app_ready", app_ready)
+
+        def set_target() -> dict[str, Any]:
+            snap = self._ingress_snapshot()
+            if snap.get("target") == desired:
+                return {"already": True, **snap}
+            if snap.get("mode") != "paused" or snap.get("in_flight"):
+                raise CutoverError(f"접수 서비스가 paused 가 아니라 target 을 바꿀 수 없다: {snap}")
+            res = self.ingress.set_target(desired, str(snap.get("epoch")))  # type: ignore[union-attr]
+            return {"already": False, "from": snap.get("target"), "target": res.get("target"), "epoch": res.get("epoch")}
+
+        targeted = self._step("ingress_target", set_target)
+        snap = self._ingress_snapshot()
+        if snap.get("target") != desired:
+            raise CutoverError(f"접수 서비스 target 이 {desired} 가 아니다: {snap}")
+
+        def resume() -> dict[str, Any]:
+            cur = self._ingress_snapshot()
+            if cur.get("mode") == "running":
+                return {"already": True, **cur}
+            res = self.ingress.resume(str(cur.get("epoch")))  # type: ignore[union-attr]
+            return {"already": False, "mode": res.get("mode"), "epoch": res.get("epoch")}
+
+        resumed = self._step("ingress_resume", resume)
+        return {"app_ready": ready, "target": targeted, "resume": resumed}
 
     def stage_verifying(self) -> None:
         base = int(self.job.checkpoint.get("committed_on_target_before", 0))
@@ -553,6 +663,11 @@ class Cutover:
             raise CutoverError(f"워커가 불변 필드 불일치를 기록했다: {info}")
         if self.p.db.app_can_insert(self.source):
             raise CutoverError("원본 앱 쓰기가 다시 열려 있다")
+        if self.ingress is not None:
+            snap = self._ingress_snapshot()
+            if snap.get("mode") != "running" or snap.get("target") != self._ingress_name(self.target):
+                raise CutoverError(f"접수 서비스가 대상으로 돌아가고 있지 않다: {snap}")
+            info["ingress"] = snap
         result = self.p.verify.run("post", "final")
         if not result["passed"]:
             raise CutoverError(f"전환 후 검증 실패: {result}")
@@ -578,10 +693,13 @@ class Cutover:
             (COPYING, "publication/slot 준비, Source/Sink 등록, snapshot(seed) 완료 대기"),
             (CATCHING_UP, f"snapshot 후 최소 {self.cc.min_live_rows_after_snapshot}건 추가 반영 확인"),
             (READY, "승인 대기 (--approve)"),
-            (FENCING, "워커 pause → drain → 원본 REVOKE INSERT + 세션 종료 → 시험 INSERT 거절 확인"),
+            (FENCING, "워커 pause → drain" + (" → 접수 큐 pause(settled)" if self.config.ingress.enabled else "")
+             + " → 원본 REVOKE INSERT + 세션 종료 → 시험 INSERT 거절 확인"),
             (DRAINING, "마지막 커밋 요청의 대상 반영·건수 일치·sink offset 정체 확인"),
             (SYNC_CONFIRMED, "전체 비교(pre) → 커넥터 증거 보관·삭제 → 재검증"),
-            (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume  [여기부터 자동 원복 없음]"),
+            (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume"
+             + (" → 대상 앱 readiness → 접수 큐 /target → /resume" if self.config.ingress.enabled else "")
+             + "  [여기부터 자동 원복 없음]"),
             (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 전체 비교(post)"),
             (COMPLETED, "완료"),
         ]
@@ -641,6 +759,14 @@ class Cutover:
         if ws.get("target") != self.source:
             raise CutoverError(f"워커 target 이 원본이 아니다: {ws.get('target')}. 수동 확인 필요")
         out["worker"] = self.p.worker.resume().get("state")
+        if self.ingress is not None:
+            snap = self._ingress_snapshot()
+            if snap.get("target") != self._ingress_name(self.source):
+                raise CutoverError(f"접수 서비스 target 이 원본이 아니다: {snap}. 수동 확인 필요")
+            if snap.get("mode") != "running":
+                res = self.ingress.resume(str(snap.get("epoch")))
+                snap = {**snap, "mode": res.get("mode")}
+            out["ingress"] = snap
         self._save(ROLLED_BACK, rollback=out)
         return out
 
@@ -674,6 +800,7 @@ def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | Non
         db=PgAdminPort(config),
         verify=VerifyAdapter(config, state_dir, report_dir),
         request_store=RequestStore(state_dir),
+        ingress=IngressAdapter(config) if config.ingress.enabled else None,
     )
     return Cutover(config, store, ports, connector_docs=docs, approve=approve,
                    policy_gate=CutoverPolicyGate(config, state_dir))
@@ -717,7 +844,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError,) as exc:
         log.error("설정 오류: %s", exc)
         return EXIT_CONFIG
-    except (CutoverError, ConnectError, WorkerClientError, psycopg.Error) as exc:
+    except (CutoverError, ConnectError, WorkerClientError, IngressClientError, psycopg.Error) as exc:
         log.error("전환 실패: %s", exc)
         return EXIT_FAILED
 
