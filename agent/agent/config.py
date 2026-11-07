@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -26,6 +27,8 @@ class SmokeSettings:
     http_timeout: float = 5.0
     replication_timeout: float = 30.0
     poll_interval: float = 1.0
+    error_retries: int = 0
+    retry_delay: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,9 @@ class ProbeSettings:
     sslrootcert: str | None = None
     password_url_env: str = "SAMPLE_APP_DATABASE_URL"
     connect_timeout: float = 5.0
+    address_map: Mapping[str, str] = field(default_factory=dict)
+    attempts: int = 1
+    retry_delay: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,9 @@ class RestartSettings:
     timeout: float = 180.0
     poll_interval: float = 3.0
     stuck_after: float = 45.0
+    api_server: str | None = None
+    token_file: str | None = None
+    ca_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,11 @@ class AgentConfig:
     probe: ProbeSettings
     restart: RestartSettings
     slack_channel: str | None = None
+    slack_thread_ts: str | None = None
+    approve_command: str = "python -m agent approve"
+    platform_url: str | None = None
+    platform_agent_id: str = "oneport-agent"
+    platform_token_env: str = "ONEPORT_INGEST_TOKEN"
 
     @property
     def target_db(self) -> Mapping[str, Any]:
@@ -113,11 +127,20 @@ def _smoke_settings(smoke: Mapping[str, Any]) -> SmokeSettings:
     source_url = smoke.get("source_url") or None
     if not target_only and not source_url:
         raise ConfigError("smoke.source_url 이 없다 (smoke.target_only 가 아닐 때 필수)")
-    optional = ("stage", "token_env", "http_timeout", "replication_timeout", "poll_interval")
+    optional = ("stage", "token_env", "http_timeout", "replication_timeout", "poll_interval", "error_retries", "retry_delay")
     return SmokeSettings(
         target_url=str(_required(smoke, "target_url", "smoke")), source_url=source_url, target_only=target_only,
         **{k: smoke[k] for k in optional if k in smoke},
     )
+
+
+def _thread_ts(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value)
+    if not re.fullmatch(r"\d{6,}\.\d{1,9}", text):
+        raise ConfigError("slack.thread_ts 는 1794036316.116759 같은 메시지 시각이어야 한다")
+    return text
 
 
 def parse_config(raw: Mapping[str, Any], env: Mapping[str, str] | None = None) -> AgentConfig:
@@ -158,6 +181,11 @@ def parse_config(raw: Mapping[str, Any], env: Mapping[str, str] | None = None) -
         probe=ProbeSettings(**dict(raw.get("probe") or {})),
         restart=RestartSettings(**dict(raw.get("restart") or {})),
         slack_channel=(raw.get("slack") or {}).get("channel"),
+        slack_thread_ts=_thread_ts((raw.get("slack") or {}).get("thread_ts")),
+        approve_command=str(raw.get("approve_command") or "python -m agent approve"),
+        platform_url=(raw.get("platform") or {}).get("url") or None,
+        platform_agent_id=str((raw.get("platform") or {}).get("agent_id") or "oneport-agent"),
+        platform_token_env=str((raw.get("platform") or {}).get("token_env") or "ONEPORT_INGEST_TOKEN"),
     )
 
 

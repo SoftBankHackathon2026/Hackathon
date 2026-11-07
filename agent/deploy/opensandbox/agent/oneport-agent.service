@@ -1,0 +1,22 @@
+[Unit]
+Description=Remote AI remediation agent (watch)
+After=network-online.target opensandbox.service oneport-forward@migration-policy.service oneport-forward@openbao.service oneport-forward@sample-app-smoke.service oneport-forward@postgres.service
+Wants=network-online.target
+
+[Service]
+User=oneport-agent
+Group=oneport-agent
+EnvironmentFile=/etc/oneport-agent/agent.env
+EnvironmentFile=/etc/oneport-agent/codex.env
+EnvironmentFile=/etc/opensandbox/server.env
+ExecStart=/opt/oneport-agent/venv/bin/python -m agent --config /etc/oneport-agent/agent.yaml watch --interval 60
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oneport-agent
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

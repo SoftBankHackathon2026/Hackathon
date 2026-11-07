@@ -26,6 +26,18 @@ log = logging.getLogger("agent.remediation")
 
 APP01_PREFIX = "APP-01-"
 DECLARED_SOURCE = "agent.declared-config"
+TITLES: dict[str, str] = {
+    R.RESOLVED: "✅ *복구 완료*",
+    R.UNRESOLVED: "⚠️ *적용했지만 재검증 실패*",
+    R.REJECTED: "🚫 *AI 제안 거절*",
+    R.PROBE_FAILED: "❌ *수정 값으로 DB 접속 실패*",
+    R.CAS_CONFLICT: "⚠️ *저장소 값이 그사이 바뀜*",
+    R.RESTART_FAILED: "❌ *재시작 실패*",
+    R.HANDED_OFF: "🙋 *사람 확인 필요*",
+    R.ERROR: "❌ *오류*",
+    R.NOTHING_TO_FIX: "정상",
+}
+QUIET_STATES = frozenset({R.NOTHING_TO_FIX})
 
 
 def fixable(decision: Decision) -> bool:
@@ -52,8 +64,11 @@ class Remediator:
     def __init__(
         self, deps: Deps, *, job_id: str, plan: Mapping[str, Any],
         declared_evidence: Mapping[str, Mapping[str, Any]], auto_apply: bool, stage: str = "pre_cutover",
+        approve_command: str = "python -m agent approve", approve_url: str | None = None,
     ) -> None:
         self.d = deps
+        self.approve_command = approve_command
+        self.approve_url = approve_url
         self.job_id, self.auto_apply, self.stage = job_id, auto_apply, stage
         self.declared_evidence = declared_evidence
         self.plan = {**plan, "digest": digest_of(dict(plan))}
@@ -91,11 +106,22 @@ class Remediator:
             self._finish(run, R.ERROR, f"예기치 않은 오류 {type(exc).__name__}. 사람이 확인한다")
         return run
 
-    def approve(self, run_id: str) -> Run:
+    def reject(self, run_id: str, by: str | None = None) -> Run:
         run = self.d.runs.get(run_id)
         if run is None:
             raise ValueError(f"실행 기록이 없다: {run_id}")
-        if not self.d.runs.claim_approval(run_id):
+        if not self.d.runs.claim_rejection(run_id, by):
+            raise ValueError(f"승인 대기 상태가 아니다: {run_id} ({run.state})")
+        rejected = self.d.runs.get(run_id) or run
+        who = f"{by} 님이 " if by else ""
+        self._notify(rejected, f"{TITLES[R.REJECTED]}  `{run_id}`\n{who}제안을 거절했어요. 저장소는 바꾸지 않았어요")
+        return rejected
+
+    def approve(self, run_id: str, by: str | None = None) -> Run:
+        run = self.d.runs.get(run_id)
+        if run is None:
+            raise ValueError(f"실행 기록이 없다: {run_id}")
+        if not self.d.runs.claim_approval(run_id, by):
             raise ValueError(f"승인 대기 상태가 아니다: {run_id} ({run.state})")
         run.state = R.APPLYING
         try:
@@ -119,16 +145,23 @@ class Remediator:
             self._finish(run, R.HANDED_OFF, f"AI 범위 밖 ({decision.outcome}: {_codes(decision)}). 사람에게 넘긴다")
             return
 
-        self._notify(run, f"AI 수정 시작. OPA {decision.outcome}: {_codes(decision)}")
+        self._notify(run, f"🔎 *AI 수정 시작*  `{run.run_id}`\n• OPA 판정: *{decision.outcome}*\n• 사유: {_code_list(decision)}")
         try:
             snapshot = self.d.kv.read()
         except KvError as exc:
             self._finish(run, R.ERROR, f"설정 저장소를 읽지 못했다: {exc}")
             return
+        diagnosis = self._diagnose(snapshot.data)
+        run.detail["diagnosis"] = {"ok": diagnosis.ok, "step": diagnosis.step, "detail": diagnosis.detail}
+        if diagnosis.ok:
+            self._finish(run, R.HANDED_OFF, "지금 설정으로 DB 에 접속된다. 설정 문제가 아닐 수 있어 사람에게 넘긴다")
+            return
+        reasons = [dict(v) for v in decision.violations]
+        reasons.append({"code": f"DIAG-{diagnosis.step.upper()}", "message": diagnosis.detail or diagnosis.error or "-"})
         try:
             proposal, file_changes = self.d.proposer.propose(
                 current=snapshot.data,
-                reasons=[dict(v) for v in decision.violations],
+                reasons=reasons,
                 target_db=self.target_db,
             )
         except (ProposalInvalid, ProposerError) as exc:
@@ -143,12 +176,15 @@ class Remediator:
             self._finish(run, R.REJECTED, "정적 검사 거절: " + "; ".join(r.message for r in rejections), rejections=codes)
             return
 
-        run.detail.update(proposal=proposal.as_dict(), expected_version=snapshot.version)
+        recorded = proposal.as_dict()
+        visible = visible_config(snapshot.data)
+        recorded["changes"] = [{**c, "before": visible.get(c["key"])} for c in recorded["changes"]]
+        run.detail.update(proposal=recorded, expected_version=snapshot.version)
         if not self._probe(run, proposal, snapshot.data):
             return
         if not self.auto_apply:
             self.d.runs.update(run, R.WAITING_APPROVAL, "승인 대기")
-            self._notify(run, f"승인 대기.\n{_describe(proposal)}\n승인: python -m agent approve {run.run_id}")
+            self._notify(run, f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}\n*승인*  {self._approve_hint(run.run_id)}")
             return
         self.d.runs.update(run, R.APPLYING, "자동 적용")
         self._apply(run, proposal, snapshot.version)
@@ -173,6 +209,10 @@ class Remediator:
         if self._probe(run, proposal, snapshot.data):
             self._apply(run, proposal, expected)
 
+    def _diagnose(self, current: Mapping[str, Any]):
+        diagnose = getattr(self.d.prober, "diagnose", self.d.prober.probe)
+        return diagnose(visible_config(current))
+
     def _probe(self, run: Run, proposal: Proposal, current: Mapping[str, Any]) -> bool:
         result = self.d.prober.probe({**visible_config(current), **proposal.values()})
         run.detail["probe"] = {"ok": result.ok, "step": result.step, "error": result.error}
@@ -190,7 +230,7 @@ class Remediator:
             self._finish(run, R.ERROR, f"설정 저장소 쓰기 실패: {exc}")
             return
         self.d.runs.update(run, R.APPLYING, f"저장소 반영 v{expected_version} → v{new_version}", applied_version=new_version)
-        self._notify(run, f"저장소 반영 v{expected_version} → v{new_version}.\n{_describe(proposal)}\n재시작한다")
+        self._notify(run, f"🛠 *저장소 반영*  `{run.run_id}`\n• OpenBao v{expected_version} → v{new_version}\n• 대상 앱을 재시작하고 다시 판정한다")
 
         try:
             self.d.restarter.restart_and_wait()
@@ -212,11 +252,28 @@ class Remediator:
     # ------------------------------------------------------------------
 
     def _finish(self, run: Run, state: str, message: str, **detail: Any) -> None:
+        previous = next((r for r in self.d.runs.recent(2) if r.run_id != run.run_id), None)
         self.d.runs.update(run, state, message, **detail)
-        self._notify(run, f"[{state}] {message}")
+        if state in QUIET_STATES:
+            log.info("[%s] %s", run.run_id, message)
+            return
+        if state == R.HANDED_OFF and previous is not None and previous.state == state and self._last_message(previous) == message:
+            log.info("[%s] 같은 사유로 다시 넘김. 알림은 생략한다: %s", run.run_id, message)
+            return
+        self._notify(run, f"{TITLES.get(state, state)}  `{run.run_id}`\n{message}")
+
+    def _approve_hint(self, run_id: str) -> str:
+        command = f"`{self.approve_command} {run_id}`"
+        if not self.approve_url:
+            return command
+        return f"<{self.approve_url.rstrip('/')}/#agent/{run_id}|플랫폼에서 승인> 또는 {command}"
+
+    def _last_message(self, run: Run) -> str | None:
+        events = self.d.runs.events(run.run_id)
+        return events[-1]["message"] if events else None
 
     def _notify(self, run: Run, text: str) -> None:
-        self.d.notifier.send(f"[agent {run.run_id}] {text}")
+        self.d.notifier.send(text)
 
 
 def _codes(decision: Decision) -> str:
@@ -227,6 +284,13 @@ def _decision_summary(decision: Decision) -> dict[str, Any]:
     return {"decision_id": decision.decision_id, "outcome": decision.outcome, "reason_codes": list(decision.reason_codes)}
 
 
-def _describe(proposal: Proposal) -> str:
-    changes = ", ".join(f"{c.key}={c.value}" for c in proposal.changes)
-    return f"변경: {changes}\n원인: {proposal.cause}\n영향: {proposal.impact}\n검증: {proposal.verification}"
+def _code_list(decision: Decision) -> str:
+    return ", ".join(f"`{code}`" for code in decision.reason_codes) or "-"
+
+
+def _describe(proposal: Proposal, current: Mapping[str, Any] | None = None) -> str:
+    before = current or {}
+    changes = "\n".join(
+        f"• `{c.key}`  `{before.get(c.key, '-')}` → `{c.value}`" for c in proposal.changes
+    )
+    return f"*변경*\n{changes}\n*원인*  {proposal.cause}\n*영향*  {proposal.impact}\n*검증*  {proposal.verification}"
