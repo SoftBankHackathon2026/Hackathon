@@ -1,8 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from controlplane.core.config import PlatformEnvironment
 from controlplane.core.errors import InvalidRequest
+from controlplane.domain.fleet import MigrationConfig, TaskDefaults
 from controlplane.domain.migration import Direction
+from controlplane.integrations.config import load_fleet_config
 from controlplane.integrations.defaults import DEFAULT_FLEET
 from controlplane.main import create_app
 from controlplane.repositories.migration_tasks import MemoryMigrationTasks, MigrationTaskJournal
@@ -142,3 +145,63 @@ def test_data_names_can_follow_the_runner_targets():
     )
     task = config.migration("onprem_to_aws_001")
     assert (task.data_source, task.data_target) == ("onprem_return", "aws")
+
+
+def with_defaults(worker_url, connect_url):
+    config = DEFAULT_FLEET.model_copy(deep=True)
+    config.task_defaults = TaskDefaults(worker_url=worker_url, connect_url=connect_url)
+    return config
+
+
+def test_created_and_stored_tasks_get_the_runner_status_urls():
+    repository = MemoryMigrationTasks()
+    first = with_defaults("http://worker", "http://connect")
+    created = MigrationTaskService(first, repository).create(
+        MigrationCreate(source_env="onprem", target_env="aws"), None
+    )
+    task = first.migration(created.job_id)
+    assert (task.worker_url, task.connect_url) == ("http://worker", "http://connect")
+    assert repository.list()[0].worker_url is None
+    second = with_defaults("http://worker", "http://connect")
+    MigrationTaskService(second, repository).sync()
+    stored = second.migration(created.job_id)
+    assert (stored.worker_url, stored.connect_url) == ("http://worker", "http://connect")
+
+
+def test_task_defaults_keep_explicit_urls_and_skip_empty_ones():
+    repository = MemoryMigrationTasks()
+    repository.add(
+        MigrationConfig(
+            job_id="onprem_to_aws_001",
+            direction=Direction.FORWARD,
+            source_env="onprem",
+            target_env="aws",
+            data_source="onprem",
+            data_target="aws",
+            worker_url="http://own",
+        ),
+        None,
+    )
+    config = with_defaults("http://worker", "")
+    MigrationTaskService(config, repository).sync()
+    task = config.migration("onprem_to_aws_001")
+    assert (task.worker_url, task.connect_url) == ("http://own", None)
+
+
+def test_fleet_file_fills_task_defaults_from_the_environment(tmp_path, monkeypatch):
+    fleet = tmp_path / "fleet.json"
+    fleet.write_text(
+        DEFAULT_FLEET.model_copy(
+            update={
+                "migrations": [],
+                "task_defaults": TaskDefaults(
+                    worker_url="${ONEPORT_ONPREM_WORKER_URL}",
+                    connect_url="${ONEPORT_ONPREM_CONNECT_URL}",
+                ),
+            }
+        ).model_dump_json()
+    )
+    monkeypatch.setenv("ONEPORT_ONPREM_WORKER_URL", "http://worker")
+    monkeypatch.delenv("ONEPORT_ONPREM_CONNECT_URL", raising=False)
+    config = load_fleet_config(PlatformEnvironment(fleet_config=fleet))
+    assert config.task_defaults == TaskDefaults(worker_url="http://worker", connect_url="")
