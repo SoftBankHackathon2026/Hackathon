@@ -1,4 +1,4 @@
-"""Generate real upstream artifacts from the pinned, unmodified PR #51 checkout."""
+"""Generate real upstream artifacts from the PR #51 identity code in this tree."""
 
 import os
 import subprocess
