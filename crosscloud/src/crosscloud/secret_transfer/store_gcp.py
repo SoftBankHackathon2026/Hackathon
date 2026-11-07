@@ -3,9 +3,12 @@
   secrets = store_gcp.GcpSecretStore(
       secretmanager.SecretManagerServiceClient(), project="ghost-project")
 
-버전은 불변이고 `latest` 는 가장 최근의 활성 버전이다. 되돌리기는 이 실행이
-만든 버전을 파기(destroy)하는 것이고, 그러면 `latest` 가 앞 버전으로 돌아간다.
-쓰기에 멱등 토큰이 없어서, latest 가 이미 같은 값이면 쓰지 않는다. 오가는
+버전은 불변이다. `latest` 별칭은 상태와 무관하게 마지막에 만든 버전을
+가리킨다 — 그 버전을 파기하면 `latest` 읽기는 FailedPrecondition 이 된다. 그래서
+"현재 값"은 `latest` 가 아니라 활성(ENABLED) 버전 중 가장 최근 것으로 정한다
+(목록 조회라 secretmanager.versions.list 권한이 필요하다). 되돌리기는 이 실행이
+만든 버전을 파기(destroy)하는 것이고, 그러면 앞 활성 버전이 현재 값이 된다.
+쓰기에 멱등 토큰이 없어서, 현재 값이 이미 같으면 쓰지 않는다. 오가는
 페이로드는 CRC32C 로 확인한다.
 """
 
@@ -26,7 +29,7 @@ class GcpSecretStore:
         self._project = project
 
     def read_current(self, secret_id: str) -> bytes | None:
-        """현재(latest) 값. 버전이 없으면(NotFound) None."""
+        """활성 버전 중 가장 최근 값. 활성 버전이 없으면 None."""
         current = self._current_version(secret_id)
         return None if current is None else current[1]
 
@@ -37,7 +40,7 @@ class GcpSecretStore:
     def add_version(
         self, secret_id: str, value: bytes, token: str
     ) -> store.WrittenVersion:
-        """현재(latest) 값과 다를 때만 새 버전을 쓴다(token 은 쓰지 않는다)."""
+        """현재 값과 다를 때만 새 버전을 쓴다(token 은 쓰지 않는다)."""
         del token  # GCP 는 쓰기 멱등 토큰이 없다. 대신 같은 값이면 건너뛴다.
         current = self._current_version(secret_id)
         if current is not None and current[1] == value:
@@ -71,12 +74,23 @@ class GcpSecretStore:
         return "retired"
 
     def _current_version(self, secret_id: str) -> tuple[str, bytes] | None:
-        try:
-            return self._access(secret_id, f"{self._name(secret_id)}/latest")
-        except store.SecretStoreError as e:
-            if e.reason == "NotFound":
-                return None
-            raise
+        versions = self._call(
+            "list_versions",
+            secret_id,
+            self._client.list_secret_versions,
+            request={
+                "parent": self._secret_name(secret_id),
+                "filter": "state:ENABLED",
+            },
+        )
+        # 페이지 반복도 API 호출이라 같은 오류 변환 안에서 이름을 모은다.
+        names = self._call(
+            "list_versions", secret_id, _names_of, versions=versions
+        )
+        if not names:
+            return None
+        newest = max(names, key=lambda name: int(name.rsplit("/", 1)[1]))
+        return self._access(secret_id, newest)
 
     def _access(self, secret_id: str, version_name: str) -> tuple[str, bytes]:
         response = self._call(
@@ -95,9 +109,6 @@ class GcpSecretStore:
             return secret_id
         return f"projects/{self._project}/secrets/{secret_id}"
 
-    def _name(self, secret_id: str) -> str:
-        return f"{self._secret_name(secret_id)}/versions"
-
     @staticmethod
     def _call(
         operation: str, secret_id: str, method: Any, **kwargs: Any
@@ -108,6 +119,10 @@ class GcpSecretStore:
         except google_exceptions.GoogleAPIError as e:
             reason = type(e).__name__
             raise store.SecretStoreError(operation, secret_id, reason) from None
+
+
+def _names_of(versions: Any) -> list[str]:
+    return [version.name for version in versions]
 
 
 def _written(

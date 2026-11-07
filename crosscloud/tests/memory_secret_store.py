@@ -11,6 +11,8 @@ class MemorySecretStore:
         self.reads: list[str] = []
         self.fail_add_for: set[str] = set()
         self.fail_read_for: set[str] = set()
+        self.fail_read_back_for: dict[str, Exception] = {}
+        self.fail_retire_for: set[str] = set()
         self.corrupt_read_back_for: set[str] = set()
         for secret_id, value in (values or {}).items():
             self.versions[secret_id] = [[f"{secret_id}/1", value, False]]
@@ -27,6 +29,8 @@ class MemorySecretStore:
 
     def read_version(self, secret_id: str, version_id: str) -> bytes:
         self.reads.append(secret_id)
+        if secret_id in self.fail_read_back_for:
+            raise self.fail_read_back_for[secret_id]
         for vid, value, destroyed in self.versions.get(secret_id, []):
             if vid == version_id and not destroyed:
                 if secret_id in self.corrupt_read_back_for:
@@ -52,6 +56,8 @@ class MemorySecretStore:
     def retire_version(self, written: store.WrittenVersion) -> str:
         if not written.created:
             return "kept"
+        if written.secret_id in self.fail_retire_for:
+            raise store.SecretStoreError("retire", written.secret_id, "Denied")
         for entry in self.versions[written.secret_id]:
             if entry[0] == written.version_id:
                 entry[2] = True

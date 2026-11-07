@@ -7,7 +7,9 @@ AWSCURRENT 를 받고, 직전 AWSCURRENT 는 AWSPREVIOUS 를 받으며, 그 전
 AWSPREVIOUS 는 레이블을 잃는다. 그래서 쓰기 전에 스테이지 맵을 기록하고,
 되돌리기는 레이블을 원래 자리로 옮기는 것이다. 값의 파기는 Secret 삭제다.
 ClientRequestToken 이 곧 VersionId 라 같은 토큰의 재시도는 새 버전을 만들지
-않는다.
+않는다. 다만 같은 토큰 버전이 레이블 없이 남아 있으면(같은 run_id 로 되돌린 뒤
+재실행) AWS 는 쓰기를 조용히 무시한다. 그래서 쓰기 전에 레이블 없는 버전까지
+나열해 토큰이 현재 버전일 때만 재시도로 받고, 그 밖은 token_reused 로 거부한다.
 """
 
 from typing import Any
@@ -61,13 +63,12 @@ class AwsSecretStore:
 
         ECS 의 Secret 주입은 SecretString 만 받으므로 문자열이 기본이다.
         """
-        stages = self._call(
-            "describe",
-            secret_id,
-            self._client.describe_secret,
-            SecretId=secret_id,
-        ).get("VersionIdsToStages", {})
+        stages = self._stages(secret_id)
         if token in stages:
+            if _CURRENT not in stages[token]:
+                raise store.SecretStoreError(
+                    "add_version", secret_id, "token_reused"
+                )
             return _retried(secret_id, token, stages)
         self._call(
             "add_version",
@@ -83,6 +84,25 @@ class AwsSecretStore:
             created=True,
             prior_labels=_labels(stages, (_CURRENT, _PREVIOUS)),
         )
+
+    def _stages(self, secret_id: str) -> dict[str, list[str]]:
+        """버전 → 스테이지 레이블. 레이블 없는(deprecated) 버전도 담는다."""
+        stages: dict[str, list[str]] = {}
+        page_token: dict[str, str] = {}
+        while True:
+            page = self._call(
+                "list_versions",
+                secret_id,
+                self._client.list_secret_version_ids,
+                SecretId=secret_id,
+                IncludeDeprecated=True,
+                **page_token,
+            )
+            for version in page.get("Versions", ()):
+                stages[version["VersionId"]] = version.get("VersionStages", [])
+            if "NextToken" not in page:
+                return stages
+            page_token = {"NextToken": page["NextToken"]}
 
     def retire_version(
         self, written: store.WrittenVersion

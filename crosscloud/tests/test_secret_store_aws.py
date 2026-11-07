@@ -75,18 +75,35 @@ def test_read_version_reads_by_version_id(client):
     assert value == b"v"
 
 
-def test_add_version_records_stage_map_and_uses_request_token(client):
-    secrets, stubber = client
+def _expect_versions(stubber, secret_id, stages):
+    """ListSecretVersionIds(IncludeDeprecated) 한 쪽 응답을 기대한다."""
     stubber.add_response(
-        "describe_secret",
+        "list_secret_version_ids",
         {
             "ARN": _ARN,
-            "VersionIdsToStages": {
-                _OLD_CURRENT: ["AWSCURRENT"],
-                _OLD_PREVIOUS: ["AWSPREVIOUS"],
-            },
+            # 레이블 없는(deprecated) 버전은 VersionStages 키가 없다.
+            "Versions": [
+                {
+                    "VersionId": version,
+                    **({"VersionStages": labels} if labels else {}),
+                }
+                for version, labels in stages.items()
+            ],
         },
-        {"SecretId": "tgt/db-url"},
+        {"SecretId": secret_id, "IncludeDeprecated": True},
+    )
+
+
+def test_add_version_records_stage_map_and_uses_request_token(client):
+    secrets, stubber = client
+    _expect_versions(
+        stubber,
+        "tgt/db-url",
+        {
+            _OLD_CURRENT: ["AWSCURRENT"],
+            _OLD_PREVIOUS: ["AWSPREVIOUS"],
+            "33333333-0000-4000-8000-000000000003": [],
+        },
     )
     stubber.add_response(
         "put_secret_value",
@@ -115,9 +132,7 @@ def test_add_version_records_stage_map_and_uses_request_token(client):
 
 def test_add_version_writes_non_utf8_value_as_binary(client):
     secrets, stubber = client
-    stubber.add_response(
-        "describe_secret", {"ARN": _ARN}, {"SecretId": "tgt/key"}
-    )
+    _expect_versions(stubber, "tgt/key", {})
     stubber.add_response(
         "put_secret_value",
         {"ARN": _ARN, "VersionId": _TOKEN},
@@ -137,16 +152,10 @@ def test_add_version_writes_non_utf8_value_as_binary(client):
 
 def test_add_version_retry_does_not_write_again(client):
     secrets, stubber = client
-    stubber.add_response(
-        "describe_secret",
-        {
-            "ARN": _ARN,
-            "VersionIdsToStages": {
-                _TOKEN: ["AWSCURRENT"],
-                _OLD_CURRENT: ["AWSPREVIOUS"],
-            },
-        },
-        {"SecretId": "tgt/db-url"},
+    _expect_versions(
+        stubber,
+        "tgt/db-url",
+        {_TOKEN: ["AWSCURRENT"], _OLD_CURRENT: ["AWSPREVIOUS"]},
     )
 
     written = store_aws.AwsSecretStore(secrets).add_version(
@@ -155,6 +164,25 @@ def test_add_version_retry_does_not_write_again(client):
 
     assert written.created is True
     assert written.prior_labels == (("AWSCURRENT", _OLD_CURRENT),)
+
+
+@pytest.mark.parametrize("labels", [["AWSPREVIOUS"], []])
+def test_add_version_refuses_token_whose_version_is_not_current(client, labels):
+    # 같은 run_id 로 되돌린 뒤 다시 돌린 경우다. 레이블 없는 같은 토큰
+    # 버전이 있으면 AWS 는 쓰기를 조용히 무시하므로 쓰기 전에 멈춘다.
+    secrets, stubber = client
+    _expect_versions(
+        stubber,
+        "tgt/db-url",
+        {_TOKEN: labels, _OLD_CURRENT: ["AWSCURRENT"]},
+    )
+
+    with pytest.raises(store.SecretStoreError) as excinfo:
+        store_aws.AwsSecretStore(secrets).add_version(
+            "tgt/db-url", b"v", _TOKEN
+        )
+
+    assert excinfo.value.reason == "token_reused"
 
 
 def test_retire_moves_labels_back_to_prior_versions(client):
@@ -252,9 +280,7 @@ def test_retire_keeps_version_not_created_by_this_run(client):
 
 def test_client_errors_become_store_error_without_value(client):
     secrets, stubber = client
-    stubber.add_response(
-        "describe_secret", {"ARN": _ARN}, {"SecretId": "tgt/db-url"}
-    )
+    _expect_versions(stubber, "tgt/db-url", {})
     stubber.add_client_error(
         "put_secret_value",
         service_error_code="AccessDeniedException",
@@ -274,8 +300,8 @@ def test_client_errors_become_store_error_without_value(client):
 class _ValidationFailingClient:
     """botocore 처럼 인자 검사 오류 메시지에 요청 값을 담는 클라이언트."""
 
-    def describe_secret(self, **kwargs):
-        return {}
+    def list_secret_version_ids(self, **kwargs):
+        return {"Versions": []}
 
     def put_secret_value(self, **kwargs):
         raise botocore_exceptions.ParamValidationError(

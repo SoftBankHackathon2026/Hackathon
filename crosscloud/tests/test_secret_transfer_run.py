@@ -4,7 +4,7 @@ import traceback
 import pytest
 from memory_secret_store import MemorySecretStore
 
-from crosscloud.secret_transfer import run
+from crosscloud.secret_transfer import run, store
 
 _CANARY = b"canary-7f3a91-should-not-leak"
 _RUN_ID = "ccx-s1-forward"
@@ -131,7 +131,17 @@ def test_roll_back_retires_only_versions_this_run_created():
     assert target.read_current("tgt-db-url") == b"older"
 
 
-@pytest.mark.parametrize("logger_name", ["botocore", "google", "urllib3"])
+@pytest.mark.parametrize(
+    "logger_name",
+    [
+        "botocore",
+        "botocore.parsers",
+        "botocore.endpoint",
+        "google",
+        "google.api_core.grpc_helpers",
+        "urllib3",
+    ],
+)
 def test_transfer_refuses_when_client_debug_logging_is_on(logger_name):
     logger = logging.getLogger(logger_name)
     previous = logger.level
@@ -167,3 +177,73 @@ def test_transfer_reports_source_read_failure():
         )
 
     assert excinfo.value.error_class == "source_read_failed"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            store.SecretStoreError("read_version", "tgt-db-url", "Unavailable"),
+            run.SecretTransferError,
+        ),
+        (RuntimeError("connection reset"), RuntimeError),
+    ],
+)
+def test_read_back_failure_rolls_back_the_version_just_written(error, expected):
+    source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
+    target = MemorySecretStore()
+    target.fail_read_back_for["tgt-db-url"] = error
+
+    with pytest.raises(expected):
+        run.transfer_secrets(
+            (_item("src/a", "tgt-a"), _item()),
+            frozenset({"src/a", "src/db-url"}),
+            source,
+            target,
+            _RUN_ID,
+        )
+
+    assert target.read_current("tgt-a") is None
+    assert target.read_current("tgt-db-url") is None
+
+
+def test_rollback_continues_past_a_failed_retire():
+    source = MemorySecretStore({"src/a": b"first", "src/db-url": _CANARY})
+    target = MemorySecretStore()
+    target.corrupt_read_back_for.add("tgt-db-url")
+    target.fail_retire_for.add("tgt-db-url")
+
+    with pytest.raises(run.SecretTransferError) as excinfo:
+        run.transfer_secrets(
+            (_item("src/a", "tgt-a"), _item()),
+            frozenset({"src/a", "src/db-url"}),
+            source,
+            target,
+            _RUN_ID,
+        )
+
+    assert excinfo.value.error_class == "mismatch"
+    assert target.read_current("tgt-a") is None
+
+
+def test_roll_back_reports_failed_retire():
+    target = MemorySecretStore()
+    source = MemorySecretStore({"src/db-url": _CANARY})
+    results = run.transfer_secrets(
+        (_item(),), frozenset({"src/db-url"}), source, target, _RUN_ID
+    )
+    target.fail_retire_for.add("tgt-db-url")
+
+    assert run.roll_back_transfer(results, target) == ("failed",)
+
+
+def test_allowed_ids_must_be_a_frozenset():
+    # 문자열은 Collection 이라 'in' 이 부분 문자열 검사로 바뀐다.
+    with pytest.raises(TypeError):
+        run.transfer_secrets(
+            (_item(),),
+            "src/db-url",
+            MemorySecretStore({"src/db-url": _CANARY}),
+            MemorySecretStore(),
+            _RUN_ID,
+        )

@@ -6,12 +6,50 @@
 """
 
 import dataclasses
+import logging
 import uuid
 from typing import Literal, Protocol
 
 RetireOutcome = Literal["retired", "kept", "left_current"]
 
 _TOKEN_NAMESPACE = uuid.UUID("5b0f4c6e-2f1a-4b8e-9a51-6c1d0e7a3f20")
+
+# DEBUG 에서 요청·응답 본문(비밀값)을 로그로 남길 수 있는 SDK 로거 트리.
+# 하위 로거(botocore.parsers 등)만 DEBUG 여도 값이 찍힌다.
+_SDK_LOGGERS = ("botocore", "boto3", "google", "urllib3", "psycopg")
+
+
+class UnsafeLoggingError(Exception):
+    """SDK 로거가 DEBUG 라 비밀값이 로그에 남을 수 있다."""
+
+
+def refuse_sdk_debug_logging() -> None:
+    """SDK 로거 트리 어디든 실효 수준이 DEBUG 면 거부한다.
+
+    비밀값을 읽거나 쓰기 전에 부른다. 루트 로거가 DEBUG 여도 걸린다.
+
+    Raises:
+        UnsafeLoggingError: DEBUG 가 켜진 로거 이름을 담아.
+    """
+    noisy = [
+        name
+        for name in _sdk_logger_names()
+        if logging.getLogger(name).isEnabledFor(logging.DEBUG)
+    ]
+    if noisy:
+        raise UnsafeLoggingError(
+            "DEBUG 로그가 켜진 SDK 로거: " + ", ".join(noisy)
+        )
+
+
+def _sdk_logger_names() -> list[str]:
+    existing = [
+        name
+        for name, logger in logging.root.manager.loggerDict.items()
+        if isinstance(logger, logging.Logger)
+        and any(name.startswith(p + ".") for p in _SDK_LOGGERS)
+    ]
+    return [*_SDK_LOGGERS, *sorted(existing)]
 
 
 def version_token(run_id: str, key: str) -> str:
