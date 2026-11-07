@@ -91,140 +91,149 @@ export function StandardsTable({
   if (rows.length === 0)
     return <p className="pk-empty">연결된 보안 표준이 없어요.</p>;
   return (
-    <table className="pk-table std-table">
-      <thead>
-        <tr>
-          <th>표준, 통제</th>
-          <th>심각도</th>
-          <th className="num">결과(통과/실패)</th>
-          <th>준수율</th>
-          <th>판정</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => {
-          const isOpen = open.includes(row.standard.id);
-          const band = row.rate === null ? null : scoreBand(row.rate);
-          const toggle = () =>
-            setOpen(
-              isOpen
-                ? open.filter((id) => id !== row.standard.id)
-                : [...open, row.standard.id],
-            );
-          return (
-            <Fragment key={row.standard.id}>
-              <tr
-                className="clickable std-group"
-                aria-expanded={isOpen}
-                tabIndex={0}
-                onClick={toggle}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    toggle();
-                  }
-                }}
-              >
-                <td>
-                  <span className="std-name">
-                    <span
-                      className={`pk-chevron${isOpen ? " open" : ""}`}
-                      aria-hidden="true"
-                    />
-                    <span>
-                      <span className="rule-title">{row.standard.name}</span>
-                      <span className="rule-sub">
-                        {row.standard.id}, 통제 {row.members.length}개
+    <div
+      className="table-wrap"
+      tabIndex={0}
+      role="region"
+      aria-label="보안 표준 목록"
+    >
+      <table className="pk-table std-table">
+        <thead>
+          <tr>
+            <th>표준, 통제</th>
+            <th>심각도</th>
+            <th className="num">결과(통과/실패)</th>
+            <th>준수율</th>
+            <th>판정</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const isOpen = open.includes(row.standard.id);
+            const band = row.rate === null ? null : scoreBand(row.rate);
+            const toggle = () =>
+              setOpen(
+                isOpen
+                  ? open.filter((id) => id !== row.standard.id)
+                  : [...open, row.standard.id],
+              );
+            return (
+              <Fragment key={row.standard.id}>
+                <tr
+                  className="clickable std-group"
+                  aria-expanded={isOpen}
+                  tabIndex={0}
+                  onClick={toggle}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      toggle();
+                    }
+                  }}
+                >
+                  <td>
+                    <span className="std-name">
+                      <span
+                        className={`pk-chevron${isOpen ? " open" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        <span className="rule-title">{row.standard.name}</span>
+                        <span className="rule-sub">
+                          {row.standard.id}, 통제 {row.members.length}개
+                        </span>
                       </span>
                     </span>
-                  </span>
-                </td>
-                <td />
-                <td className="num">
-                  <Counts pass={row.pass} fail={row.fail} />
-                </td>
-                <td>
-                  <Posture rate={row.rate} />
-                </td>
-                <td>
-                  <span className="std-verdict">
-                    {band ? (
-                      <StatusLabel tone={BAND_TONES[band]}>
-                        {BAND_LABELS[band]}
-                      </StatusLabel>
-                    ) : (
-                      <StatusLabel tone="idle">점검 결과 부족</StatusLabel>
-                    )}
-                    {row.fail > 0 && (
-                      <button
-                        type="button"
-                        className="pk-action"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSelect(row.standard.id);
+                  </td>
+                  <td />
+                  <td className="num">
+                    <Counts pass={row.pass} fail={row.fail} />
+                  </td>
+                  <td>
+                    <Posture rate={row.rate} />
+                  </td>
+                  <td>
+                    <span className="std-verdict">
+                      {band ? (
+                        <StatusLabel tone={BAND_TONES[band]}>
+                          {BAND_LABELS[band]}
+                        </StatusLabel>
+                      ) : (
+                        <StatusLabel tone="idle">점검 결과 부족</StatusLabel>
+                      )}
+                      {row.fail > 0 && (
+                        <button
+                          type="button"
+                          className="pk-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSelect(row.standard.id);
+                          }}
+                        >
+                          실패 통제 보기
+                        </button>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+                {isOpen &&
+                  row.members.map((control) => {
+                    const t = tally([control], envIds);
+                    const tone: Tone =
+                      t.fail > 0 ? "bad" : t.unknown > 0 ? "idle" : "ok";
+                    const ref = control.standard_refs.find(
+                      (r) => standardId(r) === row.standard.id,
+                    );
+                    return (
+                      <tr
+                        key={control.id}
+                        className="clickable std-child"
+                        tabIndex={0}
+                        onClick={() => onControl(control.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") onControl(control.id);
                         }}
                       >
-                        실패 통제 보기
-                      </button>
-                    )}
-                  </span>
-                </td>
-              </tr>
-              {isOpen &&
-                row.members.map((control) => {
-                  const t = tally([control], envIds);
-                  const tone: Tone =
-                    t.fail > 0 ? "bad" : t.unknown > 0 ? "idle" : "ok";
-                  const ref = control.standard_refs.find(
-                    (r) => standardId(r) === row.standard.id,
-                  );
-                  return (
-                    <tr
-                      key={control.id}
-                      className="clickable std-child"
-                      tabIndex={0}
-                      onClick={() => onControl(control.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") onControl(control.id);
-                      }}
-                    >
-                      <td>
-                        <span className="rule-cell">
-                          <CategoryIcon category={control.category} />
-                          <span className="rule-text">
-                            <span className="rule-title">{control.title}</span>
-                            <span className="rule-sub">
-                              {control.id}
-                              {ref ? `, ${ref}` : ""}
+                        <td>
+                          <span className="rule-cell">
+                            <CategoryIcon category={control.category} />
+                            <span className="rule-text">
+                              <span className="rule-title">
+                                {control.title}
+                              </span>
+                              <span className="rule-sub">
+                                {control.id}
+                                {ref ? `, ${ref}` : ""}
+                              </span>
                             </span>
                           </span>
-                        </span>
-                      </td>
-                      <td>
-                        <SeverityMeter severity={control.severity} />
-                      </td>
-                      <td className="num">
-                        <Counts pass={t.pass} fail={t.fail} />
-                      </td>
-                      <td>
-                        <Posture rate={t.rate} />
-                      </td>
-                      <td>
-                        <StatusLabel tone={tone}>
-                          {tone === "bad"
-                            ? "실패"
-                            : tone === "idle"
-                              ? "미확인"
-                              : "통과"}
-                        </StatusLabel>
-                      </td>
-                    </tr>
-                  );
-                })}
-            </Fragment>
-          );
-        })}
-      </tbody>
-    </table>
+                        </td>
+                        <td>
+                          <SeverityMeter severity={control.severity} />
+                        </td>
+                        <td className="num">
+                          <Counts pass={t.pass} fail={t.fail} />
+                        </td>
+                        <td>
+                          <Posture rate={t.rate} />
+                        </td>
+                        <td>
+                          <StatusLabel tone={tone}>
+                            {tone === "bad"
+                              ? "실패"
+                              : tone === "idle"
+                                ? "미확인"
+                                : "통과"}
+                          </StatusLabel>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
