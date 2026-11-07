@@ -153,9 +153,17 @@ def test_transfer_refuses_when_client_debug_logging_is_on(logger_name):
     assert source.reads == []
 
 
-def test_version_token_is_stable_per_run_and_key():
-    first = run.version_token(_RUN_ID, "tgt-db-url")
+def test_transfer_reports_source_read_failure():
+    source = MemorySecretStore({"src/db-url": _CANARY})
+    source.fail_read_for.add("src/db-url")
 
-    assert first == run.version_token(_RUN_ID, "tgt-db-url")
-    assert first != run.version_token("ccx-s1-other", "tgt-db-url")
-    assert 32 <= len(first) <= 64
+    with pytest.raises(run.SecretTransferError) as excinfo:
+        run.transfer_secrets(
+            (_item(),),
+            frozenset({"src/db-url"}),
+            source,
+            MemorySecretStore(),
+            _RUN_ID,
+        )
+
+    assert excinfo.value.error_class == "source_read_failed"

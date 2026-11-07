@@ -27,12 +27,8 @@ class GcpSecretStore:
 
     def read_current(self, secret_id: str) -> bytes | None:
         """현재(latest) 값. 버전이 없으면(NotFound) None."""
-        try:
-            return self._access(secret_id, f"{self._name(secret_id)}/latest")[1]
-        except store.SecretStoreError as e:
-            if e.reason == "NotFound":
-                return None
-            raise
+        current = self._current_version(secret_id)
+        return None if current is None else current[1]
 
     def read_version(self, secret_id: str, version_id: str) -> bytes:
         """버전 리소스 이름(…/versions/N)으로 고정한 값."""

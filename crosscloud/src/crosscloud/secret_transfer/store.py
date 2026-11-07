@@ -6,9 +6,20 @@
 """
 
 import dataclasses
+import uuid
 from typing import Literal, Protocol
 
 RetireOutcome = Literal["retired", "kept", "left_current"]
+
+_TOKEN_NAMESPACE = uuid.UUID("5b0f4c6e-2f1a-4b8e-9a51-6c1d0e7a3f20")
+
+
+def version_token(run_id: str, key: str) -> str:
+    """실행·대상마다 고정된 쓰기 토큰. 재시도가 같은 버전을 가리키게 한다.
+
+    AWS ClientRequestToken(32~64자)으로 쓴다. 키는 보통 대상 Secret 식별자다.
+    """
+    return str(uuid.uuid5(_TOKEN_NAMESPACE, f"{run_id}/{key}"))
 
 
 @dataclasses.dataclass(frozen=True)

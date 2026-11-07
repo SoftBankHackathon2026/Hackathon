@@ -13,7 +13,6 @@ import dataclasses
 import hashlib
 import hmac
 import logging
-import uuid
 from collections.abc import Collection, Sequence
 from typing import Literal
 
@@ -24,7 +23,6 @@ _log = logging.getLogger(__name__)
 # 클라이언트 라이브러리가 DEBUG 에서 요청 본문(값)을 로그로 남길 수 있는
 # 로거들. 하나라도 DEBUG 가 켜져 있으면 값을 읽기 전에 멈춘다.
 _REQUEST_LOGGERS = ("botocore", "boto3", "google", "urllib3")
-_TOKEN_NAMESPACE = uuid.UUID("5b0f4c6e-2f1a-4b8e-9a51-6c1d0e7a3f20")
 
 ErrorClass = Literal[
     "not_allowed",
@@ -66,11 +64,6 @@ class SecretTransferError(Exception):
         """Args: 실패 분류, 값이 없는 설명(식별자·오류 코드)."""
         super().__init__(f"{error_class}: {detail}")
         self.error_class = error_class
-
-
-def version_token(run_id: str, key: str) -> str:
-    """실행·대상마다 고정된 쓰기 토큰. 재시도가 같은 버전을 가리키게 한다."""
-    return str(uuid.uuid5(_TOKEN_NAMESPACE, f"{run_id}/{key}"))
 
 
 def transfer_secrets(
@@ -170,7 +163,7 @@ def _transfer_one(
         written = target.add_version(
             item.target_secret_id,
             value,
-            version_token(run_id, item.target_secret_id),
+            store.version_token(run_id, item.target_secret_id),
         )
         copied = target.read_version(written.secret_id, written.version_id)
     except store.SecretStoreError as e:

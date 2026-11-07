@@ -25,6 +25,7 @@ class FakeSecretManager:
         self.added: list[dict] = []
         self.corrupt_crc = False
         self.add_error: Exception | None = None
+        self.access_error: Exception | None = None
 
     def _latest(self, secret: str) -> str | None:
         names = [
@@ -35,6 +36,8 @@ class FakeSecretManager:
         return max(names, default=None)
 
     def access_secret_version(self, request):
+        if self.access_error is not None:
+            raise self.access_error
         name = request["name"]
         secret, _, version = name.partition("/versions/")
         if version == "latest":
@@ -151,3 +154,18 @@ def test_api_errors_become_store_error_without_value():
     assert _CANARY.decode() not in "".join(
         traceback.format_exception(excinfo.value)
     )
+
+
+def test_read_current_raises_other_api_errors():
+    fake = FakeSecretManager()
+    fake.access_error = google_exceptions.PermissionDenied("denied")
+
+    with pytest.raises(store.SecretStoreError, match="PermissionDenied"):
+        _store(fake).read_current("ccx-s1-db-url")
+
+
+def test_full_secret_name_is_used_as_is():
+    fake = FakeSecretManager()
+    fake.versions[_SECRET + "/versions/1"] = b"v"
+
+    assert _store(fake).read_current(_SECRET) == b"v"

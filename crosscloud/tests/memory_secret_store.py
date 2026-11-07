@@ -10,6 +10,7 @@ class MemorySecretStore:
         self.versions: dict[str, list[list]] = {}
         self.reads: list[str] = []
         self.fail_add_for: set[str] = set()
+        self.fail_read_for: set[str] = set()
         self.corrupt_read_back_for: set[str] = set()
         for secret_id, value in (values or {}).items():
             self.versions[secret_id] = [[f"{secret_id}/1", value, False]]
@@ -19,6 +20,8 @@ class MemorySecretStore:
 
     def read_current(self, secret_id: str) -> bytes | None:
         self.reads.append(secret_id)
+        if secret_id in self.fail_read_for:
+            raise store.SecretStoreError("read_current", secret_id, "Denied")
         live = self._live(secret_id)
         return live[-1][1] if live else None
 

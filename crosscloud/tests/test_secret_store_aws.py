@@ -291,3 +291,13 @@ def test_parameter_validation_error_does_not_leak_value():
 
     assert excinfo.value.reason == "ParamValidationError"
     assert _CANARY not in "".join(traceback.format_exception(excinfo.value))
+
+
+def test_read_current_raises_other_client_errors(client):
+    secrets, stubber = client
+    stubber.add_client_error(
+        "get_secret_value", service_error_code="AccessDeniedException"
+    )
+
+    with pytest.raises(store.SecretStoreError, match="AccessDenied"):
+        store_aws.AwsSecretStore(secrets).read_current("app/db-url")
