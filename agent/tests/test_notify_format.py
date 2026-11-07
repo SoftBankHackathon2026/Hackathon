@@ -53,7 +53,7 @@ def test_resolved_flow_titles(make_world) -> None:
 
 
 def test_thread_ts_is_sent_in_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    hook = notify.SlackWebhookNotifier("https://hooks.slack.com/services/T/B/X", thread_ts="1794036316.116759")
+    hook = notify.SlackWebhookNotifier("https://hooks.slack.com/services/T/B/X", thread_ts="1700000000.000100")
     seen = {}
 
     class Resp:
@@ -72,12 +72,37 @@ def test_thread_ts_is_sent_in_payload(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(hook._opener, "open", open_)
     hook.send("hello")
-    assert seen["body"] == {"text": "hello", "thread_ts": "1794036316.116759"}
+    assert seen["body"] == {"text": "hello", "thread_ts": "1700000000.000100"}
 
 
 def test_config_reads_thread_and_approve_command() -> None:
-    raw = {**RAW, "slack": {"thread_ts": "1794036316.116759"}, "approve_command": "oneport-agent approve"}
+    raw = {**RAW, "slack": {"thread_ts": "1700000000.000100"}, "approve_command": "oneport-agent approve"}
     cfg = parse_config(raw, {"VAULT_TOKEN": "t"})
-    assert cfg.slack_thread_ts == "1794036316.116759" and cfg.approve_command == "oneport-agent approve"
+    assert cfg.slack_thread_ts == "1700000000.000100" and cfg.approve_command == "oneport-agent approve"
     with pytest.raises(ConfigError):
-        parse_config({**RAW, "slack": {"thread_ts": "p1794036316116759"}}, {"VAULT_TOKEN": "t"})
+        parse_config({**RAW, "slack": {"thread_ts": "p1700000000000100"}}, {"VAULT_TOKEN": "t"})
+
+
+def test_unverified_hold_alerts_only_after_three_in_a_row(make_world) -> None:
+    w = make_world(kv=good_kv(), evaluator=FakeEvaluator(extra_reason="APP-01-UNVERIFIED", force_outcome="hold"))
+    for _ in range(2):
+        assert w.remediator.run().state == "HANDED_OFF"
+    assert w.notes == []
+    w.remediator.run()
+    assert len(w.notes) == 1 and w.notes[0].startswith("🙋")
+    for _ in range(3):
+        w.remediator.run()
+    assert len(w.notes) == 1
+
+
+def test_unverified_blip_between_normal_runs_stays_quiet(make_world) -> None:
+    from agent.remediation import Remediator
+
+    w = make_world(kv=good_kv(), evaluator=FakeEvaluator(extra_reason="APP-01-UNVERIFIED", force_outcome="hold"))
+    w.remediator.run()
+    w.evaluator.extra_reason, w.evaluator.force_outcome = None, None
+    assert w.remediator.run().state == "NOTHING_TO_FIX"
+    w.evaluator.extra_reason, w.evaluator.force_outcome = "APP-01-UNVERIFIED", "hold"
+    w.remediator.run()
+    w.remediator.run()
+    assert w.notes == []

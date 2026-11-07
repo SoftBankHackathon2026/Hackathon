@@ -139,7 +139,7 @@ def _thread_ts(value: Any) -> str | None:
         return None
     text = str(value)
     if not re.fullmatch(r"\d{6,}\.\d{1,9}", text):
-        raise ConfigError("slack.thread_ts 는 1794036316.116759 같은 메시지 시각이어야 한다")
+        raise ConfigError("slack.thread_ts 는 1700000000.000100 같은 메시지 시각이어야 한다")
     return text
 
 
