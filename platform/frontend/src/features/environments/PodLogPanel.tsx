@@ -23,6 +23,7 @@ import {
   logText,
   logTime,
   matches,
+  keepsWheel,
   newLineCount,
 } from "./podLogs";
 
@@ -106,6 +107,17 @@ export function PodLogPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    const onWheel = (event: WheelEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".fp-wide")) return;
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (!keepsWheel(target, event.deltaY)) event.preventDefault();
+    };
+    document.addEventListener("wheel", onWheel, { passive: false });
+    return () => document.removeEventListener("wheel", onWheel);
   }, []);
 
   const toBottom = () => {

@@ -3991,6 +3991,9 @@ body {
 .fp.fp-wide {
   width: min(980px, 96vw);
 }
+.fp-wide {
+  overscroll-behavior: contain;
+}
 .fp-wide .fp-body {
   display: flex;
   flex-direction: column;
@@ -4084,6 +4087,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 8px 0;
   background: var(--surface-weak);
 }
