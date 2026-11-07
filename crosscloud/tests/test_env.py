@@ -62,6 +62,10 @@ def test_secret_reference_is_secret_ref_without_value():
         "AWS_SECRET_ACCESS_KEY",
         "SERVICE_CREDENTIALS",
         "private-key",
+        "JWT",
+        "APP_JWT",
+        "BEARER",
+        "UPSTREAM_BEARER",
     ],
 )
 def test_secret_like_key_drops_value(key):
