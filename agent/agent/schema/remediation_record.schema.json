@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SoftBankHackathon2026/Hackathon/agent/schema/remediation_record.schema.json",
+  "title": "수정 실행 기록 (콘솔·Slack 보고용)",
+  "type": "object",
+  "required": ["remediation_id", "job_id", "status", "started_at"],
+  "properties": {
+    "remediation_id": {"type": "string"},
+    "job_id": {"type": "string"},
+    "target_env": {"type": "string"},
+    "status": {"type": "string", "enum": ["DETECTING", "NO_ACTION", "HELD", "PROPOSING", "PROPOSAL_FAILED", "VERIFYING", "WAITING_APPROVAL", "APPLYING", "APPLIED", "RECHECK_PASSED", "RECHECK_FAILED", "FAILED"]},
+    "precheck_decision": {"type": "object"},
+    "proposal": {"type": "object"},
+    "static_checks": {"type": "array"},
+    "verification": {"type": "object"},
+    "remediation_decision": {"type": "object"},
+    "applied_version": {"type": ["string", "null"]},
+    "recheck_decision": {"type": "object"},
+    "error": {"type": ["string", "null"]},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": ["string", "null"]}
+  }
+}

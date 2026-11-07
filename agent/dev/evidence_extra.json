@@ -1,0 +1,5 @@
+{
+  "_comment": "개발용. 실제로는 evidence.py(7번 태스크)가 수집한다. observed_at 은 실행 때 갱신해야 TTL 을 통과한다.",
+  "target_db_exposure": {"status": "pass", "observed_at": "2026-11-04T00:00:00Z", "source": "evidence.dev", "evidence_id": "ev-dev-exposure", "detail": {"public": false, "target_id": "dev"}},
+  "target_location": {"status": "pass", "observed_at": "2026-11-04T00:00:00Z", "source": "evidence.dev", "evidence_id": "ev-dev-location", "detail": {"location": "ap-northeast-2", "target_id": "dev"}}
+}

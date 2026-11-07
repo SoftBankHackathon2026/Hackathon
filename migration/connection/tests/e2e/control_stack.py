@@ -120,7 +120,7 @@ def account(directory):
     base = "http://127.0.0.1:18320/api/v1"
     for attempt in range(60):
         try:
-            with opener.open(base + "/access-pin", timeout=2) as response:
+            with opener.open(base + "/access", timeout=2) as response:
                 if response.status == 200:
                     break
         except (OSError, urllib.error.URLError):

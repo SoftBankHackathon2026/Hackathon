@@ -16,7 +16,7 @@ from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
 from controlplane.providers.contracts import SubmissionUncertain
-from controlplane.providers.onprem.helm.kubeapi import read_optional
+from controlplane.providers.onprem.helm.kubeapi import read_optional, transient
 from controlplane.providers.onprem.helm.plan import release_name
 
 DELETE_TIMEOUT = (3, 15)
@@ -34,7 +34,7 @@ def _delete(call, name, namespace):
     except ApiException as exc:
         if exc.status == 404:
             return
-        if exc.status >= 500:
+        if transient(exc):
             raise SubmissionUncertain("Kubernetes delete response unavailable") from None
         raise
     except HTTPError:

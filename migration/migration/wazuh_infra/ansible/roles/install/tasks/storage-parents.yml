@@ -1,0 +1,16 @@
+- name: Observe chosen storage parents
+  ansible.builtin.stat:
+    path: '{{ item | dirname }}'
+  register: wi_parents
+  loop:
+  - '{{ wi.storage.raw_path }}'
+  - '{{ wi.storage.index_path }}'
+- name: Create only missing storage parents
+  ansible.builtin.file:
+    path: '{{ item.item | dirname }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not item.stat.exists
+  loop: '{{ wi_parents.results }}'

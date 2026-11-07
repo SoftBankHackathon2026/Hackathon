@@ -41,10 +41,12 @@ fi
 "${K[@]}" apply -k "$ROOT/admin/cost-exporter"
 
 # 4b. Harbor 최소 구성 (워커 고정, NodePort http://172.30.1.7:30002)
+# 차트가 DB securityContext 를 고정해 둬서 post-render 로 fsGroupChangePolicy: OnRootMismatch 를 넣는다 (admin/harbor/README.md)
 "${H[@]}" repo add harbor https://helm.goharbor.io >/dev/null 2>&1 || true
 "${H[@]}" repo update harbor >/dev/null
 "${H[@]}" -n harbor upgrade --install harbor harbor/harbor --version 1.19.4 \
-  -f "$ROOT/admin/harbor/values.yaml" --wait --timeout 10m >/dev/null
+  -f "$ROOT/admin/harbor/values.yaml" --post-renderer "$ROOT/admin/harbor/post-render.sh" \
+  --wait --timeout 10m >/dev/null
 
 # 5. 워크로드와 관리자 리소스
 "${K[@]}" apply -k "$ROOT"

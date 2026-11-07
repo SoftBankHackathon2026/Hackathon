@@ -30,7 +30,8 @@ from .state import _SqliteBase, utcnow_iso
 log = logging.getLogger("migration.policy")
 
 SCHEMA_VERSION = "1"
-STAGES: tuple[str, ...] = ("plan", "pre_start", "pre_cutover", "final_verify")
+# "remediation" 은 AI 수정안 적용 판정(policies/remediation.rego, package ghost.remediation) 의 단계다.
+STAGES: tuple[str, ...] = ("plan", "pre_start", "pre_cutover", "final_verify", "remediation")
 DECISION_PATH = "/v1/data/ghost/migration/decision"
 POLICY_DB_FILE = "policy.sqlite3"
 
@@ -311,21 +312,24 @@ class OpaHttpEvaluator:
 class OpaCliEvaluator:
     """로컬 `opa eval` 로 평가한다 (서버 없이 개발·테스트할 때). 운영 경로가 아니다."""
 
-    def __init__(self, policy_dir: str | Path, *, opa_bin: str = "opa", timeout: float = 30.0) -> None:
+    def __init__(self, policy_dir: str | Path, *, opa_bin: str = "opa", timeout: float = 30.0,
+                 rego: str = "migration.rego", query: str = "data.ghost.migration.decision") -> None:
         self.policy_dir = Path(policy_dir)
         self.opa_bin = opa_bin
         self.timeout = timeout
-        self.name = f"opa-cli:{self.policy_dir}"
+        self.rego = rego
+        self.query = query
+        self.name = f"opa-cli:{self.policy_dir / rego}"
 
     @staticmethod
     def available(opa_bin: str = "opa") -> bool:
         return shutil.which(opa_bin) is not None
 
     def evaluate(self, policy_input: Mapping[str, Any]) -> tuple[dict[str, Any], str | None]:
-        rego = self.policy_dir / "migration.rego"
+        rego = self.policy_dir / self.rego
         if not rego.is_file():
             raise PolicyError(f"정책 파일이 없다: {rego}")
-        cmd = [self.opa_bin, "eval", "--format", "json", "-d", str(rego), "--stdin-input", "data.ghost.migration.decision"]
+        cmd = [self.opa_bin, "eval", "--format", "json", "-d", str(rego), "--stdin-input", self.query]
         try:
             proc = subprocess.run(  # noqa: S603 - 고정 인자
                 cmd, input=json.dumps(policy_input, ensure_ascii=False), capture_output=True, text=True,

@@ -52,6 +52,7 @@ class ReleaseReconciler:
             LOG.error(
                 "release=%s state=%s exception=%s", row["id"], row["state"], type(exc).__name__
             )
+            conn.rollback()
             self.store.transition(
                 conn,
                 row,

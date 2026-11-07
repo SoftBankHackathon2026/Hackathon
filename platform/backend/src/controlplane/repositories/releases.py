@@ -21,6 +21,7 @@ from controlplane.core.locks import (
 from controlplane.domain.models import DeploymentRequest, Runtime
 
 MIGRATIONS_PACKAGE = "migrations"
+MIGRATION_MARGIN_SECONDS = 600
 
 
 class ReleaseStore:
@@ -58,6 +59,11 @@ class ReleaseStore:
     ):
         if not 60 <= timeout_seconds <= 86400:
             raise ValueError("Release timeout must be bounded")
+        migration = getattr(request, "migration", None)
+        if migration:
+            timeout_seconds = max(
+                timeout_seconds, migration.timeout_seconds + MIGRATION_MARGIN_SECONDS
+            )
         runtime = Runtime(runtime)
         payload = request.model_dump(mode="json")
         fingerprint = hashlib.sha256(

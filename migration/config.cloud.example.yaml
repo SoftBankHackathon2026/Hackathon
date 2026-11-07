@@ -1,0 +1,38 @@
+# PostgreSQL -> PostgreSQL: cloud provider names are arbitrary target labels.
+# Provision matching tables/PKs, private routing, TLS, and service roles first.
+# Secrets are environment variable references only; Connect needs the same vars.
+targets:
+  aws:
+    host: source.example.internal
+    dbname: shop
+    sslmode: verify-full
+    users:
+      admin: {user: migration_admin, password_env: SOURCE_ADMIN_PASSWORD}
+      app: {user: shop_app, password_env: SOURCE_APP_PASSWORD}
+      cdc: {user: migration_cdc, password_env: SOURCE_CDC_PASSWORD}
+      verify: {user: migration_verify, password_env: SOURCE_VERIFY_PASSWORD}
+  gcp:
+    host: target.example.internal
+    dbname: shop
+    sslmode: verify-full
+    users:
+      admin: {user: migration_admin, password_env: TARGET_ADMIN_PASSWORD}
+      app: {user: shop_app, password_env: TARGET_APP_PASSWORD}
+      sink: {user: migration_sink, password_env: TARGET_SINK_PASSWORD}
+      verify: {user: migration_verify, password_env: TARGET_VERIFY_PASSWORD}
+job:
+  job_id: shop_aws_gcp_001
+  source: aws
+  target: gcp
+application:
+  control_url: http://shop-migration-adapter.internal:8080
+  tables:
+    - name: public.customers
+      primary_key: [tenant_id, customer_id]
+    - name: public.orders
+      primary_key: [tenant_id, order_id]
+kafka:
+  connect_url: http://migration-connect.internal:8083
+cutover:
+  stage_timeout_seconds: 1800
+  poll_interval_seconds: 5

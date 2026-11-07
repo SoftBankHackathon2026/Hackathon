@@ -7,11 +7,12 @@ from urllib.parse import urlsplit
 
 import pytest
 from google.cloud import run_v2
-from requests import ConnectionError
+from requests import ConnectionError, ConnectTimeout
 from test_gcp import advance, enqueue, tick
 from test_gcp import harness as harness
 from test_gcp import sdk as sdk
 from test_gcp_data import data_harness as data_harness
+from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from controlplane.execution.gcp.cache import (
     CacheSubmissionUnknown,
@@ -220,6 +221,39 @@ def test_lost_workflow_response_never_repeats_post(cache_harness):
     with pytest.raises(CacheSubmissionUnknown):
         prepare(h)
     assert len(h.cache_api.writes) == 1
+
+
+def throttled():
+    return SimpleNamespace(status_code=429, json=dict)
+
+
+def refused():
+    raise ConnectionError(MaxRetryError(None, "/executions", NewConnectionError(None, "refused")))
+
+
+def connect_timeout():
+    raise ConnectTimeout("connect timed out")
+
+
+@pytest.mark.parametrize("undelivered", [throttled, refused, connect_timeout])
+def test_undelivered_workflow_submission_is_submitted_again(cache_harness, undelivered):
+    h = cache_harness
+    api, failed = h.cache_api, []
+
+    def request(method, url, **kwargs):
+        if method == "POST" and url.endswith("/executions") and not failed:
+            failed.append(url)
+            return undelivered()
+        return api.request(method, url, **kwargs)
+
+    h.runtime.cache.session = SimpleNamespace(request=request)
+    with pytest.raises(ProviderUnavailable):
+        prepare(h)
+    assert cache_status(h.store, h.settings)["phase"] == "new"
+    assert prepare(h)["version"] == "1"
+    assert [path for path, _ in api.writes if path.endswith("/executions")] == [
+        urlsplit(failed[0]).path
+    ]
 
 
 def test_lost_secret_response_only_retries_unpublished_version(cache_harness):

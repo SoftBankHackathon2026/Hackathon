@@ -1,0 +1,8 @@
+{
+  "DB_HOST": "wrong-host.internal",
+  "DB_NAME": "migration_demo",
+  "DB_PASSWORD": "dev-only-not-a-real-secret",
+  "DB_PORT": "5432",
+  "DB_SSLMODE": "prefer",
+  "DB_USER": "migration_verify"
+}
