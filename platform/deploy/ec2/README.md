@@ -123,6 +123,36 @@ EOF
 
 워크플로가 `deploy/aws/fleet.json`에서 AWS 환경만 `in_cluster` 대신 `aws.kubeconfig`(context `oneaction-eks`)를 쓰게 바꿔서 보내요. 비용 설정 `deploy/aws/cost.json`은 그대로 보내요.
 
+## 홈랩 앱을 밖에 열기
+
+홈랩 Traefik Ingress 뒤의 앱을 이 서버의 Caddy가 받아서 Tailscale 로 넘겨요. 이 서버가 공인 IP 와 Let's Encrypt 인증서를 맡고, 홈랩 Traefik 까지는 HTTPS 로 다시 연결해서 그쪽 인증서도 검증해요.
+
+```
+브라우저 ──HTTPS──▶ <앱 도메인> (A 레코드 = 이 서버 고정 IP)
+       Caddy ──Tailscale──▶ 홈랩 Traefik :443 (같은 Host·SNI) ──▶ Ingress 의 앱
+```
+
+호스트 목록과 홈랩 주소는 저장소에 적지 않고 인스턴스의 `/opt/oneport/sites/*.caddy`에만 둬요. Caddyfile 이 이 폴더를 불러오고, 파일이 없으면 아무 사이트도 더하지 않아요.
+
+```caddyfile
+(homelab) {
+	reverse_proxy https://{args[0]} {
+		header_up Host {host}
+		transport http {
+			tls_server_name {args[1]}
+		}
+	}
+}
+
+<앱 도메인> {
+	import homelab <홈랩 Traefik 주소> <앱 도메인>
+}
+```
+
+1. 홈랩에 그 도메인으로 Ingress 를 만들어요. Traefik 이 그 도메인의 인증서로 443 에서 응답해야 해요.
+2. 위 파일을 `/opt/oneport/sites/homelab.caddy`로 두고 `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+3. 도메인의 A 레코드를 이 서버 고정 IP 로 바꿔요. Caddy 가 그 도메인 인증서를 받아요(80 이 열려 있어야 해요).
+
 ## 배포
 
 - 자동: main에 `platform/backend`, `platform/frontend`, `platform/deploy/ec2`, `platform/deploy/aws/fleet.json`, `platform/deploy/aws/cost.json`이 바뀌면 돌아요. 이미지 태그는 커밋 해시예요.
