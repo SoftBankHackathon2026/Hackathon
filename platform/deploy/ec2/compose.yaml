@@ -128,6 +128,7 @@ services:
     image: redis:7.4-alpine
     profiles: [connection]
     restart: unless-stopped
+    user: "999:999"
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"]
     read_only: true
     security_opt: [no-new-privileges:true]
