@@ -10,10 +10,10 @@ requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
     "PyYAML>=6.0,<7",
-    "boto3>=1.35,<2",
 ]
 
 [project.optional-dependencies]
+policy-runtime = ["boto3>=1.35,<2"]
 wazuh-infra = [
     "ansible-core>=2.20,<2.21",
     "kubernetes>=37,<38",

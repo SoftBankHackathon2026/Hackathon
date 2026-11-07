@@ -131,3 +131,9 @@ SDK 근거: [자격증명 공급](https://docs.aws.amazon.com/boto3/latest/guide
 수집 설정 삭제 시 REFRESH_FAILED, 잘못된 앱 environment 시 실제 deny를 확인했다.
 DB 전환은 실행하지 않았다. 테스트 중 SDK client 종료 방식 오류를 발견해 `closing()`으로
 수정하고 실제 botocore Stubber client 회귀를 추가했다.
+
+로컬 패키지 설치는 `pip install ".[policy-runtime]"`를 사용한다. 실행 이미지는 이
+extra를 포함한다. 현재 Kubernetes37 도구의 python-dateutil>=3 제약과 botocore의
+python-dateutil<3 제약이 충돌하므로, 인프라 구성용 Kubernetes extras와 AWS 증거
+수집은 별도 환경/프로세스로 운용한다. 인프라 도구의 기존 의존성을 낮추지 않는다.
+정책 CI는 policy-runtime extra를 명시 설치해 SDK 시험을 실행한다.

@@ -109,7 +109,7 @@ def test_settings_reject_credentials_and_size(tmp_path):
 
 
 def test_sdk_uses_exact_instance_and_default_credentials(monkeypatch):
-    import boto3
+    boto3 = pytest.importorskip("boto3", reason="policy-runtime extra required; policies CI installs it")
     seen = {}
     class Client:
         def close(self): seen["closed"] = True
@@ -129,7 +129,7 @@ def test_sdk_uses_exact_instance_and_default_credentials(monkeypatch):
 
 
 def test_real_sdk_client_protocol_without_network(monkeypatch):
-    import boto3
+    boto3 = pytest.importorskip("boto3", reason="policy-runtime extra required; policies CI installs it")
     from botocore.stub import Stubber
     session = boto3.session.Session(aws_access_key_id='test-only', aws_secret_access_key='test-only')
     client = session.client('rds', region_name='ap-northeast-2')
