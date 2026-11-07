@@ -1,73 +1,101 @@
-"""AWS 잔여 검사 — 한 실행이 만든 자원이 아직 남았는지 질의로 판정한다.
+"""AWS 잔여 검사 — 실행 접두사 자원이 아직 남았는지 질의로 판정한다.
 
-terraform destroy 뒤에 부른다. 판정 수단은 둘이다.
+terraform destroy 뒤에 부른다. ResidueScanner 계약(scan(name_prefix))을 따른다.
+질의는 자원 무리마다 한 번이다.
 
-*   태그 질의: 리전 자원은 Resource Groups Tagging API 로 실행 태그
-    (`crosscloud-run`)가 붙은 것을 찾는다.
-*   접두사 질의: 태그 질의가 리전 밖이라 못 보는 전역 자원은 이름 접두사로
-    찾는다 — IAM 역할은 경로(`/<접두사>/`), Route 53 호스팅 영역은 이름
-    (`<접두사>.`).
+*   리전 자원: Resource Groups Tagging API 로 태그 `crosscloud-run=<접두사>`
+    가 붙은 것.
+*   IAM 역할: 전역이라 태그 질의에 안 나온다. 이름 접두사로 거른다.
+*   Route 53 호스팅 영역: 이름 첫 조각(`ccx-r1.internal.` 의 `ccx-r1`)으로
+    거른다.
+*   Secrets Manager: 삭제 예약된 Secret 도 목록에 넣어 이름으로 거른 뒤, ID 로
+    다시 조회해 정말 남았는지 본다(강제 삭제 직후에는 목록이 늦다).
 
-질의가 실패하면 예외를 그대로 올린다. 실패를 "잔여 0"으로 읽으면 남은 자원을
-놓치기 때문이다.
+질의가 실패하면 ResidueScanError 를 올린다. 실패를 "잔여 0"으로 읽으면 남은
+자원을 놓치기 때문이다.
 
 ECS 작업 정의는 terraform destroy 가 등록 해제(INACTIVE)만 한다. 태그 질의가
-INACTIVE 작업 정의를 돌려주면 여기서도 잔여로 보고된다 — 거르지 않는다(실측
-미확인).
+INACTIVE 작업 정의를 돌려주면 잔여로 보고된다 — 거르지 않는다(실측 미확인).
 
   scanner = residue_aws.AwsResidueScanner.from_session(boto3.Session())
-  residue = scanner.scan(selector)
+  residue = scanner.scan("ccx-r1")
 """
 
 import dataclasses
-from typing import Any, Protocol, Self
+import re
+from collections.abc import Iterator
+from typing import Any, Self
 
 import boto3
+from botocore import exceptions
 
 from crosscloud import model
+
+# TODO(rebase): 아래 네 정의는 R2g 의 crosscloud.provision.residue 와 같은
+# 이름·모양의 임시 사본이다. 합칠 때 지우고 residue 모듈을 쓴다.
+_NAME_PREFIX_PATTERN = re.compile(r"ccx-[a-z0-9]{1,16}")
+
+
+class ResidueScanError(RuntimeError):
+    """잔여 질의가 실패했거나 결과를 읽지 못했다. 잔여 0 으로 보지 않는다."""
 
 
 @dataclasses.dataclass(frozen=True)
 class ResidueItem:
-    """남은 자원 하나.
+    """클라우드에 남은 자원 하나.
 
     Attributes:
         cloud: 자원이 있는 클라우드.
-        native_id: 자원 ARN.
-        labels: 질의가 함께 돌려준 태그. 전역 자원은 비어 있다.
+        kind: 클라우드 고유 자원 종류(AWS 는 "서비스:자원 종류").
+        native_id: 클라우드 고유 식별자(AWS ARN).
     """
 
     cloud: model.Cloud
+    kind: str
     native_id: str
-    labels: tuple[model.KeyValue, ...]
 
 
-class ResidueSelector(Protocol):
-    """잔여 검사 대상을 고르는 조건. 구조적 타이핑으로만 받는다."""
+def check_name_prefix(name_prefix: str) -> None:
+    """실행 접두사 형식(`ccx-<run>`, run 은 [a-z0-9]{1,16})을 확인한다.
 
-    @property
-    def labels(self) -> tuple[model.KeyValue, ...]:
-        """실행 태그. 모두 붙은 자원만 고른다."""
+    Raises:
+        ValueError: 형식이 아닐 때.
+    """
+    if not _NAME_PREFIX_PATTERN.fullmatch(name_prefix):
+        raise ValueError(
+            f"실행 접두사는 ccx-<영문 소문자·숫자 1–16자> 여야 한다: "
+            f"{name_prefix!r}"
+        )
 
-    @property
-    def name_prefix(self) -> str:
-        """자원 이름 접두사(예: `ccx-<run>`)."""
+
+def is_named_with_prefix(name: str, name_prefix: str) -> bool:
+    """자원 이름이 실행 접두사 자체이거나 `접두사-` 로 시작하는지."""
+    return name == name_prefix or name.startswith(f"{name_prefix}-")
+
+
+# 위 TODO(rebase) 끝.
+
+_RUN_TAG_KEY = "crosscloud-run"
 
 
 class AwsResidueScanner:
-    """태그·접두사 질의로 AWS 잔여를 찾는다."""
+    """한 AWS 계정·리전에서 실행 접두사 자원을 찾는다(ResidueScanner 구현)."""
 
-    def __init__(self, *, tagging: Any, iam: Any, route53: Any) -> None:
+    def __init__(
+        self, *, tagging: Any, iam: Any, route53: Any, secrets: Any
+    ) -> None:
         """질의에 쓸 boto3 클라이언트를 받는다.
 
         Args:
             tagging: 대상 리전의 `resourcegroupstaggingapi` 클라이언트.
             iam: `iam` 클라이언트.
             route53: `route53` 클라이언트.
+            secrets: 대상 리전의 `secretsmanager` 클라이언트.
         """
         self._tagging = tagging
         self._iam = iam
         self._route53 = route53
+        self._secrets = secrets
 
     @classmethod
     def from_session(cls, session: boto3.Session) -> Self:
@@ -76,77 +104,85 @@ class AwsResidueScanner:
             tagging=session.client("resourcegroupstaggingapi"),
             iam=session.client("iam"),
             route53=session.client("route53"),
+            secrets=session.client("secretsmanager"),
         )
 
-    def scan(self, selector: ResidueSelector) -> tuple[ResidueItem, ...]:
-        """선택 조건에 걸리는 남은 자원을 ARN 순으로 돌려준다.
+    def scan(self, name_prefix: str) -> tuple[ResidueItem, ...]:
+        """이름이 name_prefix 이거나 `name_prefix-` 로 시작하는 자원을 찾는다.
 
         Args:
-            selector: 실행 태그와 이름 접두사.
+            name_prefix: 실행 접두사(`ccx-<run>`).
 
         Returns:
-            남은 자원. 같은 ARN 은 한 번만 담는다. 비면 잔여 0 이다.
+            남은 자원을 ARN 순으로. 같은 ARN 은 한 번만 담는다. 비면 잔여 0.
 
         Raises:
-            ValueError: 태그나 접두사가 비어 계정 전체가 걸릴 때.
-            botocore.exceptions.ClientError: 질의가 실패했을 때.
+            ValueError: name_prefix 가 실행 접두사 형식이 아닐 때.
+            ResidueScanError: 질의가 실패했을 때.
         """
-        prefix = selector.name_prefix.strip()
-        if not selector.labels or not prefix:
-            raise ValueError(
-                "잔여 검사에는 실행 태그와 이름 접두사가 모두 필요하다"
-            )
-        found: dict[str, ResidueItem] = {}
-        # 태그 질의 결과를 먼저 넣는다 — 같은 ARN 이면 태그가 있는 쪽을 남긴다.
-        for item in (
-            *self._tagged(selector.labels),
-            *self._roles(prefix),
-            *self._zones(prefix),
-        ):
-            found.setdefault(item.native_id, item)
-        return tuple(found[arn] for arn in sorted(found))
+        check_name_prefix(name_prefix)
+        try:
+            arns = {
+                *self._tagged(name_prefix),
+                *self._roles(name_prefix),
+                *self._zones(name_prefix),
+                *self._secrets_left(name_prefix),
+            }
+        except exceptions.ClientError as error:
+            raise ResidueScanError(
+                f"AWS 잔여 질의 실패: {error.operation_name} "
+                f"{error.response['Error']['Code']}"
+            ) from error
+        return tuple(
+            ResidueItem(cloud="aws", kind=_kind(arn), native_id=arn)
+            for arn in sorted(arns)
+        )
 
-    def _tagged(self, labels: tuple[model.KeyValue, ...]) -> list[ResidueItem]:
-        tag_filters = [
-            {"Key": label.key, "Values": [str(label.value)]} for label in labels
-        ]
+    def _tagged(self, name_prefix: str) -> Iterator[str]:
         pages = self._tagging.get_paginator("get_resources").paginate(
-            TagFilters=tag_filters
+            TagFilters=[{"Key": _RUN_TAG_KEY, "Values": [name_prefix]}]
         )
-        return [
-            ResidueItem(
-                cloud="aws",
-                native_id=mapping["ResourceARN"],
-                labels=tuple(
-                    model.KeyValue(key=tag["Key"], value=tag["Value"])
-                    for tag in mapping.get("Tags", [])
-                ),
-            )
-            for page in pages
-            for mapping in page["ResourceTagMappingList"]
-        ]
+        for page in pages:
+            for mapping in page["ResourceTagMappingList"]:
+                yield mapping["ResourceARN"]
 
-    def _roles(self, prefix: str) -> list[ResidueItem]:
-        pages = self._iam.get_paginator("list_roles").paginate(
-            PathPrefix=f"/{prefix}/"
-        )
-        return [
-            ResidueItem(cloud="aws", native_id=role["Arn"], labels=())
-            for page in pages
-            for role in page["Roles"]
-        ]
+    def _roles(self, name_prefix: str) -> Iterator[str]:
+        for page in self._iam.get_paginator("list_roles").paginate():
+            for role in page["Roles"]:
+                if is_named_with_prefix(role["RoleName"], name_prefix):
+                    yield role["Arn"]
 
-    def _zones(self, prefix: str) -> list[ResidueItem]:
-        # 영역 이름은 끝에 점이 붙는다("ccx-r1.internal."). 접두사 뒤에 점을
-        # 붙여 비교해야 ccx-r10 같은 다른 실행이 걸리지 않는다.
+    def _zones(self, name_prefix: str) -> Iterator[str]:
         pages = self._route53.get_paginator("list_hosted_zones").paginate()
-        return [
-            ResidueItem(
-                cloud="aws",
-                native_id=f"arn:aws:route53:::{zone['Id'].lstrip('/')}",
-                labels=(),
-            )
-            for page in pages
-            for zone in page["HostedZones"]
-            if zone["Name"].startswith(f"{prefix}.")
-        ]
+        for page in pages:
+            for zone in page["HostedZones"]:
+                first_label = zone["Name"].split(".", 1)[0]
+                if is_named_with_prefix(first_label, name_prefix):
+                    yield f"arn:aws:route53:::{zone['Id'].lstrip('/')}"
+
+    def _secrets_left(self, name_prefix: str) -> Iterator[str]:
+        # name 필터는 앞부분 일치라 ccx-r10 도 돌려준다. 이름으로 다시 거른다.
+        pages = self._secrets.get_paginator("list_secrets").paginate(
+            IncludePlannedDeletion=True,
+            Filters=[{"Key": "name", "Values": [name_prefix]}],
+        )
+        for page in pages:
+            for secret in page["SecretList"]:
+                if not is_named_with_prefix(secret["Name"], name_prefix):
+                    continue
+                if self._secret_exists(secret["ARN"]):
+                    yield secret["ARN"]
+
+    def _secret_exists(self, arn: str) -> bool:
+        try:
+            self._secrets.describe_secret(SecretId=arn)
+        except self._secrets.exceptions.ResourceNotFoundException:
+            return False
+        return True
+
+
+def _kind(arn: str) -> str:
+    """ARN 에서 "서비스:자원 종류"를 뽑는다(예: ec2:security-group)."""
+    _, _, service, _, _, resource = arn.split(":", 5)
+    resource_type = re.match(r"[^:/]*", resource).group(0)
+    return f"{service}:{resource_type}"

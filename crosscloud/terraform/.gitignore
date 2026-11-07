@@ -1,8 +1,0 @@
-# terraform init 이 받는 공급자와 state 는 커밋하지 않는다. state 는 실행마다
-# 원격 백엔드(실행기가 -backend-config 로 지정)에 둔다.
-.terraform/
-.terraform.lock.hcl
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log

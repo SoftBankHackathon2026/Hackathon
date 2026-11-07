@@ -1,90 +1,105 @@
-import dataclasses
-
 import boto3
 import pytest
-from botocore import exceptions
 from botocore.stub import Stubber
 
-from crosscloud import model
 from crosscloud.provision import residue_aws
 
-_RUN_LABELS = (model.KeyValue(key="crosscloud-run", value="r1"),)
 _PREFIX = "ccx-r1"
+_ACCOUNT = "111122223333"
+_REGION = "ap-northeast-2"
+_SG_ARN = f"arn:aws:ec2:{_REGION}:{_ACCOUNT}:security-group/sg-1"
+_RDS_ARN = f"arn:aws:rds:{_REGION}:{_ACCOUNT}:db:ccx-r1-db"
+_LOG_ARN = f"arn:aws:logs:{_REGION}:{_ACCOUNT}:log-group:/ecs/ccx-r1"
+_ROLE_ARN = f"arn:aws:iam::{_ACCOUNT}:role/ccx-r1-exec"
 _ZONE_ARN = "arn:aws:route53:::hostedzone/Z0123"
-_ROLE_ARN = "arn:aws:iam::111122223333:role/ccx-r1/ccx-r1-exec"
-_SG_ARN = "arn:aws:ec2:ap-northeast-2:111122223333:security-group/sg-1"
-_RDS_ARN = "arn:aws:rds:ap-northeast-2:111122223333:db:ccx-r1-db"
-
-
-@dataclasses.dataclass(frozen=True)
-class _Selector:
-    labels: tuple[model.KeyValue, ...]
-    name_prefix: str
+_SECRET_ARN = (
+    f"arn:aws:secretsmanager:{_REGION}:{_ACCOUNT}:secret:ccx-r1-db-url-AbCdEf"
+)
 
 
 def _client(service):
     return boto3.client(
         service,
-        region_name="ap-northeast-2",
+        region_name=_REGION,
         aws_access_key_id="testing",
         aws_secret_access_key="testing",
     )
 
 
 class _Clients:
-    """Stubber 를 붙인 세 클라이언트. 기대 호출을 다 쓰지 않으면 실패한다."""
+    """Stubber 를 붙인 네 클라이언트. 기대 호출이 남으면 실패한다."""
 
     def __init__(self):
         self.tagging = _client("resourcegroupstaggingapi")
         self.iam = _client("iam")
         self.route53 = _client("route53")
-        self.stubs = [
-            Stubber(self.tagging),
-            Stubber(self.iam),
-            Stubber(self.route53),
-        ]
+        self.secrets = _client("secretsmanager")
+        self.tag_stub = Stubber(self.tagging)
+        self.iam_stub = Stubber(self.iam)
+        self.zone_stub = Stubber(self.route53)
+        self.secret_stub = Stubber(self.secrets)
 
     def scanner(self):
         return residue_aws.AwsResidueScanner(
-            tagging=self.tagging, iam=self.iam, route53=self.route53
+            tagging=self.tagging,
+            iam=self.iam,
+            route53=self.route53,
+            secrets=self.secrets,
         )
 
+    def stubs(self):
+        return (self.tag_stub, self.iam_stub, self.zone_stub, self.secret_stub)
+
     def __enter__(self):
-        for stub in self.stubs:
+        for stub in self.stubs():
             stub.activate()
         return self
 
     def __exit__(self, *exc):
-        for stub in self.stubs:
+        for stub in self.stubs():
             stub.assert_no_pending_responses()
             stub.deactivate()
 
 
-def _expect_tag_query(clients, *pages):
-    tag_filters = [{"Key": "crosscloud-run", "Values": ["r1"]}]
+def _expect_tagged(clients, *pages):
+    tag_filters = [{"Key": "crosscloud-run", "Values": [_PREFIX]}]
     for index, page in enumerate(pages):
         params = {"TagFilters": tag_filters}
         if index > 0:
             params["PaginationToken"] = f"t{index}"
-        response = {"ResourceTagMappingList": page}
+        response = {
+            "ResourceTagMappingList": [{"ResourceARN": arn} for arn in page]
+        }
         if index + 1 < len(pages):
             response["PaginationToken"] = f"t{index + 1}"
-        clients.stubs[0].add_response("get_resources", response, params)
+        clients.tag_stub.add_response("get_resources", response, params)
 
 
-def _expect_roles(clients, roles):
-    clients.stubs[1].add_response(
-        "list_roles",
-        {"Roles": roles, "IsTruncated": False},
-        {"PathPrefix": "/ccx-r1/"},
+def _expect_roles(clients, *names):
+    roles = [
+        {
+            "Path": "/",
+            "RoleName": name,
+            "RoleId": "AROAEXAMPLEEXAMPLE01",
+            "Arn": f"arn:aws:iam::{_ACCOUNT}:role/{name}",
+            "CreateDate": "2026-11-07T00:00:00Z",
+        }
+        for name in names
+    ]
+    clients.iam_stub.add_response(
+        "list_roles", {"Roles": roles, "IsTruncated": False}, {}
     )
 
 
-def _expect_zones(clients, zones):
-    clients.stubs[2].add_response(
+def _expect_zones(clients, *zones):
+    hosted_zones = [
+        {"Id": f"/hostedzone/{zone_id}", "Name": name, "CallerReference": "x"}
+        for zone_id, name in zones
+    ]
+    clients.zone_stub.add_response(
         "list_hosted_zones",
         {
-            "HostedZones": zones,
+            "HostedZones": hosted_zones,
             "IsTruncated": False,
             "Marker": "",
             "MaxItems": "100",
@@ -93,129 +108,175 @@ def _expect_zones(clients, zones):
     )
 
 
-def _role(name, arn):
-    return {
-        "Path": "/ccx-r1/",
-        "RoleName": name,
-        "RoleId": "AROAEXAMPLEEXAMPLE01",
-        "Arn": arn,
-        "CreateDate": "2026-11-07T00:00:00Z",
-    }
+def _expect_secret_list(clients, *secrets):
+    clients.secret_stub.add_response(
+        "list_secrets",
+        {"SecretList": [{"ARN": arn, "Name": name} for arn, name in secrets]},
+        {
+            "IncludePlannedDeletion": True,
+            "Filters": [{"Key": "name", "Values": [_PREFIX]}],
+        },
+    )
 
 
-def _zone(zone_id, name):
-    return {
-        "Id": f"/hostedzone/{zone_id}",
-        "Name": name,
-        "CallerReference": "x",
-    }
+def _expect_empty_queries(clients, skip=()):
+    if "tagged" not in skip:
+        _expect_tagged(clients, [])
+    if "roles" not in skip:
+        _expect_roles(clients)
+    if "zones" not in skip:
+        _expect_zones(clients)
+    if "secrets" not in skip:
+        _expect_secret_list(clients)
 
 
 def test_scan_returns_empty_when_nothing_remains():
     with _Clients() as clients:
-        _expect_tag_query(clients, [])
-        _expect_roles(clients, [])
-        _expect_zones(clients, [_zone("Z9", "other.internal.")])
+        _expect_empty_queries(clients)
 
-        residue = clients.scanner().scan(_Selector(_RUN_LABELS, _PREFIX))
-
-    assert residue == ()
+        assert clients.scanner().scan(_PREFIX) == ()
 
 
-def test_scan_reports_tagged_resources_across_pages_with_their_tags():
+def test_scan_reports_tagged_regional_resources_across_pages_by_arn():
     with _Clients() as clients:
-        _expect_tag_query(
-            clients,
-            [
-                {
-                    "ResourceARN": _SG_ARN,
-                    "Tags": [{"Key": "crosscloud-run", "Value": "r1"}],
-                }
-            ],
-            [{"ResourceARN": _RDS_ARN, "Tags": []}],
-        )
-        _expect_roles(clients, [])
-        _expect_zones(clients, [])
+        _expect_tagged(clients, [_SG_ARN, _RDS_ARN], [_LOG_ARN])
+        _expect_empty_queries(clients, skip=("tagged",))
 
-        residue = clients.scanner().scan(_Selector(_RUN_LABELS, _PREFIX))
+        residue = clients.scanner().scan(_PREFIX)
 
     assert residue == (
         residue_aws.ResidueItem(
-            cloud="aws",
-            native_id=_SG_ARN,
-            labels=(model.KeyValue(key="crosscloud-run", value="r1"),),
+            cloud="aws", kind="ec2:security-group", native_id=_SG_ARN
         ),
-        residue_aws.ResidueItem(cloud="aws", native_id=_RDS_ARN, labels=()),
+        residue_aws.ResidueItem(
+            cloud="aws", kind="logs:log-group", native_id=_LOG_ARN
+        ),
+        residue_aws.ResidueItem(cloud="aws", kind="rds:db", native_id=_RDS_ARN),
     )
 
 
-def test_scan_reports_global_iam_roles_under_the_prefix_path():
+def test_scan_finds_iam_roles_by_name_prefix_only():
     with _Clients() as clients:
-        _expect_tag_query(clients, [])
-        _expect_roles(clients, [_role("ccx-r1-exec", _ROLE_ARN)])
-        _expect_zones(clients, [])
+        _expect_roles(clients, "ccx-r1-exec", "ccx-r10-exec", "team-ccx-r1")
+        _expect_empty_queries(clients, skip=("roles",))
 
-        residue = clients.scanner().scan(_Selector(_RUN_LABELS, _PREFIX))
+        residue = clients.scanner().scan(_PREFIX)
 
     assert residue == (
-        residue_aws.ResidueItem(cloud="aws", native_id=_ROLE_ARN, labels=()),
+        residue_aws.ResidueItem(
+            cloud="aws", kind="iam:role", native_id=_ROLE_ARN
+        ),
     )
 
 
-def test_scan_reports_prefixed_zone_once_keeping_tags_from_tag_query():
+def test_scan_finds_hosted_zone_whose_first_label_is_the_prefix():
     with _Clients() as clients:
-        _expect_tag_query(
-            clients,
-            [
-                {
-                    "ResourceARN": _ZONE_ARN,
-                    "Tags": [{"Key": "crosscloud-run", "Value": "r1"}],
-                }
-            ],
-        )
-        _expect_roles(clients, [])
         _expect_zones(
             clients,
-            [
-                _zone("Z0123", "ccx-r1.internal."),
-                _zone("Z0456", "ccx-r10.internal."),
-            ],
+            ("Z0123", "ccx-r1.internal."),
+            ("Z0456", "ccx-r10.internal."),
+            ("Z0789", "app.ccx-r1.example."),
         )
+        _expect_empty_queries(clients, skip=("zones",))
 
-        residue = clients.scanner().scan(_Selector(_RUN_LABELS, _PREFIX))
+        residue = clients.scanner().scan(_PREFIX)
 
     assert residue == (
         residue_aws.ResidueItem(
-            cloud="aws", native_id=_ZONE_ARN, labels=_RUN_LABELS
+            cloud="aws", kind="route53:hostedzone", native_id=_ZONE_ARN
         ),
     )
 
 
-@pytest.mark.parametrize(
-    ("labels", "prefix"), [((), _PREFIX), (_RUN_LABELS, ""), (_RUN_LABELS, " ")]
-)
-def test_scan_rejects_selector_that_would_match_everything(labels, prefix):
+def test_scan_rechecks_listed_secrets_by_id_and_keeps_planned_deletion():
+    gone_arn = _SECRET_ARN.replace("db-url", "old")
+    with _Clients() as clients:
+        _expect_secret_list(
+            clients,
+            (_SECRET_ARN, "ccx-r1-db-url"),
+            (gone_arn, "ccx-r1-old"),
+        )
+        clients.secret_stub.add_response(
+            "describe_secret",
+            {
+                "ARN": _SECRET_ARN,
+                "Name": "ccx-r1-db-url",
+                "DeletedDate": "2026-11-07T00:00:00Z",
+            },
+            {"SecretId": _SECRET_ARN},
+        )
+        clients.secret_stub.add_client_error(
+            "describe_secret",
+            service_error_code="ResourceNotFoundException",
+            expected_params={"SecretId": gone_arn},
+        )
+        _expect_empty_queries(clients, skip=("secrets",))
+
+        residue = clients.scanner().scan(_PREFIX)
+
+    assert residue == (
+        residue_aws.ResidueItem(
+            cloud="aws", kind="secretsmanager:secret", native_id=_SECRET_ARN
+        ),
+    )
+
+
+def test_scan_skips_listed_secret_named_outside_the_prefix():
+    with _Clients() as clients:
+        _expect_secret_list(clients, (_SECRET_ARN, "ccx-r10-db-url"))
+        _expect_empty_queries(clients, skip=("secrets",))
+
+        assert clients.scanner().scan(_PREFIX) == ()
+
+
+def test_scan_reports_resource_found_by_two_queries_once():
+    with _Clients() as clients:
+        _expect_tagged(clients, [_ZONE_ARN])
+        _expect_zones(clients, ("Z0123", "ccx-r1.internal."))
+        _expect_empty_queries(clients, skip=("tagged", "zones"))
+
+        residue = clients.scanner().scan(_PREFIX)
+
+    assert len(residue) == 1
+
+
+@pytest.mark.parametrize("prefix", ["", "ccx-", "ccx-R1", "team-ccx-r1"])
+def test_scan_rejects_malformed_prefix_before_querying(prefix):
     scanner = residue_aws.AwsResidueScanner(
-        tagging=None, iam=None, route53=None
+        tagging=None, iam=None, route53=None, secrets=None
     )
 
     with pytest.raises(ValueError):
-        scanner.scan(_Selector(labels, prefix))
+        scanner.scan(prefix)
 
 
-def test_scan_raises_when_a_query_fails_instead_of_reporting_zero():
+def test_scan_raises_scan_error_when_a_query_fails():
     with _Clients() as clients:
-        clients.stubs[0].add_client_error(
+        clients.tag_stub.add_client_error(
             "get_resources", service_error_code="ThrottlingException"
         )
 
-        with pytest.raises(exceptions.ClientError):
-            clients.scanner().scan(_Selector(_RUN_LABELS, _PREFIX))
+        with pytest.raises(residue_aws.ResidueScanError):
+            clients.scanner().scan(_PREFIX)
+
+
+def test_scan_raises_scan_error_when_secret_recheck_fails():
+    with _Clients() as clients:
+        _expect_secret_list(clients, (_SECRET_ARN, "ccx-r1-db-url"))
+        clients.secret_stub.add_client_error(
+            "describe_secret",
+            service_error_code="AccessDeniedException",
+            expected_params={"SecretId": _SECRET_ARN},
+        )
+        _expect_empty_queries(clients, skip=("secrets",))
+
+        with pytest.raises(residue_aws.ResidueScanError):
+            clients.scanner().scan(_PREFIX)
 
 
 def test_from_session_builds_scanner_without_calling_aws():
     session = boto3.Session(
-        region_name="ap-northeast-2",
+        region_name=_REGION,
         aws_access_key_id="testing",
         aws_secret_access_key="testing",
     )
