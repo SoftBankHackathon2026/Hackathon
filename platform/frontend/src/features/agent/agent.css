@@ -225,3 +225,104 @@
 .agent-change-list li {
   overflow-wrap: anywhere;
 }
+.agent-verdict {
+  display: grid;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-5);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  min-width: 0;
+}
+.agent-verdict.tone-ok {
+  border-left-color: var(--success);
+}
+.agent-verdict.tone-bad {
+  border-left-color: var(--danger);
+}
+.agent-verdict.tone-warn {
+  border-left-color: var(--warning);
+}
+.agent-verdict.tone-running {
+  border-left-color: var(--info);
+}
+.agent-verdict .sub {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-steps {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-steps > li {
+  position: relative;
+  display: grid;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 0 0 var(--sp-5) 20px;
+}
+.agent-steps > li::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: -2px;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+}
+.agent-steps > li:last-child::before {
+  display: none;
+}
+.agent-steps > li > .dot {
+  position: absolute;
+  top: 6px;
+  left: 0;
+}
+.agent-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  align-items: baseline;
+}
+.agent-step-head .sub {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+}
+.agent-step-title {
+  font-weight: 600;
+}
+.agent-step-skipped {
+  color: var(--text-tertiary);
+}
+.agent-step-skipped .agent-text {
+  font-size: var(--fs-xs);
+}
+.agent-step-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.agent-step-note .sub {
+  margin-right: var(--sp-1);
+  color: var(--text-tertiary);
+}
+.agent-changes del {
+  text-decoration: line-through;
+}
+.agent-changes ins {
+  text-decoration: none;
+  font-weight: 600;
+}
+.agent-raw summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.agent-raw[open] summary {
+  margin-bottom: var(--sp-3);
+}

@@ -6,10 +6,7 @@ import {
   changeRows,
   changeText,
   filterRuns,
-  gateText,
-  gateTone,
   gateView,
-  proposalNotes,
   reasonText,
   RUN_STATE_LABELS,
   runStateLabel,
@@ -106,25 +103,13 @@ test("change rows keep before values when the agent sends them", () => {
   assert.deepEqual(changeRows({ proposal: { changes: "x" } }), []);
 });
 
-test("proposal notes and gate decisions tolerate missing detail", () => {
-  assert.deepEqual(proposalNotes({}), {
-    cause: null,
-    impact: null,
-    verification: null,
-  });
-  assert.deepEqual(
-    proposalNotes({ proposal: { cause: "c", impact: " ", verification: "v" } }),
-    { cause: "c", impact: null, verification: "v" },
-  );
+test("gate decisions tolerate missing detail", () => {
   const denied = gateView({ outcome: "deny", reason_codes: ["APP-01"] });
   assert.deepEqual(denied, { outcome: "deny", reasonCodes: ["APP-01"] });
-  assert.equal(gateText(denied), "deny (APP-01)");
-  assert.equal(gateTone(denied), "bad");
-  const allowed = gateView({ outcome: "allow", reason_codes: [] });
-  assert.equal(gateText(allowed), "allow");
-  assert.equal(gateTone(allowed), "ok");
+  assert.deepEqual(gateView({ outcome: "allow" }), {
+    outcome: "allow",
+    reasonCodes: [],
+  });
   assert.equal(gateView(undefined), null);
   assert.equal(gateView({ reason_codes: ["X"] }), null);
-  assert.equal(gateText(null), "아직 없어요");
-  assert.equal(gateTone(null), "idle");
 });

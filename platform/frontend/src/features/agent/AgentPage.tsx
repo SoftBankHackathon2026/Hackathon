@@ -13,21 +13,30 @@ import {
   PageHeader,
   ScopeFilterRow,
   Section,
+  SummaryRow,
 } from "../../components/PageKit";
 import { Skeleton } from "../../components/QueryBoundary";
 import { PanelGroup, SidePanel } from "../../components/SidePanel";
 import { StatusDot } from "../../components/StatusDot";
-import { formatAgo, formatDateTime } from "../../lib/format";
+import {
+  formatAgo,
+  formatDateTime,
+  formatRatio,
+  formatSeconds,
+} from "../../lib/format";
+import {
+  agentScore,
+  foldSteps,
+  investigation,
+  runSeconds,
+  type Step,
+  verdict,
+} from "./investigation";
 import {
   approvalModeLabel,
-  changeRows,
   changeText,
   DECISION_LABELS,
   filterRuns,
-  gateTone,
-  gateView,
-  type GateView,
-  proposalNotes,
   reasonText,
   runStateLabel,
   runTone,
@@ -70,6 +79,7 @@ export function AgentPage({ runId }: { runId?: string }) {
       ) : (
         <>
           <AgentStrip agents={status.agents} canCommand={status.can_command} />
+          <ScoreRow runs={list.runs} />
           {status.agents.length > 0 && (
             <Section title="설정">
               <AgentSettings
@@ -146,6 +156,45 @@ function AgentStrip({
   );
 }
 
+function ScoreRow({ runs }: { runs: AgentRun[] }) {
+  const score = agentScore(runs);
+  return (
+    <Section title="AI 수정 성과" meta={`최근 ${runs.length}개 실행`}>
+      <SummaryRow
+        items={[
+          {
+            label: "감지한 문제",
+            value: String(score.detected),
+            unit: "건",
+          },
+          {
+            label: "AI가 고침",
+            value: String(score.resolved),
+            unit: "건",
+            tone: score.resolved > 0 ? "ok" : undefined,
+            note:
+              score.proposed > 0
+                ? `제안 ${score.proposed}건 중 ${formatRatio(score.resolved, score.proposed)}`
+                : "아직 제안이 없어요",
+          },
+          {
+            label: "감지부터 복구까지",
+            value: formatSeconds(score.medianSeconds),
+            note: "중앙값",
+          },
+          {
+            label: "사람이 봐야 함",
+            value: String(score.handedOff + score.waiting),
+            unit: "건",
+            tone: score.waiting > 0 ? "warn" : undefined,
+            note: `승인 대기 ${score.waiting} · 넘김 ${score.handedOff}`,
+          },
+        ]}
+      />
+    </Section>
+  );
+}
+
 function RunsTable({
   rows,
   selected,
@@ -167,6 +216,7 @@ function RunsTable({
             <th>작업</th>
             <th>판정 사유</th>
             <th>변경</th>
+            <th>걸린 시간</th>
           </tr>
         </thead>
         <tbody>
@@ -203,6 +253,7 @@ function RunsTable({
                 </td>
                 <td className="mono">{reasonText(run.summary.reason_codes)}</td>
                 <td className="mono">{changeText(run.summary.changes)}</td>
+                <td className="sub">{formatSeconds(runSeconds(run))}</td>
               </tr>
             );
           })}
@@ -340,96 +391,110 @@ function DecisionControls({ run }: { run: AgentRunDetail }) {
 }
 
 function RunBody({ run }: { run: AgentRunDetail }) {
-  const changes = changeRows(run.detail);
-  const notes = proposalNotes(run.detail);
-  const before = gateView(run.detail.pre_decision);
-  const after = gateView(run.detail.post_decision);
+  const result = verdict(run);
+  const took = runSeconds(run);
+  const { shown, folded } = foldSteps(investigation(run), took !== null);
   return (
     <>
-      <PanelGroup label="진단">
-        <p className="agent-text">
-          {run.summary.diagnosis ?? "진단 기록이 없어요."}
-        </p>
-      </PanelGroup>
-      <PanelGroup label="변경">
-        {changes.length === 0 ? (
-          <p className="agent-text">제안된 변경이 없어요.</p>
-        ) : (
-          <ul className="agent-changes">
-            {changes.map((change) => (
-              <li key={change.key}>
-                <span className="agent-change-key mono">{change.key}</span>
-                <span className="agent-change-value mono">
-                  {change.before !== null && (
-                    <>
-                      <span className="sub">{change.before}</span>
-                      <span className="agent-arrow" aria-hidden="true">
-                        →
-                      </span>
-                    </>
-                  )}
-                  {change.after}
-                </span>
-              </li>
-            ))}
-          </ul>
+      <div className={`agent-verdict tone-${result.tone}`} role="status">
+        <StatusDot tone={result.tone}>{result.title}</StatusDot>
+        {result.text && <p className="agent-text">{result.text}</p>}
+        {took !== null && (
+          <span className="sub">감지부터 끝까지 {formatSeconds(took)}</span>
         )}
+      </div>
+      <PanelGroup label="조사 단계">
+        <ol className="agent-steps">
+          {shown.map((item) => (
+            <StepItem key={item.key} item={item} />
+          ))}
+          {folded > 0 && (
+            <li className="agent-step-skipped">
+              <i className="dot dot-idle" aria-hidden="true" />
+              <p className="agent-text">
+                여기서 멈춰서 뒤의 {folded}단계는 진행하지 않았어요.
+              </p>
+            </li>
+          )}
+        </ol>
       </PanelGroup>
-      <PanelGroup label="원인">
-        <p className="agent-text">{notes.cause ?? "-"}</p>
-      </PanelGroup>
-      <PanelGroup label="영향">
-        <p className="agent-text">{notes.impact ?? "-"}</p>
-      </PanelGroup>
-      <PanelGroup label="검증">
-        <p className="agent-text">{notes.verification ?? "-"}</p>
-      </PanelGroup>
-      <PanelGroup label="OPA 적용 전">
-        <GateResult gate={before} />
-      </PanelGroup>
-      <PanelGroup label="OPA 적용 후">
-        <GateResult gate={after} />
-      </PanelGroup>
-      <PanelGroup label="타임라인">
-        {run.events.length === 0 ? (
-          <p>기록된 단계가 없어요.</p>
-        ) : (
-          <ol className="agent-timeline">
-            {run.events.map((event, index) => (
-              <li key={`${event.at}-${index}`}>
-                <i
-                  className={`dot dot-${runTone(event.state)}`}
-                  aria-hidden="true"
-                />
-                <time dateTime={event.at}>{formatDateTime(event.at)}</time>
-                <span className="agent-timeline-state">
-                  {runStateLabel(event.state)}
-                </span>
-                <span className="agent-timeline-message">{event.message}</span>
-              </li>
-            ))}
-          </ol>
-        )}
+      <PanelGroup label="원본 기록">
+        <details className="agent-raw">
+          <summary>에이전트가 남긴 기록 {run.events.length}개</summary>
+          {run.events.length === 0 ? (
+            <p>기록된 단계가 없어요.</p>
+          ) : (
+            <ol className="agent-timeline">
+              {run.events.map((event, index) => (
+                <li key={`${event.at}-${index}`}>
+                  <i
+                    className={`dot dot-${runTone(event.state)}`}
+                    aria-hidden="true"
+                  />
+                  <time dateTime={event.at}>{formatDateTime(event.at)}</time>
+                  <span className="agent-timeline-state">
+                    {runStateLabel(event.state)}
+                  </span>
+                  <span className="agent-timeline-message">
+                    {event.message}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </details>
       </PanelGroup>
     </>
   );
 }
 
-function GateResult({ gate }: { gate: GateView | null }) {
+function StepItem({ item }: { item: Step }) {
   return (
-    <div className="agent-gate">
-      <StatusDot tone={gateTone(gate)}>
-        {gate === null ? "아직 없어요" : gate.outcome}
-      </StatusDot>
-      {gate !== null && gate.reasonCodes.length > 0 && (
+    <li className={item.reached ? undefined : "agent-step-skipped"}>
+      <i className={`dot dot-${item.tone}`} aria-hidden="true" />
+      <div className="agent-step-head">
+        <span className="agent-step-title">{item.title}</span>
+        {item.at && (
+          <time className="sub" dateTime={item.at}>
+            {formatDateTime(item.at)}
+          </time>
+        )}
+      </div>
+      <p className="agent-text">{item.text}</p>
+      {item.codes.length > 0 && (
         <ul className="agent-codes">
-          {gate.reasonCodes.map((code) => (
+          {item.codes.map((code) => (
             <li key={code} className="mono">
               {code}
             </li>
           ))}
         </ul>
       )}
-    </div>
+      {item.changes.length > 0 && (
+        <ul className="agent-changes">
+          {item.changes.map((change) => (
+            <li key={change.key}>
+              <span className="agent-change-key mono">{change.key}</span>
+              <span className="agent-change-value mono">
+                {change.before !== null && (
+                  <>
+                    <del className="sub">{change.before}</del>
+                    <span className="agent-arrow" aria-hidden="true">
+                      →
+                    </span>
+                  </>
+                )}
+                <ins>{change.after}</ins>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {item.notes.map((note) => (
+        <p key={note.label} className="agent-step-note">
+          <span className="sub">{note.label}</span> {note.text}
+        </p>
+      ))}
+    </li>
   );
 }
