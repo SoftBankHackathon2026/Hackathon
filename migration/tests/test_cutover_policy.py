@@ -88,6 +88,7 @@ def test_changed_plan_after_restart_blocks(config, state_dir, fakes):
 
 
 def test_wait_limit_blocks_before_grant(config, state_dir, fakes, setup_gate):
+    fakes['db'].rows['aws'], fakes['db'].seed['aws'] = fakes['db'].rows['onprem'], fakes['db'].seed['onprem']  # 건수는 맞춰 두고 정책 판정만 본다
     gate, _, _ = setup_gate
     cut = _build(config, state_dir, fakes)
     cut.policy_gate = gate

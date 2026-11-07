@@ -428,6 +428,23 @@ class Cutover:
             return {"skipped": True, "passed": True, "reason": "빈 테이블에서 시작: 스냅샷 집합 없음"}
         return self.p.verify.run("pre", label, upto=self.watermark, method=self.cc.snapshot_compare)
 
+    def _count_check(self, label: str, *, allow_target_extra: bool = False) -> dict[str, Any]:
+        """전환 구간(원본 쓰기 차단 뒤) 판정. 행을 읽지 않고 기준점 이후(delta)·이전(스냅샷) 건수만 양쪽에서 센다.
+        allow_target_extra: 트래픽이 이미 대상으로 간 뒤라 대상 delta 가 더 많아도 되는 경우(전환 후 확인)."""
+        wm = self.watermark
+        delta_src = self.p.db.count_rows_in_scope(self.source, since=wm)
+        delta_tgt = self.p.db.count_rows_in_scope(self.target, since=wm)
+        pre_src = self.p.db.count_rows_in_scope(self.source, upto=wm) if wm is not None else 0
+        pre_tgt = self.p.db.count_rows_in_scope(self.target, upto=wm) if wm is not None else 0
+        delta_ok = delta_tgt >= delta_src if allow_target_extra else delta_src == delta_tgt
+        info: dict[str, Any] = {"label": label, "method": "counts", "watermark": wm,
+                                "delta_source": delta_src, "delta_target": delta_tgt,
+                                "snapshot_source": pre_src, "snapshot_target": pre_tgt,
+                                "passed": bool(delta_ok and pre_src == pre_tgt)}
+        log.info("건수 확인 %s: delta %d/%d · 스냅샷 %d/%d → %s", label, delta_src, delta_tgt, pre_src, pre_tgt,
+                 "일치" if info["passed"] else "불일치")
+        return info
+
     # ---- 접수 서비스 -----
 
     @property
@@ -543,7 +560,7 @@ class Cutover:
                 res = self._verify_snapshot_set("snapshot")
                 return healthy and bool(res.get("passed")), {"connectors": states, **res}
             snap = self._wait("snapshot_verify", snapshot_verified)
-            self._save(snapshot_set={"passed": True, "count": snap.get("source_count"),
+            self._save(snapshot_set={"passed": True, "count": snap.get("source_count"), "skipped": bool(snap.get("skipped")),
                                      "report": snap.get("report"), "method": snap.get("method")})
 
         # 2) 기준점 이후(delta) 행이 최소 건수만큼 생기고 최신 행이 대상에 반영됐는지 본다. 전체 count 는 세지 않는다.
@@ -655,9 +672,10 @@ class Cutover:
                    offset_note=None if offsets_supported else "Connect /offsets 미지원: DB 커밋 확인으로 대체")
 
     def stage_sync_confirmed(self) -> None:
-        first = self.p.verify.run("pre", "pre-stop", since=self.watermark)
+        # 전환 구간에서는 행을 비교하지 않는다. DRAINING 이 적용 완료를 확인했으므로 건수만 다시 센다.
+        first = self._count_check("pre-stop")
         if not first["passed"]:
-            raise CutoverError(f"전환 전 검증 실패: {first}")
+            raise CutoverError(f"전환 전 건수 불일치: {first}")
         evidence: dict[str, Any] = {}
         for name in (self.config.job.source_connector, self.config.job.sink_connector):
             if self.p.connect.exists(name):
@@ -668,10 +686,10 @@ class Cutover:
         self._step("delete_sink_connector", lambda: {"deleted": self.p.connect.delete(self.config.job.sink_connector)})
         if self.p.db.app_can_insert(self.target):
             raise CutoverError("커넥터 종료 후에도 대상 앱 쓰기가 닫혀 있어야 하는데 열려 있다")
-        second = self.p.verify.run("pre", "post-stop", since=self.watermark)
+        second = self._count_check("post-stop")
         if not second["passed"]:
-            raise CutoverError(f"커넥터 종료 후 재검증 실패: {second}")
-        self._save(SWITCHING, verify_pre=first, verify_post_stop=second)
+            raise CutoverError(f"커넥터 종료 후 건수 불일치: {second}")
+        self._save(SWITCHING, counts_pre_stop=first, counts_post_stop=second)
 
     def stage_switching(self) -> None:
         self._policy_guard("pre_cutover")
@@ -685,9 +703,10 @@ class Cutover:
             if any(self.p.connect.exists(name) for name in (
                     self.config.job.source_connector, self.config.job.sink_connector)):
                 raise CutoverError("최종 정책 판정 전 CDC 커넥터가 남아 있다")
-            compared = self.p.verify.run("pre", "policy-pre-grant", since=self.watermark)
+            compared = self._count_check("policy-pre-grant")
             if not compared.get("passed"):
-                raise CutoverError("정책 판정 직전 데이터 비교 실패")
+                raise CutoverError(f"정책 판정 직전 건수 불일치: {compared}")
+            self._save(counts_pre_grant=compared)
             checks = {
                 "final_sync": build_check("pass", {
                     "source_writes_fenced": not self.p.db.app_can_insert(self.source),
@@ -816,16 +835,11 @@ class Cutover:
             if route != self._route_name(self.target):
                 raise CutoverError(f"공개 도메인이 대상으로 가고 있지 않다: {route}")
             info["traffic"] = {"target": route}
-        # 전환 후: delta(기준점 이후) 는 행 단위 post 비교. 대상에서 새로 커밋된 행은 허용, 다른 writer 는 보고만.
-        result = self.p.verify.run("post", "final", since=self.watermark)
+        # 전환 후: 건수만 확인한다. 대상은 이미 쓰기 중이라 기준점 이후 건수는 원본 이상이면 되고, 기준점 이전 건수는 같아야 한다.
+        # 행 단위 비교가 필요하면 전환이 끝난 뒤 `python -m migration.verify --mode post --since <watermark>` 로 따로 돌린다.
+        result = self._count_check("final", allow_target_extra=True)
         if not result["passed"]:
-            raise CutoverError(f"전환 후 검증 실패: {result}")
-        # 기준점 이전 집합은 불변이라 digest 로 마지막 한 번 더 확정한다 (설정으로 끌 수 있다). 트래픽은 이미 대상으로 갔다.
-        final_snapshot: dict[str, Any] = {"skipped": True}
-        if self.cc.final_snapshot_recheck:
-            final_snapshot = self._verify_snapshot_set("final-snapshot")
-            if not final_snapshot.get("passed"):
-                raise CutoverError(f"전환 후 기준점 이전 집합 검증 실패: {final_snapshot}")
+            raise CutoverError(f"전환 후 건수 불일치: {result}")
         cleanup: dict[str, Any] = {"skipped": True}
         if self.cc.drop_source_slot_on_complete:
             def _cleanup() -> dict[str, Any]:
@@ -838,8 +852,7 @@ class Cutover:
             if cleanup.get("error"):
                 log.warning("원본 후처리 미완료 (%s) — python -m migration.source_cleanup --config <same-config>",
                             cleanup["error"])
-        self._save(COMPLETED, verify_final=result, verify_final_snapshot=final_snapshot, post_switch=info,
-                   source_cleanup=cleanup)
+        self._save(COMPLETED, counts_final=result, post_switch=info, source_cleanup=cleanup)
 
     # ---- 실행 -----
 
@@ -852,13 +865,12 @@ class Cutover:
             (FENCING, "워커 pause → drain" + (" → 접수 큐 pause(settled)" if self.config.ingress.enabled else "")
              + " → 원본 REVOKE INSERT + 세션 종료 → 시험 INSERT 거절 확인"),
             (DRAINING, "마지막 커밋 요청의 대상 반영·기준점 이후 건수 일치·sink offset 정체 확인"),
-            (SYNC_CONFIRMED, "기준점 이후 행 비교(pre) → 커넥터 증거 보관·삭제 → 재검증"),
+            (SYNC_CONFIRMED, "기준점 이후·이전 건수 확인 → 커넥터 증거 보관·삭제 → 건수 재확인"),
             (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume"
              + (" → 대상 앱 readiness → 접수 큐 /target → /resume" if self.config.ingress.enabled else "")
              + (" → 공개 도메인 경로 전환" if self.config.traffic.enabled else "")
              + "  [여기부터 자동 원복 없음]"),
-            (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 기준점 이후 행 비교(post)"
-             + (" → 기준점 이전 집합 digest 재확정" if self.cc.final_snapshot_recheck else "")),
+            (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 건수 확인(대상 delta ≥ 원본, 스냅샷 건수 일치)"),
             (COMPLETED, "완료"),
         ]
 

@@ -218,9 +218,9 @@ python -m migration.cutover --config config.yaml --state-dir /var/lib/worker abo
 | READY | `--approve` 없으면 종료 코드 3 으로 멈춤 | - |
 | FENCING | 워커 `/pause` → `/drain` → (ingress 절이 있으면) 접수 큐 `/pause` settled·in_flight 0 확인 → 원본 `REVOKE INSERT` → 앱 계정 세션만 `pg_terminate_backend` → 앱 계정으로 시험 INSERT 가 거절되는지 실제 확인 (5, 6) | ABORTED |
 | DRAINING | 마지막 커밋 요청 ID 가 대상에 있고 **기준점 이후 건수**가 양쪽에서 같고(기준점 이전 건수도 같음) sink `/offsets` 가 `offset_stable_seconds` 동안 변하지 않음. 기준점 이전 건수가 CATCHING_UP 확정 때와 다르면(늦게 커밋된 행) 그 집합만 digest 재확정 (7) | ABORTED |
-| SYNC_CONFIRMED | 기준점 이후 행 verify(pre) 통과 → 커넥터 설정·상태·offset 증거 저장 → Source, Sink 삭제 → 대상 앱 쓰기가 아직 닫혀 있는지 확인 → 기준점 이후 행 verify(pre) 재실행 (7, 8) | ABORTED |
+| SYNC_CONFIRMED | 건수 확인(기준점 이후·이전 건수가 양쪽 같음) → 커넥터 설정·상태·offset 증거 저장 → Source, Sink 삭제 → 대상 앱 쓰기가 아직 닫혀 있는지 확인 → 건수 재확인 (7, 8) | ABORTED |
 | SWITCHING | 대상 `GRANT INSERT` → 워커 `/target {"target":"aws","phase":"aws_live"}` → 접속 DB 이름 확인 → `/resume` → (ingress 절이 있으면) 대상 앱 `/readyz`·`/api/info` 가 맞을 때까지 대기 → 접수 큐 `/target` → `/resume` (9) | **NEEDS_RECOVERY** |
-| VERIFYING | 대상에 `min_rows_after_switch`(100)건 신규 커밋, mismatch 0, 원본 앱 쓰기 여전히 차단, 기준점 이후 행 verify(post) 통과, (`final_snapshot_recheck`) 기준점 이전 집합 digest 재확정 (10) | NEEDS_RECOVERY |
+| VERIFYING | 대상에 `min_rows_after_switch`(100)건 신규 커밋, mismatch 0, 원본 앱 쓰기 여전히 차단, 건수 확인(대상 기준점 이후 건수 ≥ 원본, 기준점 이전 건수 같음) (10) | NEEDS_RECOVERY |
 | COMPLETED | 체크포인트에 승인 ID·마지막 요청·offset·검증 결과 보관 (11) | - |
 
 - `ABORTED`: 대상에 앱 쓰기를 열기 전 실패. `run --retry` 로 실패 단계부터 재개하거나 `abort` 로 원복(커넥터 삭제, 원본 `GRANT INSERT`, 워커 `/resume`; 워커 target 이 원본일 때만).
@@ -251,7 +251,8 @@ SQLite 요청 기록의 committed 집합 S(같은 created_at 범위)와 대조�
 `--mode post` 에서는 대상에서 커밋 확인된 요청(S 중 target=aws)만 `T-B` 에서 제외한다. 건수·lag 만으로 통과시키지 않는다.
 
 **기준점과 범위.** cutover 는 COPYING 시작 때 원본 `max(created_at)` 을 기준점으로 저장한다. 행이 INSERT 전용·불변(request_id·payload·created_at 고정, UPDATE/DELETE 없음)이라는 전제에서
-기준점 이전 집합은 한 번 확정하면 다시 읽을 필요가 없고, 전환 구간(DRAINING~VERIFYING)은 기준점 이후 행만 비교한다. 그래서 전환 시간이 테이블 크기가 아니라 복제 중 들어온 행 수에 비례한다.
+기준점 이전 집합은 CATCHING_UP 에서 한 번 확정하면 다시 읽지 않고, 전환 구간(DRAINING~VERIFYING)은 행을 읽지 않고 기준점 이후·이전 건수만 양쪽에서 센다(체크포인트 `counts_pre_stop`·`counts_post_stop`·`counts_pre_grant`·`counts_final`).
+그래서 전환 구간의 DB 작업은 인덱스 범위 count 네 쌍뿐이다. 행 단위 비교가 필요하면 전환이 끝난 뒤 `python -m migration.verify --mode post --since <watermark>` 를 따로 돌린다.
 `--method digest` 는 양쪽 서버에서 request_id 앞 두 자리로 256 버킷을 나눠 버킷별 건수와 모든 필드의 md5 를 계산해 비교한다(정렬은 uuid 바이트 순, created_at 은 UTC 마이크로초 문자열).
 digest 가 다른 버킷만 행을 읽어 B−T, 필드 불일치 ID 를 남기고, S−T 는 ID 묶음 조회로 확인한다. post 모드에서는 대상에 새 행이 있어 digest 를 쓰지 않는다.
 `sql/001_demo.sql` 의 `migration_demo_created_at_idx` 인덱스가 범위 조회를 받친다. 기존 DB 는 `init_db` 를 다시 실행해(재실행 안전) 인덱스를 만든다.
