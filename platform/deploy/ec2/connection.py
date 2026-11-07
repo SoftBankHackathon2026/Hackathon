@@ -6,6 +6,7 @@ import os
 import secrets
 import shutil
 import stat
+import tempfile
 import time
 from pathlib import Path
 
@@ -39,6 +40,40 @@ def compact(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def renew_broker_cert(root: Path, domain: str, openssl: str) -> None:
+    with tempfile.TemporaryDirectory(dir=root) as directory:
+        work = Path(directory)
+        csr, extensions, certificate = work / "broker.csr", work / "broker.ext", work / "broker.crt"
+        TRUST.write(
+            csr,
+            TRUST.invoke(
+                openssl, "req", "-new", "-key", str(root / "broker.key"),
+                "-subj", f"/CN={domain}",
+            ),
+        )
+        TRUST.write(
+            extensions,
+            (
+                "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
+                f"extendedKeyUsage=serverAuth\nsubjectAltName=DNS:{domain}\n"
+            ).encode(),
+        )
+        TRUST.write(
+            certificate,
+            TRUST.invoke(
+                openssl, "x509", "-req", "-in", str(csr), "-CA", str(root / "broker-ca.crt"),
+                "-CAkey", str(root / "broker-ca.key"), "-set_serial", str(secrets.randbits(120) + 1),
+                # Both peers enforce a maximum certificate lifetime of 24 hours.
+                "-days", "1", "-extfile", str(extensions),
+            ),
+        )
+        TRUST.invoke(
+            openssl, "verify", "-CAfile", str(root / "broker-ca.crt"),
+            "-purpose", "sslserver", "-verify_hostname", domain, str(certificate),
+        )
+        certificate.replace(root / "broker.crt")
+
+
 def trust(root: Path, domain: str, openssl: str) -> None:
     os.umask(0o077)
     for name in ("broker-ca.key", "signing", "job-signing-key.pem", "runtime-token"):
@@ -61,29 +96,7 @@ def trust(root: Path, domain: str, openssl: str) -> None:
         ),
     )
     key(root / "broker.key", "ML-DSA-65")
-    csr, ext = root / "broker.csr", root / "broker.ext"
-    TRUST.write(
-        csr,
-        TRUST.invoke(openssl, "req", "-new", "-key", str(root / "broker.key"), "-subj", f"/CN={domain}"),
-    )
-    TRUST.write(
-        ext,
-        (
-            "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
-            f"extendedKeyUsage=serverAuth\nsubjectAltName=DNS:{domain}\n"
-        ).encode(),
-    )
-    TRUST.write(
-        root / "broker.crt",
-        TRUST.invoke(
-            openssl, "x509", "-req", "-in", str(csr), "-CA", str(root / "broker-ca.crt"),
-            "-CAkey", str(root / "broker-ca.key"), "-set_serial", str(secrets.randbits(120) + 1),
-            "-days", "397", "-extfile", str(ext),
-        ),
-    )
-    csr.unlink()
-    ext.unlink()
-    TRUST.invoke(openssl, "verify", "-CAfile", str(root / "broker-ca.crt"), "-verify_hostname", domain, str(root / "broker.crt"))
+    renew_broker_cert(root, domain, openssl)
     key(root / "signing/release-mldsa.pem", "ML-DSA-65")
     key(root / "signing/release-ed25519.pem", "ED25519")
     key(root / "job-signing-key.pem", "ML-DSA-65")
@@ -228,6 +241,7 @@ def main() -> None:
     parser.add_argument("--openssl", default="openssl")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("trust")
+    sub.add_parser("renew-broker-cert")
     rel = sub.add_parser("release")
     rel.add_argument("--version", required=True)
     rel.add_argument("--sequence", type=int, required=True)
@@ -242,6 +256,9 @@ def main() -> None:
     root = private_root(args.dir)
     if args.command == "trust":
         trust(root, args.domain, args.openssl)
+    elif args.command == "renew-broker-cert":
+        renew_broker_cert(root, args.domain, args.openssl)
+        print("broker.crt renewed; deploy it as broker/gateway-chain.pem")
     elif args.command == "release":
         release(
             root, args.domain, args.version, args.sequence, args.days, args.endpoint,

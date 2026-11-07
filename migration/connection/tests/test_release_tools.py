@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,49 @@ def tool(name):
 
 
 class ReleaseToolsTests(unittest.TestCase):
+    def test_ec2_broker_issues_and_renews_a_24_hour_certificate(self):
+        openssl = os.environ.get("CONNECTION_TEST_OPENSSL")
+        if not openssl:
+            self.skipTest("real ML-DSA OpenSSL not configured")
+        provisioner = ROOT.parents[1] / "platform/deploy/ec2/connection.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            domain = "broker.test"
+            args = [
+                sys.executable, str(provisioner), "--dir", directory,
+                "--domain", domain, "--openssl", openssl,
+            ]
+            subprocess.run([*args, "trust"], check=True, capture_output=True, timeout=60)
+            ca = (root / "broker-ca.crt").read_bytes()
+            certificate = root / "broker.crt"
+
+            def inspect_certificate():
+                output = subprocess.check_output(
+                    [openssl, "x509", "-in", str(certificate), "-noout",
+                     "-dateopt", "iso_8601", "-dates", "-serial", "-pubkey"],
+                    text=True, timeout=5,
+                )
+                fields, public_key = output.split("-----BEGIN PUBLIC KEY-----")
+                values = dict(line.split("=", 1) for line in fields.splitlines())
+                start = datetime.fromisoformat(values["notBefore"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(values["notAfter"].replace("Z", "+00:00"))
+                self.assertEqual(end - start, timedelta(hours=24))
+                return values["serial"], public_key
+
+            first_serial, first_key = inspect_certificate()
+            subprocess.run(
+                [*args, "renew-broker-cert"], check=True, capture_output=True, timeout=60,
+            )
+            renewed_serial, renewed_key = inspect_certificate()
+            self.assertEqual(ca, (root / "broker-ca.crt").read_bytes())
+            self.assertEqual(first_key, renewed_key)
+            self.assertNotEqual(first_serial, renewed_serial)
+            subprocess.run(
+                [openssl, "verify", "-CAfile", str(root / "broker-ca.crt"),
+                 "-verify_hostname", domain, str(certificate)],
+                check=True, capture_output=True, timeout=5,
+            )
+
     def test_bootstrap_render_rejects_shell_injection(self):
         render = tool("render_bootstrap").render
         for url in (
