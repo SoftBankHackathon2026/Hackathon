@@ -8,7 +8,6 @@ import type {
 } from "../../api/agent";
 import { errorMessage } from "../../api/client";
 import { agentHash, replaceHash } from "../../app/routes";
-import { KeyValue } from "../../components/KeyValue";
 import {
   FilterSelect,
   PageHeader,
@@ -25,9 +24,9 @@ import {
   changeText,
   DECISION_LABELS,
   filterRuns,
-  gateText,
   gateTone,
   gateView,
+  type GateView,
   proposalNotes,
   reasonText,
   runStateLabel,
@@ -314,57 +313,48 @@ function RunBody({ run }: { run: AgentRunDetail }) {
   return (
     <>
       <PanelGroup label="진단">
-        <p>{run.summary.diagnosis ?? "진단 기록이 없어요."}</p>
+        <p className="agent-text">
+          {run.summary.diagnosis ?? "진단 기록이 없어요."}
+        </p>
       </PanelGroup>
       <PanelGroup label="변경">
         {changes.length === 0 ? (
-          <p>제안된 변경이 없어요.</p>
+          <p className="agent-text">제안된 변경이 없어요.</p>
         ) : (
-          <KeyValue
-            rows={changes.map((change) => ({
-              label: <span className="mono">{change.key}</span>,
-              value: (
-                <span className="mono">
+          <ul className="agent-changes">
+            {changes.map((change) => (
+              <li key={change.key}>
+                <span className="agent-change-key mono">{change.key}</span>
+                <span className="agent-change-value mono">
                   {change.before !== null && (
                     <>
-                      <span className="sub">{change.before}</span> →{" "}
+                      <span className="sub">{change.before}</span>
+                      <span className="agent-arrow" aria-hidden="true">
+                        →
+                      </span>
                     </>
                   )}
                   {change.after}
                 </span>
-              ),
-            }))}
-          />
+              </li>
+            ))}
+          </ul>
         )}
       </PanelGroup>
-      <PanelGroup label="제안 근거">
-        <KeyValue
-          rows={[
-            { label: "원인", value: notes.cause ?? "-" },
-            { label: "영향", value: notes.impact ?? "-" },
-            { label: "검증", value: notes.verification ?? "-" },
-          ]}
-        />
+      <PanelGroup label="원인">
+        <p className="agent-text">{notes.cause ?? "-"}</p>
       </PanelGroup>
-      <PanelGroup label="OPA 판정">
-        <KeyValue
-          rows={[
-            {
-              label: "적용 전",
-              value: (
-                <StatusDot tone={gateTone(before)}>
-                  {gateText(before)}
-                </StatusDot>
-              ),
-            },
-            {
-              label: "적용 후",
-              value: (
-                <StatusDot tone={gateTone(after)}>{gateText(after)}</StatusDot>
-              ),
-            },
-          ]}
-        />
+      <PanelGroup label="영향">
+        <p className="agent-text">{notes.impact ?? "-"}</p>
+      </PanelGroup>
+      <PanelGroup label="검증">
+        <p className="agent-text">{notes.verification ?? "-"}</p>
+      </PanelGroup>
+      <PanelGroup label="OPA 적용 전">
+        <GateResult gate={before} />
+      </PanelGroup>
+      <PanelGroup label="OPA 적용 후">
+        <GateResult gate={after} />
       </PanelGroup>
       <PanelGroup label="타임라인">
         {run.events.length === 0 ? (
@@ -388,5 +378,24 @@ function RunBody({ run }: { run: AgentRunDetail }) {
         )}
       </PanelGroup>
     </>
+  );
+}
+
+function GateResult({ gate }: { gate: GateView | null }) {
+  return (
+    <div className="agent-gate">
+      <StatusDot tone={gateTone(gate)}>
+        {gate === null ? "아직 없어요" : gate.outcome}
+      </StatusDot>
+      {gate !== null && gate.reasonCodes.length > 0 && (
+        <ul className="agent-codes">
+          {gate.reasonCodes.map((code) => (
+            <li key={code} className="mono">
+              {code}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
