@@ -176,7 +176,10 @@ class Remediator:
             self._finish(run, R.REJECTED, "정적 검사 거절: " + "; ".join(r.message for r in rejections), rejections=codes)
             return
 
-        run.detail.update(proposal=proposal.as_dict(), expected_version=snapshot.version)
+        recorded = proposal.as_dict()
+        visible = visible_config(snapshot.data)
+        recorded["changes"] = [{**c, "before": visible.get(c["key"])} for c in recorded["changes"]]
+        run.detail.update(proposal=recorded, expected_version=snapshot.version)
         if not self._probe(run, proposal, snapshot.data):
             return
         if not self.auto_apply:

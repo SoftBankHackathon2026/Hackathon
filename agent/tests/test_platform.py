@@ -178,3 +178,21 @@ def test_human_reject_keeps_store_and_notifies(make_world) -> None:
     assert w.notes[-1].startswith("🚫") and "유빈 님이 제안을 거절했어요" in w.notes[-1]
     with pytest.raises(ValueError):
         w.remediator.reject(run.run_id)
+
+
+def test_sync_skips_nothing_to_fix(tmp_path: Path) -> None:
+    runs = RunStore(tmp_path)
+    quiet = runs.create("job")
+    runs.update(quiet, R.NOTHING_TO_FIX, "정상")
+    opener = FakeOpener()
+    assert client(opener).sync(runs) == 0 and opener.requests == []
+    runs.close()
+
+
+def test_recorded_proposal_keeps_before_value(make_world) -> None:
+    w = make_world(auto_apply=False)
+    run = w.remediator.run()
+    change = run.detail["proposal"]["changes"][0]
+    assert change["key"] == "DB_HOST" and change["before"] and change["before"] != change["value"]
+    assert w.remediator.approve(run.run_id).state == "RESOLVED"
+

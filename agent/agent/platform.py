@@ -10,10 +10,11 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
-from .runs import Run, RunStore
+from .runs import NOTHING_TO_FIX, Run, RunStore
 
 log = logging.getLogger("agent.platform")
 AGENT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+QUIET_STATES = frozenset({NOTHING_TO_FIX})
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -71,6 +72,8 @@ class PlatformClient:
     def sync(self, runs: RunStore, limit: int = 20) -> int:
         sent = 0
         for run in reversed(runs.recent(limit)):
+            if run.state in QUIET_STATES:
+                continue
             events = runs.events(run.run_id)
             if self._pushed.get(run.run_id) != _mark(run, events) and self.push_run(run, events):
                 sent += 1
