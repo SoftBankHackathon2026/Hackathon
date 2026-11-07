@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import threading
 
@@ -12,6 +13,7 @@ _CONFIG = control_adapter.AdapterConfig(
     port=0,
     source_app_url="http://aws-app.example",
     target_app_url="http://gcp-app.example",
+    target_database="shop_b",
 )
 
 
@@ -44,12 +46,23 @@ def ingress():
         yield fake, url
 
 
-def _adapter(url, readiness=None, fake_time=None):
+class _Identity:
+    def __init__(self, problems=()):
+        self.problems = problems
+        self.inspected = []
+
+    def __call__(self, base_url, *, database, environment, timeout):
+        self.inspected.append((base_url, database, environment))
+        return self.problems
+
+
+def _adapter(url, readiness=None, fake_time=None, identity=None, config=None):
     fake_time = fake_time or _FakeTime()
     return control_adapter.ControlAdapter(
-        _CONFIG,
+        config or _CONFIG,
         ingress_control.IngressControl(url, token=None),
         check_ready=readiness or _Readiness(),
+        inspect_app=identity or _Identity(),
         clock=fake_time.clock,
         sleep=fake_time.sleep,
     )
@@ -148,17 +161,17 @@ def test_drain_rejects_bad_timeout(ingress, payload):
     assert code == 400
 
 
-def test_target_checks_app_readiness_then_switches_with_epoch(ingress):
+def test_target_checks_app_db_identity_then_switches_with_epoch(ingress):
     fake, url = ingress
     fake.state["mode"] = "paused"
-    readiness = _Readiness()
+    identity = _Identity()
 
-    code, body = _adapter(url, readiness).target({"target": "gcp"})
+    code, body = _adapter(url, identity=identity).target({"target": "gcp"})
 
     assert code == 200
     assert body["state"] == "PAUSED"
     assert body["target"] == "gcp"
-    assert readiness.checked == ["http://gcp-app.example/readyz"]
+    assert identity.inspected == [("http://gcp-app.example", "shop_b", None)]
     assert (
         "POST",
         "/target",
@@ -166,17 +179,33 @@ def test_target_checks_app_readiness_then_switches_with_epoch(ingress):
     ) in fake.calls
 
 
-def test_target_refuses_when_target_app_not_ready(ingress):
+def test_target_refuses_when_target_app_is_not_on_target_db(ingress):
     fake, url = ingress
     fake.state["mode"] = "paused"
+    identity = _Identity(("database=shop (기대 shop_b)",))
 
-    code, body = _adapter(url, _Readiness(ready=False)).target(
-        {"target": "gcp"}
-    )
+    code, body = _adapter(url, identity=identity).target({"target": "gcp"})
 
     assert code == 503
     assert fake.state["target"] == "aws"
-    assert "readyz" in body["error"]
+    assert "database=shop" in body["error"]
+
+
+def test_labels_map_to_configured_ingress_target_names(ingress):
+    fake, url = ingress
+    fake.targets.update({"aws_app", "gcp_app"})
+    fake.state.update(mode="paused", target="aws_app")
+    config = dataclasses.replace(
+        _CONFIG, source_ingress_name="aws_app", target_ingress_name="gcp_app"
+    )
+    adapter = _adapter(url, config=config)
+
+    status_code, status = adapter.status()
+    target_code, switched = adapter.target({"target": "gcp"})
+
+    assert (status_code, status["target"]) == (200, "aws")
+    assert (target_code, switched["target"]) == (200, "gcp")
+    assert fake.state["target"] == "gcp_app"
 
 
 def test_target_refuses_while_running(ingress):
@@ -295,6 +324,7 @@ def test_start_on_source_refuses_after_switch_to_target():
 
 def test_load_config_from_rendered_files(tmp_path):
     (tmp_path / "config.cloud.yaml").write_text(
+        "targets: {gcp: {dbname: shop_b}}\n"
         "job: {job_id: j, source: aws, target: gcp}\n"
         "application: {control_url: 'http://127.0.0.1:18080'}\n"
     )
@@ -318,6 +348,7 @@ def test_load_config_from_rendered_files(tmp_path):
         port=18080,
         source_app_url="http://aws-app.example",
         target_app_url="http://gcp-app.example",
+        target_database="shop_b",
     )
 
 

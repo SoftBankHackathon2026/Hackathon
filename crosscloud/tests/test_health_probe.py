@@ -1,3 +1,5 @@
+import json
+
 import http_fixture
 
 from crosscloud import health_probe
@@ -86,3 +88,63 @@ def test_consecutive_successes_returns_streak_at_deadline():
 
     assert 0 < streak < 10
     assert fake.now <= 5
+
+
+def _info(name="shop_b", environment="gcp", writes_paused=False):
+    return json.dumps(
+        {
+            "environment": environment,
+            "database": {"name": name, "row_count": "0"},
+            "writes_paused": writes_paused,
+        }
+    ).encode()
+
+
+_READY = (200, b'{"status":"ok"}')
+
+
+def test_app_identity_has_no_problems_when_attached_to_expected_db():
+    with http_fixture.serve(
+        {"/readyz": _READY, "/api/info": (200, _info())}
+    ) as url:
+        problems = health_probe.app_identity_problems(
+            url, database="shop_b", environment="gcp", timeout=2
+        )
+
+    assert problems == ()
+
+
+def test_app_identity_reports_wrong_database_and_environment():
+    with http_fixture.serve(
+        {"/readyz": _READY, "/api/info": (200, _info("shop", "aws"))}
+    ) as url:
+        problems = health_probe.app_identity_problems(
+            url, database="shop_b", environment="gcp", timeout=2
+        )
+
+    assert any("database=shop" in p for p in problems)
+    assert any("environment=aws" in p for p in problems)
+
+
+def test_app_identity_reports_not_ready_and_paused_writes():
+    with http_fixture.serve(
+        {
+            "/readyz": (503, b'{"status":"unavailable"}'),
+            "/api/info": (200, _info(writes_paused=True)),
+        }
+    ) as url:
+        problems = health_probe.app_identity_problems(
+            url, database="shop_b", environment=None, timeout=2
+        )
+
+    assert any("/readyz" in p for p in problems)
+    assert any("writes_paused" in p for p in problems)
+
+
+def test_app_identity_reports_unreadable_info():
+    with http_fixture.serve({"/readyz": _READY}) as url:
+        problems = health_probe.app_identity_problems(
+            url, database="shop_b", environment=None, timeout=2
+        )
+
+    assert any("/api/info" in p for p in problems)

@@ -11,11 +11,13 @@ migration/worker_client.py). 어댑터는 플랫폼을 바꾸지 않는다. 쓰�
 | GET /status        | GET /status → state·target·known_targets·in_flight     |
 | POST /pause        | POST /pause (settled:true 확인)                        |
 | POST /drain        | GET /status 를 paused·in_flight 0 이 될 때까지 되풀이  |
-| POST /target       | 대상 앱 /readyz 확인 → POST /target (expected_epoch)   |
+| POST /target       | 대상 앱 DB 신원 확인 → POST /target (expected_epoch)   |
 | POST /resume       | POST /resume (expected_epoch). 대상 라벨일 때만        |
 | GET /healthz       | 대상 앱 /readyz 연속 N 회(25초 안)                     |
 
-접수 큐의 대상 이름은 클라우드 라벨(aws·gcp)과 같다. 응답이 모호하거나 접수
+대상 앱 DB 신원은 /readyz 와 /api/info 의 database.name(·environment)으로
+본다(원가연 check_app_ready). 접수 큐의 대상 이름은 기본으로 클라우드
+라벨(aws·gcp)과 같고, 다르면 설정으로 대응한다. 응답이 모호하거나 접수
 큐 호출이 실패하면 성공으로 답하지 않는다(502·409·503). 127.0.0.1 에서만
 듣는다.
 
@@ -57,7 +59,12 @@ class AdapterConfig:
         target: 대상 라벨(job.target).
         port: 들을 포트(application.control_url 의 포트).
         source_app_url: 원본 앱 주소(INGRESS_TARGETS[source].url).
-        target_app_url: 대상 앱 주소(INGRESS_TARGETS[target].url).
+        target_app_url: 대상 앱 주소(INGRESS_TARGETS[target].url). 대상
+            DB(B) 프로필로 미리 띄운 배포다.
+        target_database: 대상 앱이 붙어야 할 DB 이름(targets.<대상>.dbname).
+        target_environment: 대상 앱 DEPLOY_ENV. None 이면 보지 않는다.
+        source_ingress_name: 원본 라벨의 접수 큐 대상 이름. None 이면 라벨.
+        target_ingress_name: 대상 라벨의 접수 큐 대상 이름. None 이면 라벨.
         readiness_successes: /healthz 가 요구하는 연속 성공 수.
         readiness_deadline_seconds: 연속 성공을 기다리는 상한. 원가연 HTTP
             한도(30초)보다 짧아야 한다.
@@ -68,6 +75,10 @@ class AdapterConfig:
     port: int
     source_app_url: str
     target_app_url: str
+    target_database: str
+    target_environment: str | None = None
+    source_ingress_name: str | None = None
+    target_ingress_name: str | None = None
     readiness_successes: int = 3
     readiness_deadline_seconds: float = 25.0
 
@@ -77,6 +88,21 @@ class AdapterConfig:
             self.source: self.source_app_url,
             self.target: self.target_app_url,
         }.get(label)
+
+    def ingress_name(self, label: str) -> str:
+        """라벨에 대응하는 접수 큐 대상 이름."""
+        names = {
+            self.source: self.source_ingress_name or self.source,
+            self.target: self.target_ingress_name or self.target,
+        }
+        return names[label]
+
+    def label_of(self, ingress_name: str) -> str | None:
+        """접수 큐 대상 이름의 라벨. 이 job 의 것이 아니면 None."""
+        for label in (self.source, self.target):
+            if self.ingress_name(label) == ingress_name:
+                return label
+        return None
 
 
 class ControlAdapter:
@@ -90,6 +116,9 @@ class ControlAdapter:
         check_ready: collections.abc.Callable[
             [str, float], bool
         ] = health_probe.is_healthy,
+        inspect_app: collections.abc.Callable[
+            ..., tuple[str, ...]
+        ] = health_probe.app_identity_problems,
         clock: collections.abc.Callable[[], float] = time.monotonic,
         sleep: collections.abc.Callable[[float], None] = time.sleep,
     ) -> None:
@@ -97,6 +126,7 @@ class ControlAdapter:
         self._config = config
         self._ingress = ingress
         self._check_ready = check_ready
+        self._inspect_app = inspect_app
         self._clock = clock
         self._sleep = sleep
         # 바꾸는 호출(pause·target·resume)은 한 번에 하나만.
@@ -162,22 +192,28 @@ class ControlAdapter:
 
     def _switch(self, label: str) -> Reply:
         state = self._read()
-        if state.target == label:
+        if self._label(state) == label:
             return 200, self._app_status(state)
         if state.mode != "paused" or state.in_flight:
             return 409, {"error": "큐가 paused·in_flight 0 이 아니다"}
-        url = self._config.target_app_url + _READYZ_PATH
-        if not self._check_ready(url, _READYZ_TIMEOUT_SECONDS):
-            return 503, {"error": f"대상 앱 {_READYZ_PATH} 준비 안 됨"}
-        self._ingress.set_target(label, state.epoch)
+        problems = self._inspect_app(
+            self._config.target_app_url,
+            database=self._config.target_database,
+            environment=self._config.target_environment,
+            timeout=_READYZ_TIMEOUT_SECONDS,
+        )
+        if problems:
+            return 503, {"error": "대상 앱 확인 실패: " + "; ".join(problems)}
+        self._ingress.set_target(self._config.ingress_name(label), state.epoch)
         switched = self._read()
-        if switched.target != label or switched.mode != "paused":
+        if self._label(switched) != label or switched.mode != "paused":
             raise ingress_control.IngressError("target 변경이 반영되지 않았다")
         return 200, self._app_status(switched)
 
     def _resume(self) -> Reply:
+        # 변경 뒤 epoch 를 다시 읽어 보낸다(어긋나면 EPOCH_CONFLICT → 실패).
         state = self._read()
-        if state.target != self._config.target:
+        if self._label(state) != self._config.target:
             return 409, {
                 "error": f"큐가 {state.target} 을 가리킨다 — 대상"
                 f" {self._config.target} 에서만 재개한다"
@@ -207,14 +243,16 @@ class ControlAdapter:
 
     def _start_on_source(self) -> Reply:
         state = self._read()
-        if state.target == self._config.target:
+        label = self._config.label_of(state.target)
+        if label == self._config.target:
             return 409, {
                 "error": "이미 대상으로 전환됐다 — 원본으로 돌리지 않는다"
             }
-        if state.target != self._config.source:
+        if label != self._config.source:
             if state.mode != "paused":
                 state = self._pause()
-            self._ingress.set_target(self._config.source, state.epoch)
+            source_name = self._config.ingress_name(self._config.source)
+            self._ingress.set_target(source_name, state.epoch)
             state = self._read()
         if state.mode == "paused":
             self._ingress.resume(state.epoch)
@@ -232,11 +270,12 @@ class ControlAdapter:
         }
 
     def _label(self, state: ingress_control.IngressState) -> str:
-        if self._config.app_url(state.target) is None:
+        label = self._config.label_of(state.target)
+        if label is None:
             raise ingress_control.IngressError(
                 f"큐 대상 {state.target} 은 이 job 의 라벨이 아니다"
             )
-        return state.target
+        return label
 
     def _changed(self, action: collections.abc.Callable[[], Reply]) -> Reply:
         if not self._changing.acquire(blocking=False):
@@ -255,9 +294,14 @@ class ControlAdapter:
 
 
 def load_adapter_config(
-    cloud_config: pathlib.Path, ingress_env: pathlib.Path
+    cloud_config: pathlib.Path,
+    ingress_env: pathlib.Path,
+    *,
+    target_environment: str | None = None,
 ) -> AdapterConfig:
     """인계 파일 둘(config.cloud.yaml·ingress.env)에서 어댑터 설정을 읽는다.
+
+    접수 큐 대상 이름은 라벨과 같다고 본다(handoff.render_ingress_env 형식).
 
     Raises:
         ValueError: 라벨·주소·포트가 없거나 형식이 틀릴 때.
@@ -270,6 +314,11 @@ def load_adapter_config(
         raise ValueError(f"config.cloud.yaml 에 {error} 가 없다") from None
     if {job.get("source"), job.get("target")} != {"aws", "gcp"}:
         raise ValueError("job.source·target 은 aws·gcp 여야 한다")
+    target_db = ((document.get("targets") or {}).get(job["target"]) or {}).get(
+        "dbname"
+    )
+    if not target_db:
+        raise ValueError(f"targets.{job['target']}.dbname 이 없다")
     port = urllib.parse.urlsplit(control_url).port
     if port is None:
         raise ValueError("application.control_url 에 포트가 없다")
@@ -286,6 +335,8 @@ def load_adapter_config(
         port=port,
         source_app_url=urls[job["source"]],
         target_app_url=urls[job["target"]],
+        target_database=target_db,
+        target_environment=target_environment,
     )
 
 

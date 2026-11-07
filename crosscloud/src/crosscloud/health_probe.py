@@ -5,6 +5,8 @@
 (원가연 migration/ingress_client.py check_app_ready 와 같은 기준).
 
   ready = health_probe.is_healthy(app_url + "/readyz", timeout=5)
+  problems = health_probe.app_identity_problems(
+      app_url, database="shop_b", environment="gcp", timeout=5)
   streak = health_probe.consecutive_successes(
       lambda: health_probe.is_healthy(url, timeout=5), needed=3,
       deadline_seconds=25, interval=1)
@@ -19,13 +21,43 @@ import urllib.request
 
 def is_healthy(url: str, timeout: float) -> bool:
     """GET 이 200 이고 본문 status 가 ok 면 True. 그 밖은 모두 False."""
-    request = urllib.request.Request(url, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-            return response.status == 200 and _status_ok(body)
-    except (urllib.error.URLError, OSError, ValueError):
-        return False
+    code, body = _get_json(url, timeout)
+    return code == 200 and body.get("status") == "ok"
+
+
+def app_identity_problems(
+    base_url: str, *, database: str, environment: str | None, timeout: float
+) -> tuple[str, ...]:
+    """앱이 준비됐고 기대한 DB 에 붙었는지 본다. 문제 목록(없으면 빈 tuple).
+
+    /readyz 준비와, /api/info 의 database.name·environment 가 기대와 같고
+    writes_paused 가 아닌지를 본다(원가연 check_app_ready 와 같은 기준).
+
+    Args:
+        base_url: 앱 기준 주소.
+        database: 기대하는 DB 이름(current_database()).
+        environment: 기대하는 배포 환경(DEPLOY_ENV). None 이면 보지 않는다.
+        timeout: 요청마다의 제한 시간(초).
+    """
+    base = base_url.rstrip("/")
+    problems = []
+    if not is_healthy(base + "/readyz", timeout):
+        problems.append("/readyz 준비 안 됨")
+    code, info = _get_json(base + "/api/info", timeout)
+    if code != 200:
+        problems.append(f"/api/info {code}")
+        return tuple(problems)
+    db = info.get("database")
+    name = db.get("name") if isinstance(db, dict) else None
+    if name != database:
+        problems.append(f"database={name} (기대 {database})")
+    if environment is not None and info.get("environment") != environment:
+        problems.append(
+            f"environment={info.get('environment')} (기대 {environment})"
+        )
+    if info.get("writes_paused") is True:
+        problems.append("writes_paused=true")
+    return tuple(problems)
 
 
 def consecutive_successes(
@@ -59,5 +91,18 @@ def consecutive_successes(
     return streak
 
 
-def _status_ok(body: object) -> bool:
-    return isinstance(body, dict) and body.get("status") == "ok"
+def _get_json(url: str, timeout: float) -> tuple[int | None, dict]:
+    """GET 결과 (코드, JSON 객체). 연결 실패면 None, 본문이 객체가 아니면 {}."""
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            code, raw = response.status, response.read()
+    except urllib.error.HTTPError as error:
+        code, raw = error.code, error.read()
+    except (urllib.error.URLError, OSError):
+        return None, {}
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return code, {}
+    return code, body if isinstance(body, dict) else {}
