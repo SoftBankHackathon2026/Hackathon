@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "inventory_hash": "REPLACE-WITH-INVENTORY-HASH",
+  "bindings": [
+    {
+      "source_arn": "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:/example/orders/db-AbCdEf",
+      "target_path": "migration/orders/dev/database",
+      "business": "orders",
+      "environment": "dev",
+      "identity_assignments": ["REPLACE-WITH-IDENTITY-ASSIGNMENT-ID"],
+      "review_ref": "REPLACE-WITH-ACTUAL-REVIEW-RECORD"
+    }
+  ]
+}

@@ -13,3 +13,6 @@ recursive-include migration/identity *.md
 include config.security-logs.example.yaml
 recursive-include tests/security_logs *.py
 global-exclude *.py[cod]
+recursive-include secrets-examples *.json *.yaml
+recursive-include docs/secrets *.md
+recursive-include tests/secrets_migration *.py
