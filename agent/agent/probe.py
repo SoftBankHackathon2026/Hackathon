@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 import psycopg
 
@@ -32,9 +33,12 @@ def password_from_url(url: str | None) -> str | None:
 
 
 class PostgresProber:
-    def __init__(self, settings: ProbeSettings, *, env: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, settings: ProbeSettings, *, env: Mapping[str, str] | None = None, sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.settings = settings
         self._env = os.environ if env is None else env
+        self._sleep = sleep
 
     def _address(self, host: str, port: int) -> tuple[str, int] | None:
         mapped = self.settings.address_map.get(f"{host}:{port}")
@@ -46,6 +50,15 @@ class PostgresProber:
         return addr, int(mapped_port)
 
     def probe(self, config: Mapping[str, Any]) -> ProbeResult:
+        result = self._probe_once(config)
+        for _ in range(max(self.settings.attempts, 1) - 1):
+            if result.ok or result.error == "AddressMapInvalid":
+                break
+            self._sleep(self.settings.retry_delay)
+            result = self._probe_once(config)
+        return result
+
+    def _probe_once(self, config: Mapping[str, Any]) -> ProbeResult:
         host, port = str(config["DB_HOST"]), int(config["DB_PORT"])
         try:
             mapped = self._address(host, port)

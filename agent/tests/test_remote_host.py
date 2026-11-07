@@ -136,3 +136,32 @@ def test_watch_waits_while_approval_pending(tmp_path: Path) -> None:
     cli.watch(remediator, runs, interval=1, iterations=3, sleep=lambda _: None)
     assert remediator.calls == 1
     runs.close()
+
+
+def test_smoke_retries_only_observation_errors() -> None:
+    results = iter([{"status": "error"}, {"status": "error"}, {"status": "pass"}])
+    sleeps: list[float] = []
+    assert cli.smoke_with_retry(lambda: next(results), retries=2, delay=8, sleep=sleeps.append) == {"status": "pass"}
+    assert sleeps == [8, 8]
+    failed = iter([{"status": "failed"}, {"status": "pass"}])
+    assert cli.smoke_with_retry(lambda: next(failed), retries=2, delay=8, sleep=sleeps.append) == {"status": "failed"}
+    assert cli.smoke_with_retry(lambda: {"status": "error"}, retries=0, delay=8, sleep=sleeps.append) == {"status": "error"}
+
+
+def test_probe_retries_after_broken_forward(captured: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def flaky(address, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError
+        return SimpleNamespace(close=lambda: None)
+
+    monkeypatch.setattr(probe_mod.socket, "create_connection", flaky)
+    sleeps: list[float] = []
+    settings = ProbeSettings(attempts=3, retry_delay=5)
+    assert PostgresProber(settings, env={}, sleep=sleeps.append).probe(CONFIG).ok
+    assert calls["n"] == 2 and sleeps == [5]
+    calls["n"] = 0
+    assert not PostgresProber(ProbeSettings(attempts=1), env={}, sleep=sleeps.append).probe(CONFIG).ok
+    assert calls["n"] == 1

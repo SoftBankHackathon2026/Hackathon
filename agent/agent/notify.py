@@ -24,14 +24,17 @@ class StdoutNotifier:
 
 
 class SlackNotifier:
-    def __init__(self, token: str, channel: str, *, timeout: float = 5.0) -> None:
-        self._token, self.channel, self._timeout = token, channel, timeout
+    def __init__(self, token: str, channel: str, *, timeout: float = 5.0, thread_ts: str | None = None) -> None:
+        self._token, self.channel, self._timeout, self.thread_ts = token, channel, timeout, thread_ts
 
     def __repr__(self) -> str:
         return f"SlackNotifier(channel={self.channel!r})"
 
     def send(self, text: str) -> None:
-        body = json.dumps({"channel": self.channel, "text": text}).encode("utf-8")
+        payload = {"channel": self.channel, "text": text}
+        if self.thread_ts:
+            payload["thread_ts"] = self.thread_ts
+        body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(SLACK_URL, data=body, method="POST", headers={
             "Authorization": f"Bearer {self._token}", "Content-Type": "application/json; charset=utf-8",
         })
@@ -54,17 +57,20 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class SlackWebhookNotifier:
-    def __init__(self, url: str, *, timeout: float = 5.0) -> None:
+    def __init__(self, url: str, *, timeout: float = 5.0, thread_ts: str | None = None) -> None:
         if not url.startswith(WEBHOOK_PREFIX):
             raise ValueError("Slack Incoming Webhook 주소가 아니다")
-        self._url, self._timeout = url, timeout
+        self._url, self._timeout, self.thread_ts = url, timeout, thread_ts
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     def __repr__(self) -> str:
         return "SlackWebhookNotifier()"
 
     def send(self, text: str) -> None:
-        body = json.dumps({"text": text}).encode("utf-8")
+        payload = {"text": text}
+        if self.thread_ts:
+            payload["thread_ts"] = self.thread_ts
+        body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(self._url, data=body, method="POST", headers={
             "Content-Type": "application/json; charset=utf-8",
         })
@@ -91,17 +97,17 @@ class CompositeNotifier:
             notifier.send(text)
 
 
-def build_notifier(channel: str | None, env: Mapping[str, str] | None = None) -> Notifier:
+def build_notifier(channel: str | None, env: Mapping[str, str] | None = None, thread_ts: str | None = None) -> Notifier:
     environ = os.environ if env is None else env
     webhook = environ.get("SLACK_WEBHOOK_URL")
     if webhook:
         try:
-            return CompositeNotifier(StdoutNotifier(), SlackWebhookNotifier(webhook))
+            return CompositeNotifier(StdoutNotifier(), SlackWebhookNotifier(webhook, thread_ts=thread_ts))
         except ValueError as exc:
             log.warning("%s. stdout 으로만 보고한다", exc)
     token = environ.get("SLACK_BOT_TOKEN")
     if token and channel:
-        return CompositeNotifier(StdoutNotifier(), SlackNotifier(token, channel))
+        return CompositeNotifier(StdoutNotifier(), SlackNotifier(token, channel, thread_ts=thread_ts))
     if token:
         log.warning("SLACK_BOT_TOKEN 은 있지만 slack.channel 이 없어 stdout 으로만 보고한다")
     return StdoutNotifier()

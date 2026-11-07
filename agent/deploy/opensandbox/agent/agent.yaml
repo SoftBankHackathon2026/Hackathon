@@ -1,6 +1,7 @@
 job_id: onprem_agent_remote
 state_dir: /var/lib/oneport-agent
 auto_apply: true
+approve_command: oneport-agent approve
 
 smoke:
   stage: pre_cutover
@@ -9,6 +10,8 @@ smoke:
   http_timeout: 5
   replication_timeout: 30
   poll_interval: 1
+  error_retries: 2
+  retry_delay: 8
 
 policy:
   opa_url: http://127.0.0.1:18181
@@ -50,6 +53,8 @@ probe:
   sslmode: verify-full
   sslrootcert: /etc/oneport-agent/db-ca.pem
   password_url_env: SAMPLE_APP_DATABASE_URL
+  attempts: 3
+  retry_delay: 5
   address_map:
     postgres.hackathon.svc.cluster.local:5432: 127.0.0.1:15432
 
@@ -64,3 +69,4 @@ restart:
 
 slack:
   channel: ""
+  thread_ts: ""

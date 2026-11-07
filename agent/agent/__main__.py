@@ -30,14 +30,27 @@ from .runs import OK_STATES, Run, RunStore
 EXIT_OK, EXIT_CONFIG, EXIT_ATTENTION = 0, 1, 2
 
 
+def smoke_with_retry(
+    once: Callable[[], dict], *, retries: int, delay: float, sleep: Callable[[float], None] = time.sleep,
+) -> dict:
+    check = once()
+    for _ in range(max(retries, 0)):
+        if check.get("status") != "error":
+            break
+        logging.getLogger("agent").info("스모크 관측 오류. %.0f초 뒤 다시 본다", delay)
+        sleep(delay)
+        check = once()
+    return check
+
+
 def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore) -> Remediator:
     def smoke() -> dict:
         s = cfg.smoke
-        return run_smoke(
+        return smoke_with_retry(lambda: run_smoke(
             s.stage, job_id=cfg.job_id, source_url=s.source_url, target_url=s.target_url, target_only=s.target_only,
             token=token_from_env(s.token_env), http_timeout=s.http_timeout,
             replication_timeout=s.replication_timeout, poll_interval=s.poll_interval,
-        ).to_check()
+        ).to_check(), retries=s.error_retries, delay=s.retry_delay)
 
     deps = Deps(
         smoke=smoke,
@@ -49,11 +62,11 @@ def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore)
         restarter=RolloutRestarter(cfg.restart, InClusterKubeApi(
             server=cfg.restart.api_server, token_file=cfg.restart.token_file, ca_file=cfg.restart.ca_file,
         )),
-        notifier=build_notifier(cfg.slack_channel),
+        notifier=build_notifier(cfg.slack_channel, thread_ts=cfg.slack_thread_ts),
         runs=runs,
     )
     return Remediator(deps, job_id=cfg.job_id, plan=cfg.plan, declared_evidence=cfg.declared_evidence,
-                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage)
+                      auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command)
 
 
 def watch(
