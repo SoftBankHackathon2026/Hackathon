@@ -3987,6 +3987,33 @@ body {
   font-size: var(--fs-xs);
 }
 
+.plan-delete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.plan-delete button {
+  margin-left: auto;
+}
+.plan-delete [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+}
+.job-actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+.job-actions button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
 /* 파드 로그: 사이드 패널을 넓혀 위 도구 줄은 고정, 아래 로그만 스크롤 */
 .fp.fp-wide {
   width: min(980px, 96vw);

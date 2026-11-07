@@ -291,7 +291,12 @@ class MigrationService:
             worker=state.worker,
         )
 
-    def get_plan(self, job_id: str, mapping_status: str | None) -> TaskPlan:
+    def has_started(self, job_id: str) -> bool:
+        return self._state(job_id).cutover is not None
+
+    def get_plan(
+        self, job_id: str, mapping_status: str | None, removable: bool = False
+    ) -> TaskPlan:
         state = self._state(job_id)
         environments = {env.config.id: env for env in self._source.list_environments()}
         source = environments.get(state.config.source_env)
@@ -338,6 +343,7 @@ class MigrationService:
             )
         return TaskPlan(
             job_id=job_id,
+            removable=removable,
             route=PlanRoute(
                 source_env=state.config.source_env,
                 target_env=state.config.target_env,
