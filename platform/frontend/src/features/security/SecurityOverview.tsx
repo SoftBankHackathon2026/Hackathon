@@ -157,53 +157,60 @@ export function SecurityOverview({
         {exposed.length === 0 ? (
           <p className="pk-empty">노출된 진입점이 없어요.</p>
         ) : (
-          <table className="pk-table w-table">
-            <thead>
-              <tr>
-                <th>진입점</th>
-                <th>환경</th>
-                <th className="num">뒤의 워크로드</th>
-                <th className="num">닿는 데이터</th>
-                <th>걸린 통제</th>
-              </tr>
-            </thead>
-            <tbody>
-              {exposed.map((row) => (
-                <tr
-                  key={`${row.envId}:${row.entry.id}`}
-                  className="clickable"
-                  onClick={() => onControls(row.controls.map((c) => c.id))}
-                >
-                  <td>
-                    <span className="rule-cell">
-                      <NodeIcon layer="entry" kind={row.entry.kind} />
-                      <span className="rule-text">
-                        <span className="rule-title">{row.entry.name}</span>
-                        <span className="rule-sub">
-                          {row.entry.hit ? "실패한 진입점" : "연결된 진입점"}
+          <div
+            className="table-wrap"
+            tabIndex={0}
+            role="region"
+            aria-label="노출된 진입점 목록"
+          >
+            <table className="pk-table w-table">
+              <thead>
+                <tr>
+                  <th>진입점</th>
+                  <th>환경</th>
+                  <th className="num">뒤의 워크로드</th>
+                  <th className="num">닿는 데이터</th>
+                  <th>걸린 통제</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exposed.map((row) => (
+                  <tr
+                    key={`${row.envId}:${row.entry.id}`}
+                    className="clickable"
+                    onClick={() => onControls(row.controls.map((c) => c.id))}
+                  >
+                    <td>
+                      <span className="rule-cell">
+                        <NodeIcon layer="entry" kind={row.entry.kind} />
+                        <span className="rule-text">
+                          <span className="rule-title">{row.entry.name}</span>
+                          <span className="rule-sub">
+                            {row.entry.hit ? "실패한 진입점" : "연결된 진입점"}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                  </td>
-                  <td>
-                    <span className="pk-path">
-                      <ProviderLogo provider={provider(row.envId)} />
-                      {envName(row.envId)}
-                    </span>
-                  </td>
-                  <td className="num">{row.workloads}</td>
-                  <td className="num">{row.data}</td>
-                  <td>
-                    <span className="w-controls">
-                      <SeverityMeter severity={row.worst} label={false} />
-                      {row.controls.length}개
-                      <span className="sub">{row.controls[0]?.title}</span>
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                    <td>
+                      <span className="pk-path">
+                        <ProviderLogo provider={provider(row.envId)} />
+                        {envName(row.envId)}
+                      </span>
+                    </td>
+                    <td className="num">{row.workloads}</td>
+                    <td className="num">{row.data}</td>
+                    <td>
+                      <span className="w-controls">
+                        <SeverityMeter severity={row.worst} label={false} />
+                        {row.controls.length}개
+                        <span className="sub">{row.controls[0]?.title}</span>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Widget>
 

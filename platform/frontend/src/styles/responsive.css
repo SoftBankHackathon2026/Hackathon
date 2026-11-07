@@ -1,0 +1,152 @@
+/* Grid items must fit their container; wide data scrolls inside its own region. */
+.pk-page,
+.pk-section-body {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+.pk-page > *,
+.pk-section-body > *,
+.connection-layout > * {
+  min-width: 0;
+}
+.table-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+.registered-connections .pk-table {
+  min-width: 560px;
+  table-layout: fixed;
+}
+.registered-connections .pk-table th:nth-child(-n + 2) {
+  width: 30%;
+}
+.registered-connections .pk-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pk-title-row h1,
+.pk-section-meta,
+.pk-header-meta {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.pk-tabs {
+  flex-wrap: wrap;
+}
+.pk-scope .pk-filter {
+  max-width: 100%;
+  min-width: 0;
+}
+.pk-scope .pk-filter > span {
+  flex-shrink: 0;
+}
+.pk-scope .pk-filter select {
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .connection-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .connection-sidebar,
+  .connection-main {
+    min-width: 0;
+  }
+}
+
+@container dash (max-width: 560px) {
+  .fl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .fl-cell {
+    border-left: 0;
+    padding-inline: 24px;
+  }
+}
+
+/* Keep wide lists reachable instead of clipping them at the page edge. */
+.pk-list-main {
+  overflow-x: auto;
+}
+.cat-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr));
+}
+@media (max-width: 720px) {
+  .shell .page-head {
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: 6px;
+  }
+  .shell .page-head .head-tools {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .shell .page-head .page-actions {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+}
+
+.ftiles {
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+}
+.ftile-group {
+  min-width: 0;
+}
+.ftile-group header {
+  min-width: 0;
+}
+.ftile-group header h2 {
+  flex-shrink: 0;
+}
+.compare-wrap > * {
+  min-width: 0;
+}
+.canvas-legend {
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.canvas-legend .legend-row {
+  white-space: normal;
+  min-width: 0;
+}
+@media (max-width: 1000px) {
+  .compare-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ux-components {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 720px) {
+  .account-menu .menu {
+    position: fixed;
+    left: 72px;
+    right: 14px;
+    top: auto;
+    width: auto;
+    min-width: 0;
+  }
+}
+
+.table-wrap,
+.pk-list-main {
+  position: relative;
+}
+@media (max-width: 600px) {
+  .pk-widget {
+    grid-column: 1 / -1;
+  }
+}
+
+.sec-bar {
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+}
+.sec-bar .sec-filter {
+  position: static;
+}
