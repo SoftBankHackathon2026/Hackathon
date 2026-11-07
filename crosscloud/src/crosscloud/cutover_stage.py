@@ -128,7 +128,9 @@ def cutover_not_begun(
 
 def _select_job(store: pathlib.Path, job_id: str) -> tuple[str, str] | None:
     try:
-        connection = sqlite3.connect(f"file:{store}?mode=ro", uri=True)
+        # 경로의 #·?·공백이 URI 로 잘못 읽히지 않게 as_uri 로 감싼다.
+        uri = store.resolve().as_uri() + "?mode=ro"
+        connection = sqlite3.connect(uri, uri=True)
         try:
             return connection.execute(
                 "SELECT stage, checkpoint FROM cutover_jobs WHERE job_id = ?",

@@ -150,3 +150,17 @@ def test_cloud_lock_refuses_missing_state_dir(tmp_path):
 )
 def test_cutover_not_begun(stage, failed_stage, expected):
     assert cutover_stage.cutover_not_begun(stage, failed_stage) is expected
+
+
+def test_reads_store_under_path_with_uri_special_characters(
+    tmp_path, migration_module
+):
+    state_dir = tmp_path / "state #1?x"
+    state_dir.mkdir()
+    store = _store(migration_module, state_dir)
+    try:
+        _save(migration_module, store, "READY")
+    finally:
+        store.close()
+
+    assert cutover_stage.read_cutover_stage(_JOB, state_dir) == ("READY", None)

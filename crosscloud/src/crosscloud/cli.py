@@ -203,7 +203,12 @@ def _ingress_start(args: argparse.Namespace) -> int:
                 code, body = 409, {"error": refusal}
             else:
                 code, body = build_adapter(args)[1].start_on_source()
-    except (cutover_stage.CloudLockBusyError, ValueError, OSError) as error:
+    except (
+        cutover_stage.CloudLockBusyError,
+        cutover_stage.StageUnreadableError,
+        ValueError,
+        OSError,
+    ) as error:
         code, body = 409, {"error": str(error)}
     print(json.dumps(body, ensure_ascii=False))
     return 0 if code == 200 else 1

@@ -203,3 +203,14 @@ def test_ingress_start_refuses_unreadable_state(
 
     assert code == 1
     assert fake.calls == []
+
+
+def test_ingress_start_missing_state_dir_is_json_error(tmp_path, capsys):
+    fake = fake_ingress.FakeIngress()
+    cloud, env = _write_handoff(tmp_path, _free_port())
+    with fake.serve() as url:
+        code = cli.main(_start_args(cloud, env, url, tmp_path / "typo"))
+
+    assert code == 1
+    assert "state-dir" in json.loads(capsys.readouterr().out)["error"]
+    assert fake.calls == []
