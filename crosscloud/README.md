@@ -20,6 +20,7 @@
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/secret_transfer/` | Secret 값 이관(AWS↔GCP). 값은 메모리 bytes 로만 다루고 SHA-256 으로 대조 |
 | `src/crosscloud/datapath.py` | 원가연 전환 도구용 DB 로그인(admin·app·cdc·sink·verify)과 대상 스키마 준비 |
+| `src/crosscloud/db_readiness.py` | datapath 준비 결과를 카탈로그 질의로 점검(원가연 PRECHECK 전) |
 | `src/crosscloud/pg_client.py` | PostgreSQL 접속 정보와 pg_dump·psql 호출. 비밀번호는 명령줄에 넣지 않는다 |
 | `tests/` | 단위 시험 |
 
@@ -51,14 +52,16 @@ docker run -d --name r4-pg16 --label com.crosscloud.bench=r4 \
     -e POSTGRES_PASSWORD=local-only -p 127.0.0.1:55432:55432 \
     postgres:16 -c port=55432
 export CROSSCLOUD_TEST_PG_DSN="host=127.0.0.1 port=55432 user=postgres password=local-only dbname=postgres sslmode=disable"
-# 로컬에 pg_dump·psql 이 없으면 컨테이너 안의 것을 쓴다.
+# 컨테이너 안의 pg_dump·psql 을 쓴다. 도구 주 버전이 서버와 다르면
+# datapath 가 거부한다(새 pg_dump 의 덤프는 옛 서버에서 실패한다).
 export CROSSCLOUD_TEST_PG_TOOLS="docker exec -i -e PGPASSWORD -e PGSSLMODE -e PGCONNECT_TIMEOUT r4-pg16"
 python -m pytest
 docker rm -f r4-pg16
 ```
 
 같은 검사를 CI(`.github/workflows/crosscloud.yml`)가 PR 마다 돌린다. CI 는
-PostgreSQL 서비스 컨테이너를 띄워 통합 시험까지 돌린다.
+PostgreSQL 서비스 컨테이너를 띄우고, 그 안의 pg_dump·psql 로 통합 시험과
+서버 로그 카나리 시험까지 돌린다.
 
 ## 스타일 적용 기준
 

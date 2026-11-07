@@ -1,11 +1,11 @@
 import dataclasses
-import types
+import logging
 
-import psycopg
 import pytest
 from memory_secret_store import MemorySecretStore
 
 from crosscloud import datapath, pg_client
+from crosscloud.secret_transfer import store
 
 _ENDPOINT = pg_client.DbEndpoint(host="db.invalid", port=5432, database="shop")
 
@@ -24,6 +24,7 @@ def _plan(side="target", purposes=("admin", "app", "sink", "verify"), **kw):
         "endpoint": _ENDPOINT,
         "logins": _logins(*purposes),
         "tables": ("public.orders",),
+        "source_app_user": "shop_app",
         "run_id": "ccx-test",
     }
     fields.update(kw)
@@ -87,33 +88,54 @@ def test_profile_secret_only_on_target():
         )
 
 
-def _idle_connection():
-    idle = psycopg.pq.TransactionStatus.IDLE
-    return types.SimpleNamespace(
-        info=types.SimpleNamespace(transaction_status=idle)
+_SOURCE = ("admin", "cdc", "verify")
+_BOOTSTRAP = pg_client.PgLogin(
+    dataclasses.replace(_ENDPOINT, database="postgres"), "postgres", b"x"
+)
+
+
+def test_source_login_must_not_reuse_source_app_name():
+    logins = (
+        *_logins("admin", "cdc"),
+        datapath.DbLogin(purpose="verify", name="shop_app", secret_id="s-v"),
     )
+
+    with pytest.raises(ValueError, match="원본 앱"):
+        _plan(side="source", purposes=_SOURCE, logins=logins)
 
 
 def test_target_prepare_requires_schema_source():
     with pytest.raises(ValueError, match="schema_source"):
-        datapath.prepare_db_principals(
-            _plan(), _idle_connection(), MemorySecretStore()
-        )
+        datapath.prepare_db_principals(_plan(), _BOOTSTRAP, MemorySecretStore())
 
 
-def test_prepare_refuses_open_transaction_before_writing_secrets():
-    busy = types.SimpleNamespace(
-        info=types.SimpleNamespace(
-            transaction_status=psycopg.pq.TransactionStatus.INTRANS
-        )
+def test_bootstrap_must_point_at_the_plan_server():
+    elsewhere = dataclasses.replace(
+        _BOOTSTRAP,
+        endpoint=dataclasses.replace(_BOOTSTRAP.endpoint, host="other.invalid"),
     )
-    secrets = MemorySecretStore()
 
-    with pytest.raises(ValueError, match="트랜잭션"):
+    with pytest.raises(ValueError, match="bootstrap"):
         datapath.prepare_db_principals(
-            _plan(side="source", purposes=("admin", "cdc", "verify")),
-            busy,
-            secrets,
+            _plan(side="source", purposes=_SOURCE),
+            elsewhere,
+            MemorySecretStore(),
         )
 
-    assert secrets.versions == {}
+
+def test_prepare_refuses_sdk_debug_logging_before_touching_secrets():
+    logger = logging.getLogger("botocore.parsers")
+    previous = logger.level
+    logger.setLevel(logging.DEBUG)
+    secrets = MemorySecretStore()
+    try:
+        with pytest.raises(store.UnsafeLoggingError, match="botocore.parsers"):
+            datapath.prepare_db_principals(
+                _plan(side="source", purposes=_SOURCE),
+                _BOOTSTRAP,
+                secrets,
+            )
+    finally:
+        logger.setLevel(previous)
+
+    assert secrets.reads == []

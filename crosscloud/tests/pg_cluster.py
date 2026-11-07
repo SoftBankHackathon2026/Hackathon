@@ -8,8 +8,8 @@
 *   CROSSCLOUD_TEST_PG_CONTAINER: 서버 로그를 읽을 컨테이너 이름(선택).
 
 클라우드의 관리 사용자(RDS master·Cloud SQL postgres)는 슈퍼유저가 아니므로
-CREATEROLE 만 가진 master 역할을 만들어 그 이름으로 준비한다. RDS 의
-rds_replication 역할도 흉내 낸다.
+CREATEROLE·CREATEDB 만 가진 master 역할을 만들어 그 이름으로 준비한다. RDS 의
+rds_replication 역할도 흉내 낸다. 대상 DB 는 만들지 않는다(준비가 만든다).
 """
 
 import dataclasses
@@ -62,6 +62,11 @@ class Cluster:
     def master_login(self, endpoint: pg_client.DbEndpoint) -> pg_client.PgLogin:
         return pg_client.PgLogin(endpoint, self.master, self.master_password)
 
+    def bootstrap(self) -> pg_client.PgLogin:
+        """관리 DB(postgres)에 붙는 master 로그인."""
+        maintenance = dataclasses.replace(self.target, database="postgres")
+        return self.master_login(maintenance)
+
     def superuser(self, database: str) -> psycopg.Connection:
         return psycopg.connect(DSN, dbname=database, autocommit=True)
 
@@ -88,7 +93,9 @@ def create() -> Cluster:
     )
     with cluster.superuser("postgres") as conn:
         conn.execute(
-            sql.SQL("CREATE ROLE {} LOGIN CREATEROLE PASSWORD {}").format(
+            sql.SQL(
+                "CREATE ROLE {} LOGIN CREATEROLE CREATEDB PASSWORD {}"
+            ).format(
                 sql.Identifier(cluster.master),
                 sql.Literal(cluster.master_password.decode()),
             )
@@ -102,13 +109,12 @@ def create() -> Cluster:
                 sql.Identifier(cluster.master)
             )
         )
-        for endpoint in (cluster.source, cluster.target):
-            conn.execute(
-                sql.SQL("CREATE DATABASE {} OWNER {}").format(
-                    sql.Identifier(endpoint.database),
-                    sql.Identifier(cluster.master),
-                )
+        conn.execute(
+            sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                sql.Identifier(cluster.source.database),
+                sql.Identifier(cluster.master),
             )
+        )
     _seed_source(cluster)
     return cluster
 

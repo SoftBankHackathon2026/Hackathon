@@ -16,7 +16,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # datapath 통합 시험용 PostgreSQL. 러너의 pg_dump(16)와 주 버전을 맞춘다.
+    # datapath 통합 시험용 PostgreSQL. pg_dump·psql 은 이 서비스 컨테이너 안의
+    # 것을 쓴다 — 서버와 주 버전이 같아야 하고(pg_client.require_versions),
+    # 러너에 깔린 도구의 버전은 이미지마다 다르다.
     services:
       postgres:
         image: postgres:16
@@ -45,9 +47,20 @@ jobs:
         run: ruff check .
       - name: Format check
         run: ruff format --check .
+      - name: Check PostgreSQL tool versions and enable statement logging
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        # 서버 로그 카나리 시험이 역할 문장을 볼 수 있게 모든 문장을 남긴다.
+        run: |
+          server="$(docker exec "${PG_CONTAINER}" psql -U postgres -tAc 'SHOW server_version_num')"
+          dump="$(docker exec "${PG_CONTAINER}" pg_dump --version)"
+          echo "server ${server} / ${dump}"
+          [[ "${dump}" == *"(PostgreSQL) ${server:0:2}."* ]]
+          docker exec "${PG_CONTAINER}" psql -U postgres \
+            -c "ALTER SYSTEM SET log_statement = 'all'" -c 'SELECT pg_reload_conf()'
       - name: Unit and PostgreSQL tests with coverage
         env:
           CROSSCLOUD_TEST_PG_DSN: host=localhost port=5432 user=postgres password=ci-only dbname=postgres sslmode=disable
-        run: |
-          pg_dump --version
-          python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
+          CROSSCLOUD_TEST_PG_TOOLS: docker exec -i -e PGPASSWORD -e PGSSLMODE -e PGCONNECT_TIMEOUT ${{ job.services.postgres.id }}
+          CROSSCLOUD_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
