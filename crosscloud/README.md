@@ -5,8 +5,8 @@
 인프라를 직접 다루는 부분(예: RDS IAM 인증)을 AI 로 고친 뒤 샌드박스에서
 검증한다.
 
-*   **상태:** 개발 중. 지금은 공통 자원 모델(`Inventory`)과 그 JSON 스키마만
-    있다. 수집·판정·적응·검증은 이어지는 PR 에서 더한다.
+*   **상태:** 개발 중. 공통 자원 모델(`Inventory`)·JSON 스키마와 파악·판정
+    (`crosscloud discover`)이 있다. 적응·검증은 이어지는 PR 에서 더한다.
 *   **연락처:** 김태윤
 *   **관련 디렉토리:** 전환 상태 머신과 데이터 이전은 `migration/` 이 맡는다.
     crosscloud 는 데모 인프라에 기대지 않는다.
@@ -17,6 +17,9 @@
 |---|---|
 | `src/crosscloud/model.py` | 공통 자원 모델. 바꿀 수 없는 dataclass 값 객체 |
 | `src/crosscloud/inventory_json.py` | `Inventory` ↔ JSON 변환. 두 방향 모두 스키마로 검사 |
+| `src/crosscloud/discover/` | 원본 구성 읽기(AWS·GCP), env 분류, 결합 탐지 |
+| `src/crosscloud/mapping/` | 서비스 대응표, 판정, 원가연 지원 제한 검사 |
+| `src/crosscloud/cli.py` | `crosscloud` 명령 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `tests/` | 단위 시험 |
 
@@ -41,6 +44,21 @@ python -m pytest --cov=crosscloud --cov-report=term-missing --cov-fail-under=80
 ```
 
 같은 검사를 CI(`.github/workflows/crosscloud.yml`)가 PR 마다 돌린다.
+
+원본을 파악하고 판정한다. 읽기 전용이며 비밀값을 조회하지 않는다. AWS 는
+기본 자격 증명 체인, GCP 는 ADC(`gcloud auth application-default login`)를
+쓴다.
+
+```shell
+crosscloud discover --direction aws_to_gcp --region ap-northeast-2 \
+    --repo request-api=../sample-app --schema-sql schema.sql \
+    --output discover.json
+crosscloud discover --direction gcp_to_aws --project PROJECT \
+    --region asia-northeast3
+```
+
+결과는 `{"inventory": ..., "report": ...}` JSON 이다. `report.decisions` 가
+비어 있지 않으면 사람이 먼저 골라야 한다.
 
 ## 스타일 적용 기준
 
