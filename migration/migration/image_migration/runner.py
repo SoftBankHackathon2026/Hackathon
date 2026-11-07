@@ -77,7 +77,7 @@ class Harbor:
 
 
 @contextmanager
-def journal(config: Config, plan_digest: str):
+def journal(config: Config, plan_digest: str, lock_prefix: str = "harbor"):
     root = config.state_dir
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     meta = root.lstat()
@@ -88,7 +88,7 @@ def journal(config: Config, plan_digest: str):
         "UNSAFE_STATE_DIRECTORY",
     )
     host_key = hashlib.sha256(config.target_host.encode()).hexdigest()
-    lock_path = root / f"harbor-{host_key}.lock"
+    lock_path = root / f"{lock_prefix}-{host_key}.lock"
     state_path = root / f"{plan_digest.split(':', 1)[1]}.sqlite3"
     lock = os.open(lock_path, os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
     with os.fdopen(lock, "r+b"):
