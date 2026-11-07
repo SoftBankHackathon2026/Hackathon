@@ -49,6 +49,7 @@ def test_wrong_rds_never_produces_pass(config, change):
     assert doc['checks']['target_db_exposure']['status'] == 'error'
 
 
+@pytest.mark.skipif(shutil.which("opa") is None, reason="OPA required; policies CI installs OPA")
 def test_public_db_is_denied_by_real_opa(config, state_dir, tmp_path):
     config, args, instance = setup(config)
     instance['PubliclyAccessible'] = True
@@ -56,7 +57,7 @@ def test_public_db_is_denied_by_real_opa(config, state_dir, tmp_path):
     write_atomic(path, collect(config, **args))
     gate = CutoverPolicyGate(config, state_dir, evidence_file=str(path),
         evaluator=pc.OpaCliEvaluator(Path(__file__).resolve().parents[2] / 'policies'))
-    with pytest.raises(CutoverPolicyError, match='BLOCKED'):
+    with pytest.raises(CutoverPolicyError, match=r'BLOCKED:.*:deny$'):
         gate('pre_cutover')
 
 
