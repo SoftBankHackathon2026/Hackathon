@@ -18,7 +18,7 @@ EC2 수집기 ──Tailscale──▶ 온프렘 k3s
 |---|---|---|
 | 인스턴스 | 태그 `Name=oneport-platform`, `project=oneport` | 도쿄 기본 VPC, t3.small 온디맨드, Amazon Linux 2023, gp3 20GiB 암호화, IMDSv2 필수. user-data 는 [`user-data.sh`](user-data.sh) |
 | 고정 IP | 태그 `Name=oneport-platform` | 도메인 A 레코드가 가리키는 주소예요. 인스턴스를 멈췄다 켜도 바뀌지 않아요 |
-| 보안그룹 | `oneport-platform-sg` | 443은 화면을 볼 사람 IP만 열어요. 80은 Let's Encrypt 인증(HTTP-01)이 어디서 올지 몰라 전체에 열지만, Caddy가 인증 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
+| 보안그룹 | `oneport-platform-sg` | 443은 전체에 열어요. 누구나 화면에 들어올 수 있고, 들어오면 [접속 PIN](#접속-pin-임시) 화면부터 보여요. 80도 전체에 열지만 Caddy가 Let's Encrypt 인증(HTTP-01) 응답과 HTTPS 리다이렉트만 해요. SSH는 열지 않고 SSM으로 들어가요 |
 | EKS 공개 엔드포인트 | 허용 IP(`publicAccessCidrs`) | 이 인스턴스 고정 IP를 더해요. 리전이 달라 VPC 비공개 엔드포인트는 쓰지 않아요 |
 | EC2 역할 | `ghost-oneport-platform-ec2` | `AmazonSSMManagedInstanceCore` + 서울 `ghost/oneport-platform-*` ECR 읽기 |
 | 배포 역할 | `ghost-oneport-platform-deploy` | 아래 정책. GitHub OIDC 공급자가 있어야 만들 수 있어요 |
