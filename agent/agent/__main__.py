@@ -101,16 +101,24 @@ COMMAND_POLL_SECONDS = 10.0
 
 def _wait(
     seconds: float, platform: PlatformClient | None, runtime: AgentRuntime | None, sleep: Callable[[float], None],
+    beat: Callable[[], None] | None = None,
 ) -> None:
     if platform is None:
         sleep(seconds)
         return
-    left = seconds
-    while left > 0:
-        step = min(COMMAND_POLL_SECONDS, left)
+    waited = 0.0
+    while True:
+        total = runtime.interval if runtime is not None else seconds
+        if waited >= total:
+            return
+        step = min(COMMAND_POLL_SECONDS, total - waited)
         sleep(step)
-        left -= step
-        if handle_commands(platform, runtime):
+        waited += step
+        before = runtime.applied_at if runtime is not None else None
+        rerun = handle_commands(platform, runtime)
+        if beat is not None and runtime is not None and runtime.applied_at != before:
+            beat()
+        if rerun:
             return
 
 
@@ -120,14 +128,18 @@ def watch(
     platform: PlatformClient | None = None, runtime: AgentRuntime | None = None,
 ) -> None:
     log = logging.getLogger("agent.watch")
+
+    def beat() -> None:
+        current = runtime.interval if runtime is not None else interval
+        platform.heartbeat(
+            version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(current),
+            config=runtime.snapshot() if runtime is not None else None,
+        )
+
     done = 0
     while iterations is None or done < iterations:
-        current = runtime.interval if runtime is not None else interval
         if platform is not None:
-            platform.heartbeat(
-                version=AGENT_VERSION, auto_apply=remediator.auto_apply, interval_seconds=int(current),
-                config=runtime.snapshot() if runtime is not None else None,
-            )
+            beat()
             handle_commands(platform, runtime)
             for run_id, state in handle_approvals(platform, remediator, runs):
                 log.info("플랫폼 결정 처리 %s: %s", run_id, state)
@@ -142,7 +154,7 @@ def watch(
             platform.sync(runs)
         done += 1
         if iterations is None or done < iterations:
-            _wait(runtime.interval if runtime is not None else interval, platform, runtime, sleep)
+            _wait(interval, platform, runtime, sleep, beat if platform is not None else None)
 
 
 def _print_run(run: Run, runs: RunStore) -> None:
