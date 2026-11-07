@@ -205,7 +205,7 @@ async def browser_action(
     }
     if action not in requirements:
         raise InvalidRequest("지원하지 않는 연결 작업입니다.")
-    fields(body, requirements[action])
+    fields(body, requirements[action], ("replaceId",) if action == "approve" else ())
     return await invoke(implementation.browser, request_id, identity, action, body)
 
 

@@ -86,7 +86,7 @@ def issued(svc):
     return svc.create(OWNER, PUBLIC, "operation_1234567890")["id"]
 
 
-def proof(svc, request_id):
+def proof(svc, request_id, *, replacement=False):
     challenge = svc.challenge(request_id, CANDIDATE)
     p = {
         "version": 1,
@@ -97,6 +97,8 @@ def proof(svc, request_id):
         "wireguard_public_key": WG,
         "audience": "migration-connector-enrollment",
     }
+    if replacement:
+        p["replacement_version"] = 1
     return {
         "payload": p,
         "enrollment_signature": svc.crypto.signature(
@@ -411,7 +413,10 @@ def test_revoke_is_immediate_and_cleanup_separate(svc):
         "resources": True,
         "local": False,
     }
-    svc.tunnel(request_id, {"state": "REVOKED"})
+    svc.tunnel(
+        request_id,
+        {"state": "REVOKED", "epoch": 1, "connection_id": "connection_1234567890"},
+    )
     svc.device(request_id, envelope(svc, request_id, "cleanup", {"local": True}))
     assert all(svc.get(request_id, OWNER)["cleanup"].values())
 
@@ -533,3 +538,137 @@ def test_rekey_ready_binds_expiry_to_new_epoch_but_heartbeat_cannot_extend_it(sv
     )
     with pytest.raises(ConnectionError, match="KEY_LIFETIME_CHANGED"):
         svc.tunnel(request_id, {**state, "key_expires_at_ms": second_expiry + 1000})
+
+
+def test_replacement_revokes_only_the_selected_request_and_waits_for_both_sides(svc):
+    previous = ready(svc)
+    new = svc.create(OWNER, PUBLIC, "operation_replacement_1")["id"]
+    candidate = svc.prove(new, proof(svc, new, replacement=True))
+    approval = {
+        "candidateDigest": candidate["candidate_digest"],
+        "code": candidate["confirmation_code"],
+        "replaceId": previous,
+    }
+    with pytest.raises(ConnectionError, match="INVALID_CONFIRMATION_CODE"):
+        svc.browser(new, OWNER, "approve", {**approval, "code": "00000000"})
+    assert svc.authorize(previous)["state"] == "READY"
+
+    legacy = svc.create(OWNER, PUBLIC, "operation_legacy_client")["id"]
+    legacy_candidate = svc.prove(legacy, proof(svc, legacy))
+    with pytest.raises(ConnectionError, match="REPLACEMENT_CLIENT_UNSUPPORTED"):
+        svc.browser(
+            legacy,
+            OWNER,
+            "approve",
+            {
+                **approval,
+                "candidateDigest": legacy_candidate["candidate_digest"],
+                "code": legacy_candidate["confirmation_code"],
+            },
+        )
+    assert svc.authorize(previous)["state"] == "READY"
+
+    first = svc.browser(new, OWNER, "approve", approval)
+    assert first["replacement"] == {
+        "previousRequestId": previous,
+        "gateway": "pending",
+        "client": "pending",
+    }
+    assert svc.browser(new, OWNER, "approve", approval)["revision"] == first["revision"]
+    assert svc.get(previous, OWNER)["device"] == "REVOKED"
+    with pytest.raises(ConnectionError, match="DEVICE_NOT_APPROVED"):
+        svc.authorize(previous)
+
+    competing = svc.create(OWNER, PUBLIC, "operation_replacement_2")["id"]
+    other_candidate = svc.prove(competing, proof(svc, competing, replacement=True))
+    with pytest.raises(ConnectionError, match="REPLACEMENT_UNAVAILABLE"):
+        svc.browser(
+            competing,
+            OWNER,
+            "approve",
+            {
+                **approval,
+                "candidateDigest": other_candidate["candidate_digest"],
+                "code": other_candidate["confirmation_code"],
+            },
+        )
+    assert svc.get(competing, OWNER)["device"] == "PENDING_APPROVAL"
+
+    old_binding = {"epoch": 1, "connection_id": "connection_1234567890"}
+    new_binding = {"epoch": 1, "connection_id": "replacement_binding_1234"}
+    with pytest.raises(ConnectionError, match="REPLACEMENT_GATEWAY_PENDING"):
+        svc.tunnel(new, {**new_binding, "state": "REKEYING"})
+    with pytest.raises(ConnectionError, match="CONNECTION_BINDING_CHANGED"):
+        svc.tunnel(previous, {**new_binding, "state": "REVOKED"})
+    svc.tunnel(previous, {**old_binding, "state": "REVOKE_BLOCKED"})
+    assert svc.get(new, OWNER)["replacement"]["gateway"] == "blocked"
+    svc.tunnel(previous, {**old_binding, "state": "REVOKED"})
+    svc.browser(previous, OWNER, "revoke", {})  # Duplicate revoke preserves cleanup.
+    assert svc.authorize(new)["replacement"] is None
+    svc.tunnel(new, {**new_binding, "state": "REKEYING"})
+    ready_report = {
+        **new_binding,
+        "state": "READY",
+        "checks": 2,
+        "key_expires_at_ms": svc.clock() + 1_800_000,
+        "lease_expires_at_ms": svc.clock() + 60_000,
+    }
+    for state in ("blocked", "ready"):
+        with pytest.raises(ConnectionError, match="REPLACEMENT_CLIENT_PENDING"):
+            svc.tunnel(new, ready_report)
+        svc.device(new, envelope(svc, new, "replacement-cleanup", {"client": state}))
+        assert svc.get(new, OWNER)["replacement"]["client"] == state
+
+    svc.tunnel(new, ready_report)
+    assert svc.get(new, OWNER)["tunnel"] == "READY"
+    assert svc.get(previous, OWNER)["cleanup"]["local"] is False
+
+
+def test_offline_reconnect_times_out_and_requires_a_new_tunnel(svc):
+    request_id = ready(svc)
+    initial_activity = svc.get(request_id, OWNER)["lastTunnelActivityAt"]
+    svc.test_now[0] += 10_000
+    svc.device(request_id, envelope(svc, request_id, "poll", {}), through_tunnel=True)
+    last_activity = svc.clock()
+    assert last_activity > initial_activity
+
+    svc.test_now[0] += 60_000
+    offline = svc.get(request_id, OWNER)
+    assert offline["tunnel"] == "DEGRADED"
+    assert offline["lastTunnelActivityAt"] == last_activity
+    reconnect = svc.browser(request_id, OWNER, "reconnect", {})
+    assert reconnect["tunnel"] == "CONNECTING"
+    assert reconnect["tunnelChecks"] == 0
+    svc.test_now[0] += 30_000
+    duplicate = svc.browser(request_id, OWNER, "reconnect", {})
+    assert duplicate["revision"] == reconnect["revision"]
+    stale_report = {
+        "epoch": 1,
+        "connection_id": "connection_1234567890",
+        "state": "READY",
+        "checks": 2,
+        "key_expires_at_ms": svc.store.get(request_id)["key_expires_at"],
+        "lease_expires_at_ms": svc.clock() + 60_000,
+    }
+    with pytest.raises(ConnectionError, match="NEW_KEY_EPOCH_REQUIRED"):
+        svc.tunnel(request_id, stale_report)
+
+    svc.test_now[0] += 60_000
+    timed_out = svc.get(request_id, OWNER)
+    assert timed_out["tunnel"] == "DEGRADED"
+    assert timed_out["lastTunnelActivityAt"] == last_activity
+    assert "단말 응답을 확인하지 못했습니다" in timed_out["issue"]
+    assert svc.browser(request_id, OWNER, "reconnect", {})["tunnel"] == "CONNECTING"
+    svc.tunnel(
+        request_id,
+        {
+            **stale_report,
+            "epoch": 2,
+            "connection_id": "second_connection_1234",
+            "lease_expires_at_ms": svc.clock() + 60_000,
+        },
+    )
+    restored = svc.get(request_id, OWNER)
+    assert restored["tunnel"] == "READY"
+    assert restored["epoch"] == 2
+    assert restored["lastTunnelActivityAt"] == svc.clock()
