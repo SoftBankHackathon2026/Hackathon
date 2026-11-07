@@ -243,6 +243,12 @@ def main():
         if denied.returncode == 0:
             raise RuntimeError("unapproved tunnel service reachable")
         report["unapproved_service_blocked"] = True
+        if helper(names[0], "prepare-client", connection_id="new-request-00000001")[
+            "ready"
+        ]:
+            raise RuntimeError("a live prior binding was removed")
+        if helper_call(names[1], "prepare-client", check=False).returncode == 0:
+            raise RuntimeError("gateway allowed client recovery")
         # Kernel timeout must expire even with no helper/agent refresh process.
         print(
             json.dumps({"stage": "waiting_for_kernel_lease_expiry", "seconds": 62}),
@@ -276,6 +282,18 @@ def main():
             == 0
         ):
             raise RuntimeError("another request removed an unexpired key")
+        # Startup can reclaim an orphan whose kernel lease has expired.
+        if not helper(
+            client, "prepare-client", connection_id=replacement["connection_id"]
+        )["ready"]:
+            raise RuntimeError("expired prior binding still blocks enrollment")
+        if (
+            execute(client, "ip", "link", "show", "mctest0", check=False).returncode
+            == 0
+        ):
+            raise RuntimeError("the orphaned interface was not removed")
+        helper(client, "configure", **{**replacement, "connection_id": CONNECTION})
+        report["orphaned_client_lease_recovery"] = True
         if helper_call(client, "remove-exact", check=False, epoch=2).returncode == 0:
             raise RuntimeError("replacement removed a different key epoch")
         helper(client, "remove-exact")
@@ -288,6 +306,8 @@ def main():
         # A root-owned record that no longer matches the kernel peer is insufficient.
         helper(client, "configure", **replacement)
         mark_binding_expired(client, mismatched_peer=True)
+        if helper_call(client, "prepare-client", check=False).returncode == 0:
+            raise RuntimeError("startup removed an interface with an unverified peer")
         if helper_call(client, "remove", check=False).returncode == 0:
             raise RuntimeError("mismatched kernel peer was removed")
         execute(client, "ip", "link", "show", "mctest0")

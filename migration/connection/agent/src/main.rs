@@ -316,9 +316,10 @@ fn establish(
         return Err("broker-commit");
     }
     if let Some(previous) = replacement.filter(|old| old.client.as_deref() != Some("ready")) {
-        let removed = previous
-            .removal()
-            .is_none_or(|request| network::helper(Path::new(&c.helper_path), &request).is_ok());
+        let removed = previous.removal().is_none_or(|request| {
+            network::helper(Path::new(&c.helper_path), &request).is_ok()
+                || prepare_tunnel(c, s).unwrap_or(false)
+        });
         api::device(
             &c.public_api_url,
             &s.request_id,
@@ -332,9 +333,6 @@ fn establish(
             return Err("replacement-client-cleanup");
         }
     }
-    s.epoch = binding.epoch;
-    s.connection_id = Some(binding.connection_id.clone());
-    save(dir, s).map_err(|_| "local-state")?;
     let started = migration_connector::now_ms() / 1000;
     let req = Request {
         operation: "configure".into(),
@@ -351,6 +349,9 @@ fn establish(
         key_expires_at_ms: binding.expires_at_ms,
     };
     network::helper(Path::new(&c.helper_path), &req).map_err(|_| "wireguard-configure")?;
+    s.epoch = binding.epoch;
+    s.connection_id = Some(binding.connection_id.clone());
+    save(dir, s).map_err(|_| "local-state")?;
     drop(req);
     drop(psk);
     protocol::send(&mut tls, &json!({"type":"COMMIT","epoch":binding.epoch}))
@@ -378,9 +379,7 @@ fn establish(
     Ok(binding)
 }
 fn cleanup(c: &Config, dir: &Path, s: &Local, key: &PKey<Private>) -> Result<()> {
-    if s.connection_id.is_some() {
-        network::helper(Path::new(&c.helper_path), &net_req("remove", s))?;
-    }
+    remove_tunnel(c, s)?;
     for name in ["device.pem", "state.json"] {
         let path = dir.join(name);
         if path.exists() {
@@ -438,12 +437,21 @@ fn retry_tunnel(stage: &str) {
 
 fn remove_tunnel(c: &Config, state: &Local) -> Result<()> {
     if state.connection_id.is_some() {
-        network::helper(Path::new(&c.helper_path), &net_req("remove", state)).map_err(|error| {
-            eprintln!("TUNNEL_CLEANUP_FAILED stage=wireguard-remove");
-            error
-        })?;
+        network::helper(Path::new(&c.helper_path), &net_req("remove-exact", state)).map_err(
+            |error| {
+                eprintln!("TUNNEL_CLEANUP_FAILED stage=wireguard-remove");
+                error
+            },
+        )?;
     }
     Ok(())
+}
+
+fn prepare_tunnel(c: &Config, state: &Local) -> Result<bool> {
+    let result = network::helper(Path::new(&c.helper_path), &net_req("prepare-client", state))?;
+    result["ready"]
+        .as_bool()
+        .ok_or_else(|| "network preparation unconfirmed".into())
 }
 
 enum SessionExit {
@@ -500,22 +508,34 @@ fn serve_tunnel(
     binding: &Binding,
     notify_service: bool,
 ) -> Result<SessionExit> {
+    if service::stopping() {
+        return Ok(SessionExit::Stopped);
+    }
     let tunnel = SocketAddr::new(policy.peer_address, policy.job_port);
     let api_base = format!("http://{tunnel}/api/v1/connections");
     let request = &state.request_id;
     let initial = match api::device(
-        &api_base, request, &state.candidate_id, key, "poll", json!({}),
+        &api_base,
+        request,
+        &state.candidate_id,
+        key,
+        "poll",
+        json!({}),
     ) {
         Ok(value) => value,
         Err(_) => return Ok(SessionExit::Recover("discovery-poll")),
     };
-    let provider = initial["snapshot"]["provider"].as_str().unwrap_or("kubernetes");
-    let mut generation = initial["snapshot"]["discoveryGeneration"].as_u64().unwrap_or(0);
-    if !relay_discovery(c, base, state, key, &api_base, provider, generation)? {
-        return Ok(SessionExit::Recover("discovery-relay"));
-    }
+    let provider = initial["snapshot"]["provider"]
+        .as_str()
+        .unwrap_or("kubernetes");
+    let mut generation = initial["snapshot"]["discoveryGeneration"]
+        .as_u64()
+        .unwrap_or(0);
     if notify_service {
         service::ready()?;
+    }
+    if !relay_discovery(c, base, state, key, &api_base, provider, generation)? {
+        return Ok(SessionExit::Recover("discovery-relay"));
     }
     println!("보안 연결을 확인했습니다. 웹에서 정보를 수집할 대상을 선택하세요.");
     let mut last_lease = None::<std::time::Instant>;
@@ -816,15 +836,17 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
                 eprintln!("서비스 상태는 단말과 웹에서 확인해 주세요. 터널 응답을 아직 확인하지 못했습니다.");
                 return Err("tunnel readiness unconfirmed".into());
             }
-            println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
+            println!("보안 연결이 완료되었습니다. 터널은 백그라운드 서비스에서 유지합니다.");
             return Ok(());
         }
+    }
+    if mode == RunMode::Foreground {
+        service::install_stop_handler()?;
     }
     let policy: Policy = serde_json::from_value(
         network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
     )?;
     policy.validate()?;
-    remove_tunnel(&c, &state)?;
     while !service::stopping() {
         // Require fresh approval before opening a new tunnel, including after
         // administrator installation, key rotation, and interrupted recovery.
@@ -843,6 +865,19 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
         }
         let replacement: Option<network::Replacement> =
             serde_json::from_value(status["replacement"].clone())?;
+        let exact_replacement = replacement.as_ref().is_some_and(|previous| {
+            previous.client.as_deref() != Some("ready") && previous.removal().is_some()
+        });
+        if !exact_replacement
+            && !prepare_tunnel(&c, &state).map_err(|error| {
+                eprintln!("TUNNEL_CLEANUP_FAILED stage=prepare-existing-tunnel");
+                error
+            })?
+        {
+            retry_tunnel("previous-lease-active");
+            continue;
+        }
+        let previous_epoch = state.epoch;
         let outcome = match establish(
             &c,
             base,
@@ -863,21 +898,25 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
             ),
             Err(stage) => Ok(SessionExit::Recover(stage)),
         };
+        if matches!(&outcome, Ok(SessionExit::Revoked)) {
+            return cleanup(&c, &dir, &state, &key);
+        }
+        // A failed configure must not remove the previous connection that blocked it.
+        if state.epoch != previous_epoch {
+            remove_tunnel(&c, &state)?;
+        }
         match outcome {
-            Ok(SessionExit::Revoked) => return cleanup(&c, &dir, &state, &key),
-            Ok(SessionExit::Stopped) => break,
-            Ok(SessionExit::Rotate) => remove_tunnel(&c, &state)?,
+            Ok(SessionExit::Stopped | SessionExit::Revoked) => break,
+            Ok(SessionExit::Rotate) => {}
             Ok(SessionExit::Recover(stage)) => {
-                remove_tunnel(&c, &state)?;
-                retry_tunnel(stage);
+                if !service::stopping() {
+                    retry_tunnel(stage);
+                }
             }
-            Err(error) => {
-                remove_tunnel(&c, &state)?;
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         }
     }
-    remove_tunnel(&c, &state)
+    Ok(())
 }
 
 fn shell_arg(path: &Path) -> String {
@@ -887,13 +926,13 @@ fn shell_arg(path: &Path) -> String {
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
-        Some("run" | "enroll") if args.len() == 3 => run(
+        Some("run" | "enroll" | "run-foreground") if args.len() == 3 => run(
             Path::new(&args[2]),
             None,
-            if args[1] == "enroll" {
-                RunMode::SetupService
-            } else {
+            if args[1] == "run-foreground" {
                 RunMode::Foreground
+            } else {
+                RunMode::SetupService
             },
         ),
         Some("resume" | "resume-service" | "serve") if args.len() == 4 => run(

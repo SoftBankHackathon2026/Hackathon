@@ -37,7 +37,7 @@ _migration_mode=enroll
 _migration_request=''
 case "$#:${1-}" in
   0:) ;;
-  1:--foreground) _migration_mode=run ;;
+  1:--foreground) _migration_mode=run-foreground ;;
   2:--resume)
     _migration_mode=resume-service
     _migration_request=$2
@@ -56,7 +56,7 @@ fi
 # This is the operating system-owned metadata file, not remote task input.
 . /etc/os-release
 [[ "${ID-}" == ubuntu && "${VERSION_ID-}" == 24.04 ]] || _migration_fail '첫 지원 환경은 Ubuntu 24.04입니다.'
-if [[ "$_migration_mode" != run && ! -d /run/systemd/system ]]; then
+if [[ "$_migration_mode" != run-foreground && ! -d /run/systemd/system ]]; then
   _migration_fail '서비스 설치에는 systemd로 부팅한 Ubuntu가 필요합니다. 전경 실행 시험에는 --foreground를 사용하세요.'
 fi
 case "$(uname -m)" in

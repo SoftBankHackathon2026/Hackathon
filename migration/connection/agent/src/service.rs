@@ -14,8 +14,10 @@ pub fn install_stop_handler() -> Result<()> {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = stop as *const () as usize;
         libc::sigemptyset(&mut action.sa_mask);
-        if libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut()) != 0 {
-            return Err(std::io::Error::last_os_error().into());
+        for signal in [libc::SIGTERM, libc::SIGINT] {
+            if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
         }
     }
     Ok(())
