@@ -24,7 +24,7 @@ from psycopg import sql
 
 from . import db as dbmod
 from .config import Config, ConnectionSpec, ConfigError, load_config, redact
-from .state import COMMITTED, MISMATCH, PENDING, QUEUE_REJECTED, RequestRecord, RequestStore
+from .state import COMMITTED, PENDING, RequestRecord, RequestStore
 
 log = logging.getLogger("migration.loadgen")
 
@@ -245,9 +245,9 @@ class Worker:
         pending = self.store.pending()
         if self._unresolved:
             record = self.store.get(self._unresolved)
-            if record is None or record.status not in ("pending", "committed"):
+            if record is None or record.status not in (PENDING, COMMITTED):
                 raise WorkerError("unresolved request missing or mismatched; manual reconciliation required")
-            if record.status == "committed":
+            if record.status == COMMITTED:
                 self._unresolved = None
                 self._persist_meta()
         if self._unresolved:
