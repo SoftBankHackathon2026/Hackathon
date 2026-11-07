@@ -24,6 +24,16 @@ aws_account=$(aws sts get-caller-identity --query Account --output text)
 service_account="$account_name@$project.iam.gserviceaccount.com"
 role_arn="arn:aws:sts::$aws_account:assumed-role/$aws_role"
 
+retry() {
+  local attempt
+  for attempt in 1 2 3 4 5 6; do
+    "$@" >/dev/null && return 0
+    echo "새로 만든 서비스 계정이 아직 보이지 않아 10초 뒤 다시 합니다 ($attempt/6)." >&2
+    sleep 10
+  done
+  "$@" >/dev/null
+}
+
 gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com --project "$project"
 
 gcloud iam workload-identity-pools describe "$pool" --project "$project" --location global >/dev/null 2>&1 ||
@@ -42,13 +52,13 @@ gcloud iam service-accounts describe "$service_account" --project "$project" >/d
     --display-name "Oneport cost collector (read only)"
 
 for role in "${roles[@]}"; do
-  gcloud projects add-iam-policy-binding "$project" --member "serviceAccount:$service_account" \
-    --role "$role" --condition None >/dev/null
+  retry gcloud projects add-iam-policy-binding "$project" --member "serviceAccount:$service_account" \
+    --role "$role" --condition None
 done
 
-gcloud iam service-accounts add-iam-policy-binding "$service_account" --project "$project" \
+retry gcloud iam service-accounts add-iam-policy-binding "$service_account" --project "$project" \
   --role roles/iam.workloadIdentityUser \
-  --member "principalSet://iam.googleapis.com/projects/$number/locations/global/workloadIdentityPools/$pool/attribute.aws_role/$role_arn" >/dev/null
+  --member "principalSet://iam.googleapis.com/projects/$number/locations/global/workloadIdentityPools/$pool/attribute.aws_role/$role_arn"
 
 config=$(mktemp)
 trap 'rm -f "$config"' EXIT
