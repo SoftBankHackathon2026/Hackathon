@@ -392,3 +392,21 @@ def test_app_tls_env_verifies_db_certificate_with_ca_content():
 def test_app_tls_env_rejects_non_pem_ca(pem):
     with pytest.raises(ValueError, match="PEM"):
         handoff.app_tls_env(pem)
+
+
+def test_render_does_not_wait_for_ingress_start(tmp_path):
+    # ingress-start 는 render 뒤에 돈다 — 그 결과를 렌더링 조건으로 두면 순환.
+    items = tuple(
+        handoff.ReadinessItem(name, True, "ok")
+        for name in (
+            "replication_flags",
+            "migration_logins",
+            "target_schema_empty",
+            "profile_secrets",
+        )
+    )
+
+    path, _ = handoff.render_cloud_config(_job(), items, tmp_path)
+
+    assert path.exists()
+    assert "ingress_on_source" not in handoff.READINESS_NAMES

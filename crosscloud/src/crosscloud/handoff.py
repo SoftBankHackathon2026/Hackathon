@@ -31,19 +31,19 @@ from crosscloud import model
 
 Side = Literal["source", "target"]
 LoginRole = Literal["admin", "app", "cdc", "sink", "verify"]
+# 접수 큐가 원본을 가리키는지는 여기서 보지 않는다. ingress-start 가 이 파일
+# 렌더링 뒤에 돌기 때문이다(순환). 그 조건은 원가연 PRECHECK 가 본다.
 ReadinessName = Literal[
     "replication_flags",
     "migration_logins",
     "target_schema_empty",
     "profile_secrets",
-    "ingress_on_source",
 ]
 READINESS_NAMES: tuple[ReadinessName, ...] = (
     "replication_flags",
     "migration_logins",
     "target_schema_empty",
     "profile_secrets",
-    "ingress_on_source",
 )
 CONFIG_FILE_NAME = "config.cloud.yaml"
 INGRESS_ENV_FILE_NAME = "ingress.env"
@@ -246,7 +246,7 @@ def render_cloud_config(
 
     Args:
         job: 쓸 job 설정.
-        readiness: READINESS_NAMES 여섯 항목의 점검 결과.
+        readiness: READINESS_NAMES 네 항목의 점검 결과.
         out_dir: 파일을 둘 디렉토리.
 
     Returns:
