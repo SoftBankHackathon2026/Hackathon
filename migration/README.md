@@ -330,6 +330,10 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 
 `python -m migration.secrets`로 준비된 OpenBao에 AWS Secrets Manager의 현재·직전 값을 이관하고 검증합니다. 계정 이관 PR #51의 신원·경로·정책 결과를 연결하며, 별도 명령으로 PostgreSQL 일반 접속 계정의 단일 비밀번호 또는 명시한 JSON 필드를 교체합니다. 앱 변경과 원본 삭제는 수행하지 않습니다. [구현 흐름](migration/secrets/README.md), [운영 명령](docs/secrets/operations.md), [결정과 후속 작업](docs/secrets/decisions-and-followups.md), [검증 범위](docs/secrets/validation.md)를 참고하십시오.
 
+## 온프레미스 OpenBao 비밀값의 AWS 이관
+
+`python -m migration.secrets_export`로 온프레미스 OpenBao KV v2의 현재 값을 AWS Secrets Manager에 복사하고 값 요약값으로 검증합니다. 계획은 이름·동작·요약값만 보여 주며, 소유하지 않은 기존 비밀은 덮어쓰지 않습니다. 자격증명 교체는 지원하지 않습니다. [사용법과 권한](docs/secrets-export/README.md), [설정 예시](secrets-examples/export.config.example.yaml)를 참고하십시오.
+
 # AWS 보안로그 원본 이관
 
 `python -m migration.security_logs`는 Wazuh 준비 도구가 제공한 보관공간에 S3 원본 파일과 CloudWatch Logs 조회 결과를 저장합니다. 기존 Wazuh 검색 저장소를 읽어 보관한 이벤트와 대조합니다. [실행 및 검증 안내](docs/wazuh-infra/security-logs.md)와 [설정 예시](config.security-logs.example.yaml)를 참고하십시오.

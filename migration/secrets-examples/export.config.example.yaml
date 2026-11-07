@@ -1,0 +1,22 @@
+# Placeholders only. Copy to a private 0600 file and replace every <...> value and /secure path.
+schema_version: 1
+migration_id: orders-dev-export
+source:
+  endpoint: https://<OpenBao 주소>:8200
+  expected_version: 2.7.2
+  cluster_id: <OpenBao 클러스터 ID>
+  mount: kv
+  paths: [apps/orders/database]
+  prefixes: [apps/orders/config]
+  ca_file: /secure/openbao-ca.pem
+  # Read-only token from a private file. Inline tokens and env: references are rejected.
+  token_ref: file:/secure/openbao-export-readonly.token
+target:
+  account_id: '<계정 ID>'
+  region: ap-northeast-2
+  profile: <대상 AWS 프로필>
+  name_template: onprem/{path}
+  kms_key_id: <KMS 키 ARN 또는 별칭>
+  adopt_existing: false
+# HMAC key for value hashes in plan and verify. Generate once, keep 0600, never commit.
+hash_key_ref: file:/secure/secrets-export-hash.key
