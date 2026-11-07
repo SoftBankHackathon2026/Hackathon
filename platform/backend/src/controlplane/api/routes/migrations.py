@@ -11,6 +11,7 @@ from controlplane.api.deps import (
     IngestDep,
     MigrationsDep,
     SecurityDep,
+    TasksDep,
     ViewerIdentity,
 )
 from controlplane.core.errors import OperationNotFound
@@ -20,6 +21,8 @@ from controlplane.schemas.migrations import (
     CommandResult,
     CutoverCommand,
     Fleet,
+    MigrationCreate,
+    MigrationCreated,
     MigrationDetail,
     MigrationEvent,
     MigrationIngest,
@@ -40,6 +43,13 @@ def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
 @router.get("/migrations/{job_id}")
 def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> MigrationDetail:
     return service.get_detail(job_id)
+
+
+@router.post("/migrations", status_code=201)
+def create_migration(
+    body: MigrationCreate, tasks: TasksDep, identity: CutoverOperatorIdentity
+) -> MigrationCreated:
+    return tasks.create(body, identity.email if identity else None)
 
 
 @router.get("/migrations/{job_id}/plan")

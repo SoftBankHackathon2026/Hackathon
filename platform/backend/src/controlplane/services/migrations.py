@@ -296,8 +296,16 @@ class MigrationService:
         environments = {env.config.id: env for env in self._source.list_environments()}
         source = environments.get(state.config.source_env)
         target = environments.get(state.config.target_env)
-        source_provider = source.config.provider if source else state.config.source_env
-        target_provider = target.config.provider if target else state.config.target_env
+        source_provider = (
+            source.config.provider
+            if source
+            else state.config.source_provider or state.config.source_env
+        )
+        target_provider = (
+            target.config.provider
+            if target
+            else state.config.target_provider or state.config.target_env
+        )
         signals = Signals(
             source_connected=bool(source and source.cluster.connected),
             target_connected=bool(target and target.cluster.connected),

@@ -24,6 +24,8 @@ from controlplane.integrations.http_clients import ConnectStatusClient, WorkerSt
 from controlplane.integrations.kube import ClusterReader
 from controlplane.providers.loader import load_platform
 from controlplane.repositories.fleet_journal import FleetJournal
+from controlplane.repositories.migration_tasks import MigrationTaskJournal
+from controlplane.services.migration_tasks import MigrationTaskService
 
 LOG = logging.getLogger(__name__)
 FACTS_SECONDS = 60
@@ -168,12 +170,14 @@ def main(argv: list[str] | None = None) -> int:
         costs=CostStore(platform.store),
         cost_config=load_cost_config(),
     )
+    tasks = MigrationTaskService(config, MigrationTaskJournal(platform.store))
     heartbeat = os.environ.get(HEARTBEAT_ENV)
     with db.pooling():
         platform.store.migrate()
         while True:
             if heartbeat:
                 Path(heartbeat).touch()
+            tasks.sync()
             collector.tick()
             if args.once:
                 return 0

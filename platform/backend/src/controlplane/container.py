@@ -40,6 +40,11 @@ from controlplane.repositories.data_mappings import (
 )
 from controlplane.repositories.enrollments import EnrollmentStore
 from controlplane.repositories.fleet_journal import FleetJournal
+from controlplane.repositories.migration_tasks import (
+    MemoryMigrationTasks,
+    MigrationTaskJournal,
+    TaskRepository,
+)
 from controlplane.repositories.releases import ReleaseStore
 from controlplane.services.agent import AgentService
 from controlplane.services.auth import AuthService, LoginThrottle
@@ -51,6 +56,7 @@ from controlplane.services.enrollments import EnrollmentService, aws_principal_f
 from controlplane.services.environments import EnvironmentService
 from controlplane.services.fleet import FleetService
 from controlplane.services.ingest import IngestService
+from controlplane.services.migration_tasks import MigrationTaskService
 from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
@@ -84,6 +90,7 @@ class Container:
     costs: CostService
     cutover_commands: CutoverCommandService
     data_mappings: DataMappingService
+    tasks: MigrationTaskService
     enrollments: EnrollmentService | None = None
     connections: ConnectionService | None = None
     agent: AgentService | None = None
@@ -97,6 +104,7 @@ class Container:
         if self.store is None:
             return
         self.store.migrate()
+        self.tasks.sync()
         self.registry.initialize()
         if self.build_settings:
             BuildStore(self.store.dsn).migrate()
@@ -144,6 +152,10 @@ def _mapping_store(store: ReleaseStore | None) -> MappingRepository:
     return DataMappingJournal(store) if store is not None else MemoryDataMappings()
 
 
+def _task_store(store: ReleaseStore | None) -> TaskRepository:
+    return MigrationTaskJournal(store) if store is not None else MemoryMigrationTasks()
+
+
 def _fleet_source(config: FleetConfig, store: ReleaseStore | None) -> FleetSource:
     if config.mode == "live" and store is not None:
         return JournalFleet(config, FleetJournal(store))
@@ -182,6 +194,7 @@ def build_container(
     migrations = MigrationService(source)
     inventory = CostStore(store).get if store else (lambda env_id: None)
     data_mappings = DataMappingService(fleet_config, inventory, _mapping_store(store))
+    tasks = MigrationTaskService(fleet_config, _task_store(store))
     return Container(
         auth_mode=mode,
         http=http_settings or HttpSettings.from_environment(),
@@ -211,6 +224,7 @@ def build_container(
             fleet_config, _command_store(store), blocker=data_mappings.blocker
         ),
         data_mappings=data_mappings,
+        tasks=tasks,
         enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
         if store
         else None,

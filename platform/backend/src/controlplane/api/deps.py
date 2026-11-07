@@ -19,6 +19,7 @@ from controlplane.services.enrollments import EnrollmentService
 from controlplane.services.environments import EnvironmentService
 from controlplane.services.fleet import FleetService
 from controlplane.services.ingest import IngestService
+from controlplane.services.migration_tasks import MigrationTaskService
 from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
 from controlplane.services.runs import DemoRunService
@@ -141,6 +142,10 @@ def get_data_mappings(container: ContainerDep) -> DataMappingService:
     return container.data_mappings
 
 
+def get_tasks(container: ContainerDep) -> MigrationTaskService:
+    return container.tasks
+
+
 def get_enrollments(container: ContainerDep) -> EnrollmentService:
     if container.enrollments is None:
         raise NotConfigured(
@@ -160,6 +165,7 @@ AgentDep = Annotated[AgentService, Depends(get_agent)]
 IngestAgentDep = Annotated[AgentService, Depends(require_ingest_agent)]
 CutoverCommandsDep = Annotated[CutoverCommandService, Depends(get_cutover_commands)]
 DataMappingsDep = Annotated[DataMappingService, Depends(get_data_mappings)]
+TasksDep = Annotated[MigrationTaskService, Depends(get_tasks)]
 CostsDep = Annotated[CostService, Depends(get_costs)]
 DeploymentsDep = Annotated[DeploymentService, Depends(get_deployments)]
 EnvironmentsDep = Annotated[EnvironmentService, Depends(get_environments)]
