@@ -33,8 +33,12 @@ def test_800_plus_100_plus_100_and_resume_after_target_writes(config, state_dir,
         def precheck(self, target, *, is_source):
             return {**super().precheck(target, is_source=is_source), 'row_count': self.count_rows(target)}
 
-        def latest_ids(self, target, n):
+        def latest_ids(self, target, n, *, since=None):
             return list(backends[target].rows)[-n:]
+
+        def count_rows_in_scope(self, target, *, since=None, upto=None):
+            self.count_rows(target)  # 복제 흉내(원본→대상 복사)는 count_rows 에 있다
+            return self.seed[target] if upto is not None else len(backends[target].rows)
 
         def row_exists(self, target, request_id):
             return request_id in backends[target].rows

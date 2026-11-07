@@ -84,14 +84,17 @@ class DbPort(Protocol):
     def terminate_app_sessions(self, target: str) -> int: ...
     def test_insert_rejected(self, target: str, request_id: str) -> bool: ...
     def count_rows(self, target: str, phase: str | None = None) -> int: ...
+    def max_created_at(self, target: str) -> str | None: ...
+    def count_rows_in_scope(self, target: str, *, since: str | None = None, upto: str | None = None) -> int: ...
     def row_exists(self, target: str, request_id: str) -> bool: ...
-    def latest_ids(self, target: str, n: int) -> list[str]: ...
+    def latest_ids(self, target: str, n: int, *, since: str | None = None) -> list[str]: ...
     def prepare_source(self, target: str) -> dict[str, Any]: ...
     def drop_source_slot(self, target: str) -> dict[str, Any]: ...
 
 
 class VerifyPort(Protocol):
-    def run(self, mode: str, label: str) -> dict[str, Any]: ...
+    def run(self, mode: str, label: str, *, since: str | None = None, upto: str | None = None,
+            method: str = "rows") -> dict[str, Any]: ...
 
 
 class TrafficPort(Protocol):
@@ -239,12 +242,18 @@ class PgAdminPort:
                             (request_id,))
                 return cur.fetchone() is not None
 
-    def latest_ids(self, target: str, n: int) -> list[str]:
+    def latest_ids(self, target: str, n: int, *, since: str | None = None) -> list[str]:
         with self._admin(target) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql.SQL("SELECT request_id FROM {} ORDER BY created_at DESC, request_no DESC LIMIT %s")
-                            .format(dbmod.table_ident(self.table)), (n,))
-                return [str(r[0]) for r in cur.fetchall()]
+            return dbmod.latest_ids_in_scope(conn, self.table, n, since=verifymod.parse_ts(since))
+
+    def max_created_at(self, target: str) -> str | None:
+        with self._admin(target) as conn:
+            return verifymod.format_ts(dbmod.max_created_at(conn, self.table))
+
+    def count_rows_in_scope(self, target: str, *, since: str | None = None, upto: str | None = None) -> int:
+        with self._admin(target) as conn:
+            return dbmod.count_rows_in_scope(conn, self.table, since=verifymod.parse_ts(since),
+                                             upto=verifymod.parse_ts(upto))
 
     def prepare_source(self, target: str) -> dict[str, Any]:
         job = self.config.job
@@ -263,11 +272,14 @@ class VerifyAdapter:
     def __init__(self, config: Config, state_dir: Path, report_dir: Path) -> None:
         self.config, self.state_dir, self.report_dir = config, state_dir, report_dir
 
-    def run(self, mode: str, label: str) -> dict[str, Any]:
+    def run(self, mode: str, label: str, *, since: str | None = None, upto: str | None = None,
+            method: str = "rows") -> dict[str, Any]:
         path = self.report_dir / f"verify-{self.config.job.job_id}-{label}.json"
         cmp = verifymod.run(self.config, source=self.config.job.source, target=self.config.job.target,
-                            state_dir=self.state_dir, mode=mode, report_path=path, extra_meta={"label": label})
-        return {"passed": cmp.passed, "counts": cmp.counts, "report": str(path),
+                            state_dir=self.state_dir, mode=mode, report_path=path, extra_meta={"label": label},
+                            since=since, upto=upto, method=method)
+        return {"passed": cmp.passed, "counts": cmp.counts, "report": str(path), "method": cmp.method,
+                "scope": {"since": since, "upto": upto}, "mismatched_bucket_count": len(cmp.mismatched_buckets),
                 "source_count": cmp.source_count, "target_count": cmp.target_count}
 
 
@@ -399,6 +411,23 @@ class Cutover:
             healthy = healthy and running
         return healthy, out
 
+    # ---- 기준점(watermark) -----
+
+    @property
+    def watermark(self) -> str | None:
+        """COPYING 시작 때 저장한 원본 max(created_at). None 이면 시작 당시 빈 테이블이라 모든 행이 delta 다."""
+        if "watermark" not in self.job.checkpoint:
+            # 기준점 도입 전에 시작한 작업을 이어서 실행하는 경우. 전체를 delta 로 보고 비교한다(느리지만 안전).
+            log.warning("체크포인트에 기준점(watermark)이 없다: 전체 행을 delta 로 비교한다")
+            return None
+        return self.job.checkpoint["watermark"]
+
+    def _verify_snapshot_set(self, label: str) -> dict[str, Any]:
+        """기준점 이전(스냅샷) 집합을 digest 로 비교한다. 기준점이 없으면(빈 테이블 시작) 건너뛴다."""
+        if self.watermark is None:
+            return {"skipped": True, "passed": True, "reason": "빈 테이블에서 시작: 스냅샷 집합 없음"}
+        return self.p.verify.run("pre", label, upto=self.watermark, method=self.cc.snapshot_compare)
+
     # ---- 접수 서비스 -----
 
     @property
@@ -478,6 +507,10 @@ class Cutover:
 
     def stage_copying(self) -> None:
         self._policy_guard("pre_start")
+        # 기준점은 커넥터 등록(스냅샷 시작) 전에 한 번만 잡는다. 이후 모든 판정은 이 시각 뒤에 만들어진 행만 본다.
+        if "watermark" not in self.job.checkpoint:
+            wm = self._step("watermark", lambda: {"created_at": self.p.db.max_created_at(self.source)})
+            self._save(watermark=wm.get("created_at"))
         self._step("prepare_source", lambda: self.p.db.prepare_source(self.source))
         for kind in ("source", "sink"):
             doc = self.docs[kind]
@@ -500,21 +533,37 @@ class Cutover:
     def stage_catching_up(self) -> None:
         if self.cc.demo_total_rows is not None:
             self._step("demo_release_source", lambda: self.p.worker.set_generation_limit(100))
-        base = int(self.job.checkpoint.get("source_count_at_copy", 0))
-        need = base + self.cc.min_live_rows_after_snapshot
+        wm = self.watermark
+
+        # 1) 스냅샷 집합(기준점 이전)을 한 번 확정한다. 아직 sink 가 적용 중이면 통과할 때까지 기다린다.
+        #    원본은 계속 쓰이는 중이지만 이 집합은 불변이라 트래픽을 멈추지 않고 확인할 수 있다.
+        if not (self.job.checkpoint.get("snapshot_set") or {}).get("passed"):
+            def snapshot_verified() -> tuple[bool, dict[str, Any]]:
+                healthy, states = self._connectors_healthy()
+                res = self._verify_snapshot_set("snapshot")
+                return healthy and bool(res.get("passed")), {"connectors": states, **res}
+            snap = self._wait("snapshot_verify", snapshot_verified)
+            self._save(snapshot_set={"passed": True, "count": snap.get("source_count"),
+                                     "report": snap.get("report"), "method": snap.get("method")})
+
+        # 2) 기준점 이후(delta) 행이 최소 건수만큼 생기고 최신 행이 대상에 반영됐는지 본다. 전체 count 는 세지 않는다.
+        need = self.cc.min_live_rows_after_snapshot
 
         def caught_up() -> tuple[bool, dict[str, Any]]:
             healthy, states = self._connectors_healthy()
-            src_n = self.p.db.count_rows(self.source)
-            tgt_n = self.p.db.count_rows(self.target)
-            latest = self.p.db.latest_ids(self.source, 10)
+            src_n = self.p.db.count_rows_in_scope(self.source, since=wm)
+            tgt_n = self.p.db.count_rows_in_scope(self.target, since=wm)
+            latest = self.p.db.latest_ids(self.source, 10, since=wm)
             applied = all(self.p.db.row_exists(self.target, rid) for rid in latest)
             ok = healthy and src_n >= need and applied
-            return ok, {"connectors": states, "source": src_n, "target": tgt_n, "need": need, "latest_applied": applied}
+            return ok, {"connectors": states, "delta_source": src_n, "delta_target": tgt_n, "need": need,
+                        "latest_applied": applied, "watermark": wm}
 
         info = self._wait("catching_up", caught_up)
-        if self.cc.demo_total_rows is not None and info["source"] != 900:
-            raise CutoverError("demo source must contain exactly 900 rows")
+        if self.cc.demo_total_rows is not None:
+            info["source"] = self.p.db.count_rows(self.source)
+            if info["source"] != 900:
+                raise CutoverError("demo source must contain exactly 900 rows")
         self._save(READY, catching_up=info)
 
     def stage_ready(self) -> None:
@@ -564,12 +613,22 @@ class Cutover:
         if not offsets_supported:
             log.warning("Connect /offsets API 를 쓸 수 없다. Kafka offset H+1 비교 없이 DB 커밋 확인만으로 판정한다")
 
+        wm = self.watermark
+        snapshot_count = (self.job.checkpoint.get("snapshot_set") or {}).get("count")
+
         def drained() -> tuple[bool, dict[str, Any]]:
             healthy, states = self._connectors_healthy()
-            src_n, tgt_n = self.p.db.count_rows(self.source), self.p.db.count_rows(self.target)
+            # 원본은 fencing 됐으므로 delta(기준점 이후) 건수가 양쪽에서 같고 마지막 커밋 행이 대상에 있으면 적용이 끝난 것이다.
+            # 기준점 이전 집합은 CATCHING_UP 에서 확정했지만, 늦게 커밋된 행이 섞일 수 있어 건수만 싸게 다시 센다.
+            src_n = self.p.db.count_rows_in_scope(self.source, since=wm)
+            tgt_n = self.p.db.count_rows_in_scope(self.target, since=wm)
+            pre_src = self.p.db.count_rows_in_scope(self.source, upto=wm) if wm is not None else 0
+            pre_tgt = self.p.db.count_rows_in_scope(self.target, upto=wm) if wm is not None else 0
             last_ok = last_id is None or self.p.db.row_exists(self.target, last_id)
-            info: dict[str, Any] = {"connectors": states, "source": src_n, "target": tgt_n, "last_request_id": last_id,
-                                    "last_in_target": last_ok, "offsets_supported": offsets_supported}
+            info: dict[str, Any] = {"connectors": states, "delta_source": src_n, "delta_target": tgt_n,
+                                    "snapshot_source": pre_src, "snapshot_target": pre_tgt, "watermark": wm,
+                                    "last_request_id": last_id, "last_in_target": last_ok,
+                                    "offsets_supported": offsets_supported}
             stable = True
             if offsets_supported:
                 cur = sink_kafka_offsets(self.p.connect.offsets(sink))
@@ -579,15 +638,24 @@ class Cutover:
                     stable_since.update(offsets=cur, at=now)
                 stable = (now - float(stable_since["at"] or now)) >= self.cc.offset_stable_seconds
                 info["offsets_stable_seconds"] = round(now - float(stable_since["at"] or now), 1)
-            return healthy and last_ok and src_n == tgt_n and stable, info
+            return healthy and last_ok and src_n == tgt_n and pre_src == pre_tgt and stable, info
 
         info = self._wait("cdc_drain", drained)
+        # 스냅샷 집합에 CATCHING_UP 확정 뒤 늦게 커밋된 행이 들어왔으면(건수 변화) 그 집합만 digest 로 다시 확정한다.
+        snapshot_recheck: dict[str, Any] = {"needed": False}
+        if wm is not None and snapshot_count is not None and info["snapshot_source"] != snapshot_count:
+            res = self._verify_snapshot_set("snapshot-recheck")
+            snapshot_recheck = {"needed": True, "before": snapshot_count, "after": info["snapshot_source"], **res}
+            if not res.get("passed"):
+                raise CutoverError(f"기준점 이전 집합에 늦게 들어온 행이 대상과 맞지 않는다: {res}")
+            self._save(snapshot_set={"passed": True, "count": info["snapshot_source"],
+                                     "report": res.get("report"), "method": res.get("method")})
         source_offsets = self.p.connect.offsets(self.config.job.source_connector)
-        self._save(SYNC_CONFIRMED, drained=info, source_offsets=source_offsets,
+        self._save(SYNC_CONFIRMED, drained=info, source_offsets=source_offsets, snapshot_recheck=snapshot_recheck,
                    offset_note=None if offsets_supported else "Connect /offsets 미지원: DB 커밋 확인으로 대체")
 
     def stage_sync_confirmed(self) -> None:
-        first = self.p.verify.run("pre", "pre-stop")
+        first = self.p.verify.run("pre", "pre-stop", since=self.watermark)
         if not first["passed"]:
             raise CutoverError(f"전환 전 검증 실패: {first}")
         evidence: dict[str, Any] = {}
@@ -600,7 +668,7 @@ class Cutover:
         self._step("delete_sink_connector", lambda: {"deleted": self.p.connect.delete(self.config.job.sink_connector)})
         if self.p.db.app_can_insert(self.target):
             raise CutoverError("커넥터 종료 후에도 대상 앱 쓰기가 닫혀 있어야 하는데 열려 있다")
-        second = self.p.verify.run("pre", "post-stop")
+        second = self.p.verify.run("pre", "post-stop", since=self.watermark)
         if not second["passed"]:
             raise CutoverError(f"커넥터 종료 후 재검증 실패: {second}")
         self._save(SWITCHING, verify_pre=first, verify_post_stop=second)
@@ -617,7 +685,7 @@ class Cutover:
             if any(self.p.connect.exists(name) for name in (
                     self.config.job.source_connector, self.config.job.sink_connector)):
                 raise CutoverError("최종 정책 판정 전 CDC 커넥터가 남아 있다")
-            compared = self.p.verify.run("pre", "policy-pre-grant")
+            compared = self.p.verify.run("pre", "policy-pre-grant", since=self.watermark)
             if not compared.get("passed"):
                 raise CutoverError("정책 판정 직전 데이터 비교 실패")
             checks = {
@@ -748,9 +816,16 @@ class Cutover:
             if route != self._route_name(self.target):
                 raise CutoverError(f"공개 도메인이 대상으로 가고 있지 않다: {route}")
             info["traffic"] = {"target": route}
-        result = self.p.verify.run("post", "final")
+        # 전환 후: delta(기준점 이후) 는 행 단위 post 비교. 대상에서 새로 커밋된 행은 허용, 다른 writer 는 보고만.
+        result = self.p.verify.run("post", "final", since=self.watermark)
         if not result["passed"]:
             raise CutoverError(f"전환 후 검증 실패: {result}")
+        # 기준점 이전 집합은 불변이라 digest 로 마지막 한 번 더 확정한다 (설정으로 끌 수 있다). 트래픽은 이미 대상으로 갔다.
+        final_snapshot: dict[str, Any] = {"skipped": True}
+        if self.cc.final_snapshot_recheck:
+            final_snapshot = self._verify_snapshot_set("final-snapshot")
+            if not final_snapshot.get("passed"):
+                raise CutoverError(f"전환 후 기준점 이전 집합 검증 실패: {final_snapshot}")
         cleanup: dict[str, Any] = {"skipped": True}
         if self.cc.drop_source_slot_on_complete:
             def _cleanup() -> dict[str, Any]:
@@ -763,25 +838,27 @@ class Cutover:
             if cleanup.get("error"):
                 log.warning("원본 후처리 미완료 (%s) — python -m migration.source_cleanup --config <same-config>",
                             cleanup["error"])
-        self._save(COMPLETED, verify_final=result, post_switch=info, source_cleanup=cleanup)
+        self._save(COMPLETED, verify_final=result, verify_final_snapshot=final_snapshot, post_switch=info,
+                   source_cleanup=cleanup)
 
     # ---- 실행 -----
 
     def plan(self) -> list[tuple[str, str]]:
         return [
             (PRECHECK, "양쪽 접속·스키마·권한·wal_level·워커 target·Connect 접근 확인"),
-            (COPYING, "publication/slot 준비, Source/Sink 등록, snapshot(seed) 완료 대기"),
-            (CATCHING_UP, f"snapshot 후 최소 {self.cc.min_live_rows_after_snapshot}건 추가 반영 확인"),
+            (COPYING, "기준점(원본 max(created_at)) 저장, publication/slot 준비, Source/Sink 등록, snapshot(seed) 완료 대기"),
+            (CATCHING_UP, f"기준점 이전 집합 digest 확정 → 기준점 이후 최소 {self.cc.min_live_rows_after_snapshot}건 반영 확인"),
             (READY, "승인 대기 (--approve)"),
             (FENCING, "워커 pause → drain" + (" → 접수 큐 pause(settled)" if self.config.ingress.enabled else "")
              + " → 원본 REVOKE INSERT + 세션 종료 → 시험 INSERT 거절 확인"),
-            (DRAINING, "마지막 커밋 요청의 대상 반영·건수 일치·sink offset 정체 확인"),
-            (SYNC_CONFIRMED, "전체 비교(pre) → 커넥터 증거 보관·삭제 → 재검증"),
+            (DRAINING, "마지막 커밋 요청의 대상 반영·기준점 이후 건수 일치·sink offset 정체 확인"),
+            (SYNC_CONFIRMED, "기준점 이후 행 비교(pre) → 커넥터 증거 보관·삭제 → 재검증"),
             (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume"
              + (" → 대상 앱 readiness → 접수 큐 /target → /resume" if self.config.ingress.enabled else "")
              + (" → 공개 도메인 경로 전환" if self.config.traffic.enabled else "")
              + "  [여기부터 자동 원복 없음]"),
-            (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 전체 비교(post)"),
+            (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 기준점 이후 행 비교(post)"
+             + (" → 기준점 이전 집합 digest 재확정" if self.cc.final_snapshot_recheck else "")),
             (COMPLETED, "완료"),
         ]
 

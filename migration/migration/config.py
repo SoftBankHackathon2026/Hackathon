@@ -155,6 +155,10 @@ class CutoverConfig:
     offset_stable_seconds: float = 10.0
     poll_interval_seconds: float = 5.0
     stage_timeout_seconds: float = 1800.0
+    # 기준점(COPYING 시작 때 원본 max(created_at)) 이전 집합을 어떻게 비교할지. digest: 서버측 버킷 해시(행 전송 없음),
+    # rows: 행 전체 읽기. 기준점 이후 집합(delta)은 항상 행 단위로 비교한다.
+    snapshot_compare: str = "digest"
+    final_snapshot_recheck: bool = True  # COMPLETED 직전 기준점 이전 집합을 한 번 더 digest 로 확정
 
     def __post_init__(self) -> None:
         if self.demo_total_rows is not None and (
@@ -162,6 +166,8 @@ class CutoverConfig:
             or self.min_live_rows_after_snapshot != 100 or self.min_rows_after_switch != 100
         ):
             raise ConfigError("demo_total_rows requires 1000 total and 100/100 live rows")
+        if self.snapshot_compare not in ("digest", "rows"):
+            raise ConfigError(f"cutover.snapshot_compare 는 digest|rows 중 하나다: {self.snapshot_compare}")
 
 
 @dataclass(frozen=True)
