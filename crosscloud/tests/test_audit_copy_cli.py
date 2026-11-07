@@ -65,76 +65,126 @@ def _fill_trail(buckets) -> None:
         )
 
 
-def test_aws_to_gcp_then_verify_reports_valid(buckets, tmp_path, capsys):
-    _fill_trail(buckets)
-
-    copy_code = cli.main(
+def _aws_to_gcp(tmp_path) -> int:
+    return cli.main(
         [
             "aws-to-gcp",
             "--source-bucket", fixture.BUCKET,
             "--source-prefix", "AWSLogs/",
-            "--target-bucket", "ccx-t-audit",
+            "--target-bucket", "ccx-t-audit-gcs",
             "--run", "t",
             "--public-keys", str(_public_keys_file(tmp_path)),
+            "--receipt", str(tmp_path / "receipt.json"),
         ]
     )  # fmt: skip
-    capsys.readouterr()
-    verify_code = cli.main(
-        ["verify-aws", "--target-bucket", "ccx-t-audit", "--run", "t"]
-    )
 
-    assert (copy_code, verify_code) == (0, 0)
+
+def _verify_aws(tmp_path, *key_files) -> int:
+    key_files = key_files or (_public_keys_file(tmp_path),)
+    return cli.main(
+        [
+            "verify-aws",
+            "--target-bucket", "ccx-t-audit-gcs",
+            "--run", "t",
+            "--receipt", str(tmp_path / "receipt.json"),
+            "--public-keys", *map(str, key_files),
+        ]
+    )  # fmt: skip
+
+
+def test_aws_to_gcp_writes_receipt_outside_the_bucket(
+    buckets, tmp_path, capsys
+):
+    _fill_trail(buckets)
+
+    code = _aws_to_gcp(tmp_path)
+
+    receipt = json.loads((tmp_path / "receipt.json").read_text())
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == receipt
+    assert receipt["chains"][0]["end_digest"].endswith(".json.gz")
+
+
+def test_aws_to_gcp_then_verify_reports_valid(buckets, tmp_path, capsys):
+    _fill_trail(buckets)
+    _aws_to_gcp(tmp_path)
+    capsys.readouterr()
+
+    code = _verify_aws(tmp_path)
+
+    assert code == 0
     assert json.loads(capsys.readouterr().out)["result"] == "valid"
+
+
+def test_verify_aws_accepts_several_public_key_files(buckets, tmp_path, capsys):
+    _fill_trail(buckets)
+    _aws_to_gcp(tmp_path)
+    capsys.readouterr()
+    other_region = tmp_path / "other.json"
+    other_region.write_text(json.dumps({"PublicKeyList": []}))
+
+    code = _verify_aws(tmp_path, _public_keys_file(tmp_path), other_region)
+
+    assert code == 0
 
 
 def test_verify_aws_exits_nonzero_on_tampering(buckets, tmp_path, capsys):
     _fill_trail(buckets)
-    cli.main(
-        [
-            "aws-to-gcp",
-            "--source-bucket", fixture.BUCKET,
-            "--source-prefix", "AWSLogs/",
-            "--target-bucket", "ccx-t-audit",
-            "--run", "t",
-            "--public-keys", str(_public_keys_file(tmp_path)),
-        ]
-    )  # fmt: skip
+    _aws_to_gcp(tmp_path)
     capsys.readouterr()
-    target = buckets[("gs", "ccx-t-audit")]
+    target = buckets[("gs", "ccx-t-audit-gcs")]
     key = next(k for k in target.objects if "/CloudTrail/" in k)
     target.objects[key] = object_store.StoredObject(data=b"x")
 
-    code = cli.main(
-        ["verify-aws", "--target-bucket", "ccx-t-audit", "--run", "t"]
-    )
+    code = _verify_aws(tmp_path)
 
     assert code == 1
     assert json.loads(capsys.readouterr().out)["result"] == "invalid"
 
 
-def test_gcp_to_aws_then_verify_reports_no_evidence(buckets, capsys):
+def test_existing_receipt_file_is_not_overwritten(buckets, tmp_path):
+    _fill_trail(buckets)
+    (tmp_path / "receipt.json").write_text("{}")
+
+    with pytest.raises(SystemExit) as raised:
+        _aws_to_gcp(tmp_path)
+
+    assert raised.value.code == 2
+    assert (tmp_path / "receipt.json").read_text() == "{}"
+    assert ("gs", "ccx-t-audit-gcs") not in buckets
+
+
+def test_gcp_to_aws_then_verify_reports_no_evidence(buckets, tmp_path, capsys):
     source = memory_store.MemoryStore("gs", "copy-out")
     source.objects["cloudaudit.googleapis.com/a.json"] = (
         object_store.StoredObject(data=b"[]")
     )
     buckets[("gs", "copy-out")] = source
+    receipt = str(tmp_path / "receipt.json")
 
     cli.main(
         [
             "gcp-to-aws",
             "--source-bucket", "copy-out",
             "--source-prefix", "cloudaudit.googleapis.com/",
-            "--target-bucket", "ccx-t-audit",
+            "--target-bucket", "ccx-t-audit-s3",
             "--run", "t",
+            "--receipt", receipt,
         ]
     )  # fmt: skip
     capsys.readouterr()
     code = cli.main(
-        ["verify-gcp", "--target-bucket", "ccx-t-audit", "--run", "t"]
-    )
+        [
+            "verify-gcp",
+            "--target-bucket", "ccx-t-audit-s3",
+            "--run", "t",
+            "--receipt", receipt,
+        ]
+    )  # fmt: skip
 
     result = json.loads(capsys.readouterr().out)
-    assert code == 0
+    assert code == cli.EXIT_NO_EVIDENCE
+    assert result["result"] == "no_evidence"
     assert result["evidence"] == "none"
 
 

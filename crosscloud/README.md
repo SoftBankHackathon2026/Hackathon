@@ -32,13 +32,21 @@
 뒤 대상 버킷만 읽어 검증한다. 로그 내용은 해석하지 않는다.
 
 *   **AWS→GCP:** CloudTrail 로그와 다이제스트를 GCS 로 옮기고
-    `ccx-<run>/bundle.json`(경로 대응표, 객체별 SHA-256, 다이제스트 서명,
-    공개키)을 남긴다. 검증기는 다이제스트 체인 서명(SHA256withRSA)과 로그
-    해시를 본다. 변조는 `invalid`, 삭제는 `missing` 이다. backfill 체인과
-    검증이 꺼졌던 구간은 `evidence: none` 으로 표시한다.
+    `ccx-<run>/bundle.json`(경로 대응표, 객체별 SHA-256, 다이제스트 서명)을
+    남긴다. 검증기는 다이제스트 체인 서명(SHA256withRSA)과 로그 해시를 본다.
+    변조는 `invalid`, 삭제는 `missing` 이다. backfill 체인과 검증이 꺼졌던
+    구간은 `evidence: none` 으로 표시한다.
 *   **GCP→AWS:** `gcloud logging copy` 결과 파일을 S3 로 옮기고
-    `ccx-<run>/manifest.json` 을 남긴다. 공급자 서명이 없으므로 결과는
-    언제나 `evidence: none` 이고, 해시는 이관 중 불변만 증명한다.
+    `ccx-<run>/manifest.json` 을 남긴다. 공급자 서명이 없으므로 검증 결과는
+    언제나 `no_evidence` 이고, 해시는 이관 중 불변만 증명한다.
+
+**신뢰 기준은 대상 버킷 밖에 둔다.** 이관 명령은 이관 기록(`--receipt`,
+bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 운영자 PC 에
+쓴다. 검증은 이 기록과 맞는 bundle·manifest 만 믿고, 공개키는 운영자가
+보관한 `aws cloudtrail list-public-keys` 출력 파일(리전마다 하나)만 쓴다.
+
+결과는 `valid` · `invalid` · `no_evidence`(어긋난 것은 없지만 서명으로 확인한
+객체가 없음) 중 하나다. 종료 코드는 차례로 0 · 1 · 3 이다.
 
 명령은 `python -m crosscloud.audit_copy.cli --help` 로 본다. 버킷은
 `terraform/audit/` 가 만들고, 잠그지 않는다.

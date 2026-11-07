@@ -140,3 +140,103 @@ def test_public_keys_from_aws_cli_list_public_keys_output():
 def test_malformed_public_keys_output_is_rejected(output):
     with pytest.raises(archive_files.InvalidArchiveFileError):
         archive_files.public_keys_from_cli_output(output)
+
+
+_RECEIPT = archive_files.Receipt(
+    direction="aws_to_gcp",
+    run_id="r1",
+    archive_file="gs://arc/ccx-r1/bundle.json",
+    archive_file_sha256="c" * 64,
+    object_count=2,
+    chains={
+        "AWSLogs/1/CloudTrail-Digest/r/x": cloudtrail_verify.ChainBounds(
+            oldest="s3://trail/old.json.gz", newest="s3://trail/new.json.gz"
+        )
+    },
+)
+
+
+def test_receipt_round_trips_and_names_the_chain_end():
+    document = archive_files.receipt_to_json(_RECEIPT)
+
+    assert document["format"] == archive_files.RECEIPT_FORMAT
+    assert document["chains"][0]["end_digest"] == "s3://trail/new.json.gz"
+    assert archive_files.receipt_from_json(document) == _RECEIPT
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"format": "other"},
+        {"direction": "sideways"},
+        {"object_count": "2"},
+        {"archive_file_sha256": 5},
+        {"chains": [{"chain": "c"}]},
+    ],
+)
+def test_malformed_receipt_is_rejected(change):
+    document = {**archive_files.receipt_to_json(_RECEIPT), **change}
+
+    with pytest.raises(archive_files.InvalidArchiveFileError):
+        archive_files.receipt_from_json(document)
+
+
+def test_bundle_with_duplicate_source_is_rejected():
+    document = archive_files.bundle_to_json("r1", (_LOG, _LOG), (_KEY,))
+
+    with pytest.raises(archive_files.InvalidArchiveFileError, match="중복"):
+        archive_files.bundle_from_json(document)
+
+
+def test_manifest_with_duplicate_target_is_rejected():
+    other = dataclasses.replace(_LOG, source_uri="gs://src/other")
+    document = archive_files.manifest_to_json("r1", (_LOG, other))
+
+    with pytest.raises(archive_files.InvalidArchiveFileError, match="중복"):
+        archive_files.manifest_from_json(document)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), [("sha256", 1), ("size", "20"), ("source", None)]
+)
+def test_bundle_row_with_wrong_type_is_rejected(field, value):
+    document = archive_files.bundle_to_json("r1", (_LOG,), (_KEY,))
+    document["objects"][0][field] = value
+
+    with pytest.raises(archive_files.InvalidArchiveFileError):
+        archive_files.bundle_from_json(document)
+
+
+def test_bundle_signature_with_wrong_type_is_rejected():
+    document = archive_files.bundle_to_json("r1", (_DIGEST,), (_KEY,))
+    document["digest_signatures"][0]["signature"] = 12
+
+    with pytest.raises(archive_files.InvalidArchiveFileError):
+        archive_files.bundle_from_json(document)
+
+
+def test_public_key_files_merge_and_reject_conflicts():
+    first = archive_files.public_keys_from_cli_output(_cli_output(b"a", "f1"))
+    second = archive_files.public_keys_from_cli_output(_cli_output(b"b", "f2"))
+    conflict = archive_files.public_keys_from_cli_output(
+        _cli_output(b"c", "f1")
+    )
+
+    merged = archive_files.merge_public_keys((first, second, first))
+
+    assert {key.fingerprint for key in merged} == {"f1", "f2"}
+    with pytest.raises(archive_files.InvalidArchiveFileError, match="f1"):
+        archive_files.merge_public_keys((first, conflict))
+
+
+def _cli_output(value: bytes, fingerprint: str) -> dict:
+    return {
+        "PublicKeyList": [
+            {
+                "Value": base64.b64encode(value).decode(),
+                "ValidityStartTime": "2026-11-01T00:00:00+00:00",
+                "ValidityEndTime": "2026-12-01T00:00:00+00:00",
+                "Fingerprint": fingerprint,
+            }
+        ]
+    }
