@@ -23,6 +23,7 @@
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/audit_copy/` | 감사 기록 이관 최소판. 원본 바이트 복사기, bundle·manifest, CloudTrail 오프라인 검증기 |
 | `terraform/audit/` | 감사 기록 보존 버킷 2개(GCS 보존 정책 미잠금, S3 Object Lock 활성) |
+| `terraform/aws/` | AWS 쪽 이전 자원 한 벌(VPC·RDS·Secret 그릇·ECR·ECS+ALB). 설명은 `terraform/aws/README.md` |
 | `tests/` | 단위 시험 |
 
 `Inventory` 스키마는 비밀로 의심되거나 분류가 불명인 env 값을 받지 않는다

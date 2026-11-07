@@ -1,0 +1,151 @@
+# 앱 층: ALB(HTTP 80) → ECS Fargate 서비스. 작업은 퍼블릭 서브넷에서 공인 IP 로
+# 나간다(NAT 없음).
+#
+# ALB 는 인터넷 연결형이다 — 운영자 PC 의 ingress 가 인터넷으로 이 앱을 부른다.
+#
+# 리스너 기본 동작과 서비스의 작업 정의는 Terraform 이 처음 한 번만 정한다.
+# 그 뒤에는 전환 단계가 Terraform 밖에서 바꿀 수 있다(앱 멈춤, 대상 DB 를 가리키는
+# Secret 참조로 바꾼 작업 정의). 재 apply 가 이것을 원본으로 되돌리면 대상 DB 가
+# 쓰기를 받은 뒤 앱이 원본 DB 로 돌아가는 롤백이 된다 — 불변식 위반이라 무시한다.
+
+data "aws_region" "current" {}
+
+resource "aws_security_group" "alb" {
+  name        = "${var.name_prefix}-alb"
+  description = "HTTP from anywhere"
+  vpc_id      = var.vpc_id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = var.port
+  to_port                      = var.port
+}
+
+resource "aws_security_group" "app" {
+  name        = "${var.name_prefix}-app"
+  description = "App tasks behind the ALB"
+  vpc_id      = var.vpc_id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "app_from_alb" {
+  security_group_id            = aws_security_group.app.id
+  referenced_security_group_id = aws_security_group.alb.id
+  ip_protocol                  = "tcp"
+  from_port                    = var.port
+  to_port                      = var.port
+}
+
+resource "aws_vpc_security_group_egress_rule" "app_all" {
+  security_group_id = aws_security_group.app.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_lb" "this" {
+  name               = "${var.name_prefix}-alb"
+  load_balancer_type = "application"
+  internal           = false
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = var.subnet_ids
+}
+
+resource "aws_lb_target_group" "app" {
+  name                 = "${var.name_prefix}-app"
+  target_type          = "ip"
+  protocol             = "HTTP"
+  port                 = var.port
+  vpc_id               = var.vpc_id
+  deregistration_delay = 10
+
+  health_check {
+    path    = var.health_path
+    matcher = "200"
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.this.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+
+  lifecycle {
+    ignore_changes = [default_action]
+  }
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = "${var.name_prefix}-app"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = var.task_execution_role_arn
+
+  container_definitions = jsonencode([{
+    name         = "app"
+    image        = var.image
+    essential    = true
+    portMappings = [{ containerPort = var.port, protocol = "tcp" }]
+    environment = [
+      for key, value in merge(
+        var.env,
+        { PORT = tostring(var.port) },
+        var.db_ssl_ca == null ? {} : { DB_SSL_CA = var.db_ssl_ca },
+      ) :
+      { name = key, value = value }
+    ]
+    secrets = [
+      for key, arn in var.secret_env : { name = key, valueFrom = arn }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = var.log_group_name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "app"
+      }
+    }
+  }])
+}
+
+resource "aws_ecs_service" "app" {
+  name            = "${var.name_prefix}-app"
+  cluster         = var.cluster_arn
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [aws_security_group.app.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = "app"
+    container_port   = var.port
+  }
+
+  depends_on = [aws_lb_listener.http]
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
