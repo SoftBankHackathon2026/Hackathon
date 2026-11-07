@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./live-app-select.css";
 import type { ConnectionSnapshot } from "./connectionTypes";
 
@@ -7,12 +7,15 @@ export function LiveAppSelect({
   snapshot,
   busy,
   onRefresh,
+  onSelect,
 }: {
   snapshot: ConnectionSnapshot;
   busy: boolean;
   onRefresh: () => void;
+  onSelect?: (apps: string[]) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
+  useEffect(() => onSelect?.(selected), [selected, onSelect]);
   const inventory = snapshot.workloads;
   const pending = busy || snapshot.collectionPending;
   const ready = inventory?.coverage === "complete";
@@ -115,8 +118,8 @@ export function LiveAppSelect({
         <footer className="live-apps-footer">
           <strong role="status">선택한 앱 {selected.length}개</strong>
           <span>
-            총 {inventory.items.length}개 · 선택해도 이전이 바로 실행되지는
-            않아요.
+            총 {inventory.items.length}개 · 작업을 만들어도 이전은 작업 화면에서
+            시작해요.
           </span>
         </footer>
       )}

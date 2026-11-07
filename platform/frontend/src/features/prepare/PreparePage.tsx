@@ -25,6 +25,7 @@ import {
 } from "./ConnectionRegistration";
 import { CopyFailure, copyEnrollmentCommand } from "./copyEnrollmentCommand";
 import { connectionStatus, formatTime, STEPS, stepFor } from "./model";
+import { CreateTaskBar } from "./CreateTaskBar";
 import { LiveAppSelect } from "./LiveAppSelect";
 import { AppSelectStep } from "./AppSelectStep";
 import "./prepare.css";
@@ -73,6 +74,7 @@ export function PreparePage({
     [confirmRevoke, setConfirmRevoke] = useState(false);
   // 준비 단계: 1 환경 연결 → 2 앱 선택. 환경을 등록한 뒤에만 2 로 갈 수 있다
   const [phase, setPhase] = useState<"connect" | "apps">("connect");
+  const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const lock = useRef(false),
     alive = useRef(true),
     heading = useRef<HTMLDivElement>(null);
@@ -228,6 +230,7 @@ export function PreparePage({
               key={snapshot.id + ":" + snapshot.inventoryDigest}
               snapshot={snapshot}
               busy={busy}
+              onSelect={setSelectedApps}
               onRefresh={() =>
                 run(
                   () =>
@@ -250,9 +253,20 @@ export function PreparePage({
             <button className="secondary" onClick={() => setPhase("connect")}>
               이전: 환경 연결
             </button>
-            <button className="primary" disabled>
-              다음: 사전 점검 (준비 중)
-            </button>
+            {gateway.mode === "preview" || !snapshot.environmentId ? (
+              <button className="primary" disabled>
+                작업 만들기 (실제 연결에서만)
+              </button>
+            ) : (
+              <CreateTaskBar
+                environmentId={snapshot.environmentId}
+                role={snapshot.target.role}
+                apps={selectedApps}
+                onCreated={(jobId) =>
+                  onNavigate("#migrations/" + encodeURIComponent(jobId))
+                }
+              />
+            )}
           </div>
         </>
       )}
