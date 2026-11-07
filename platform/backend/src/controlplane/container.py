@@ -59,6 +59,7 @@ from controlplane.services.ingest import IngestService
 from controlplane.services.migration_tasks import MigrationTaskService
 from controlplane.services.migrations import MigrationService
 from controlplane.services.monitoring import MonitoringService
+from controlplane.services.pod_logs import PodLogService, read_cluster_log, simulated_log
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
 from controlplane.services.traffic import TrafficRoutes, routes_from_environment
@@ -95,6 +96,7 @@ class Container:
     connections: ConnectionService | None = None
     agent: AgentService | None = None
     traffic: TrafficRoutes | None = None
+    pod_logs: PodLogService | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -192,6 +194,7 @@ def build_container(
     fleet_config = load_fleet_config()
     source = _fleet_source(fleet_config, store)
     migrations = MigrationService(source)
+    fleet = FleetService(source, migrations)
     inventory = CostStore(store).get if store else (lambda env_id: None)
     data_mappings = DataMappingService(fleet_config, inventory, _mapping_store(store))
     tasks = MigrationTaskService(fleet_config, _task_store(store))
@@ -210,7 +213,7 @@ def build_container(
         runs=DemoRunService(run_settings, build_settings, deployments),
         auth=AuthService(deployments.accounts, LoginThrottle()) if deployments.accounts else None,
         migrations=migrations,
-        fleet=FleetService(source, migrations),
+        fleet=fleet,
         security=SecurityService(source),
         ingest=IngestService(fleet_config, FleetJournal(store)) if store else None,
         ingest_token=ingest_token_from_environment(),
@@ -230,4 +233,7 @@ def build_container(
         else None,
         agent=AgentService(AgentJournal(store)) if store else None,
         traffic=routes_from_environment(),
+        pod_logs=PodLogService(
+            fleet, read_cluster_log if fleet_config.mode == "live" else simulated_log
+        ),
     )

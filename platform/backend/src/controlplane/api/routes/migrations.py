@@ -11,6 +11,7 @@ from controlplane.api.deps import (
     IngestCommandsDep,
     IngestDep,
     MigrationsDep,
+    PodLogsDep,
     SecurityDep,
     TasksDep,
     ViewerIdentity,
@@ -29,6 +30,7 @@ from controlplane.schemas.migrations import (
     MigrationEvent,
     MigrationIngest,
     MigrationSeries,
+    PodLogs,
     TaskPlan,
 )
 from controlplane.schemas.security import SecurityPosture
@@ -42,6 +44,24 @@ router = APIRouter(prefix="/api/v1", tags=["migrations"])
 @router.get("/fleet")
 def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
     return service.get_fleet()
+
+
+@router.get("/fleet/environments/{env_id}/components/{component_id}/pods/{pod}/logs")
+def pod_logs(
+    env_id: str,
+    component_id: str,
+    pod: str,
+    service: PodLogsDep,
+    identity: ViewerIdentity,
+    response: Response,
+    container: Annotated[str | None, Query(max_length=63)] = None,
+    tail: Annotated[int, Query()] = 200,
+    previous: bool = False,
+) -> PodLogs:
+    response.headers["Cache-Control"] = "no-store"
+    return service.logs(
+        env_id, component_id, pod, container=container, tail=tail, previous=previous
+    )
 
 
 @router.get("/migrations/{job_id}")

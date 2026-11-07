@@ -27,6 +27,7 @@ SYSTEM_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease", "local-pat
 SYSTEM_PREFIXES = ("gke-", "gmp-", "kube-")
 STORE_ROLE_SUFFIXES = ("-broker", "-controller", "-primary", "-replica", "-server")
 ENDPOINT_ORDER = ("ingress", "load_balancer", "node_port", "cluster_ip")
+LOG_LAYERS = frozenset({"app", "data", "migration"})
 
 
 @dataclass(frozen=True)
@@ -240,6 +241,8 @@ def discovered_components(
                 detail=detail,
                 depends_on=links.depends_on(group),
                 placement=[*cluster_path, f"ns {group.namespace}"],
+                namespace=group.namespace,
+                logs=group.product.layer in LOG_LAYERS,
                 pods=_group_pods(group.items),
                 endpoints=_group_endpoints(group.items),
             )
