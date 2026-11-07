@@ -1,68 +1,64 @@
-"""알림. Slack 은 chat.postMessage 만 쓰므로 slack_bolt 없이 urllib 로 보낸다. 봇 토큰은 환경변수."""
+"""보고. 항상 로그/stdout 에 남기고, SLACK_BOT_TOKEN 이 있으면 chat.postMessage 도 보낸다. 보고 실패가 복구 흐름을 멈추지 않는다."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import urllib.error
 import urllib.request
-from typing import Any, Protocol
-
-from .config import env_secret
+from typing import Mapping, Protocol
 
 log = logging.getLogger("agent.notify")
+SLACK_URL = "https://slack.com/api/chat.postMessage"
 
 
 class Notifier(Protocol):
-    def post(self, text: str, *, blocks: list[dict[str, Any]] | None = None, thread_ts: str | None = None) -> str | None:
-        """메시지를 보내고 thread 용 ts 를 돌려준다 (없으면 None)."""
+    def send(self, text: str) -> None: ...
 
 
-class LogNotifier:
-    """Slack 이 없을 때. 보낸 메시지를 기억해 테스트에서 확인한다."""
-
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    def post(self, text: str, *, blocks: list[dict[str, Any]] | None = None, thread_ts: str | None = None) -> str | None:
-        self.messages.append(text)
-        log.info("[notify] %s", text)
-        return None
+class StdoutNotifier:
+    def send(self, text: str) -> None:
+        print(text, file=sys.stdout, flush=True)
 
 
 class SlackNotifier:
-    """chat.postMessage. 실패해도 예외를 밖으로 던지지 않는다 — 알림 실패가 수정 흐름을 막으면 안 된다."""
+    def __init__(self, token: str, channel: str, *, timeout: float = 5.0) -> None:
+        self._token, self.channel, self._timeout = token, channel, timeout
 
-    def __init__(self, channel: str, *, token: str | None = None, token_env: str = "SLACK_BOT_TOKEN",
-                 timeout: float = 5.0, api_url: str = "https://slack.com/api/chat.postMessage") -> None:
-        self.channel = channel
-        self._token = token if token is not None else env_secret(token_env)
-        self.timeout = timeout
-        self.api_url = api_url
-        if not self._token:
-            raise ValueError(f"{token_env} 환경변수가 없다")
+    def __repr__(self) -> str:
+        return f"SlackNotifier(channel={self.channel!r})"
 
-    def post(self, text: str, *, blocks: list[dict[str, Any]] | None = None, thread_ts: str | None = None) -> str | None:
-        body: dict[str, Any] = {"channel": self.channel, "text": text}
-        if blocks:
-            body["blocks"] = blocks
-        if thread_ts:
-            body["thread_ts"] = thread_ts
-        req = urllib.request.Request(
-            self.api_url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), method="POST",
-            headers={"Content-Type": "application/json; charset=utf-8", "Authorization": f"Bearer {self._token}"},
-        )
+    def send(self, text: str) -> None:
+        body = json.dumps({"channel": self.channel, "text": text}).encode("utf-8")
+        req = urllib.request.Request(SLACK_URL, data=body, method="POST", headers={
+            "Authorization": f"Bearer {self._token}", "Content-Type": "application/json; charset=utf-8",
+        })
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # noqa: S310 - 고정 주소
                 doc = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            log.error("Slack 전송 실패: %s", exc)
-            return None
+            log.warning("Slack 전송 실패: %s", type(exc).__name__)
+            return
         if not doc.get("ok"):
-            log.error("Slack 오류: %s", doc.get("error"))
-            return None
-        return doc.get("ts")
+            log.warning("Slack 전송 거절: %s", doc.get("error"))
 
 
-def section(text: str) -> dict[str, Any]:
-    return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+class CompositeNotifier:
+    def __init__(self, *notifiers: Notifier) -> None:
+        self.notifiers = notifiers
+
+    def send(self, text: str) -> None:
+        for notifier in self.notifiers:
+            notifier.send(text)
+
+
+def build_notifier(channel: str | None, env: Mapping[str, str] | None = None) -> Notifier:
+    environ = os.environ if env is None else env
+    token = environ.get("SLACK_BOT_TOKEN")
+    if token and channel:
+        return CompositeNotifier(StdoutNotifier(), SlackNotifier(token, channel))
+    if token:
+        log.warning("SLACK_BOT_TOKEN 은 있지만 slack.channel 이 없어 stdout 으로만 보고한다")
+    return StdoutNotifier()

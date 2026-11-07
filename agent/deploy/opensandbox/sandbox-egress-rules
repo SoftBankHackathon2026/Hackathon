@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+subnet=172.31.250.0/24
+iptables -N DOCKER-USER 2>/dev/null || true
+del() { while iptables -C DOCKER-USER "$@" 2>/dev/null; do iptables -D DOCKER-USER "$@"; done; }
+del -s "$subnet" -j DROP
+del -s "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+iptables -I DOCKER-USER 1 -s "$subnet" -j DROP
+iptables -I DOCKER-USER 1 -s "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN

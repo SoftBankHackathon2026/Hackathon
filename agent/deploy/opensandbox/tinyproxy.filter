@@ -1,0 +1,4 @@
+^api\.openai\.com$
+^([a-z0-9-]+\.)*openai\.com$
+^chatgpt\.com$
+^([a-z0-9-]+\.)*chatgpt\.com$
