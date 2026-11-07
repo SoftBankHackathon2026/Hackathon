@@ -151,7 +151,7 @@ def test_watch_heartbeats_handles_approvals_and_syncs(tmp_path: Path) -> None:
 
         def run(self):
             run = runs.create("job")
-            runs.update(run, R.NOTHING_TO_FIX, "정상")
+            runs.update(run, R.HANDED_OFF, "사람 확인 필요")
             return run
 
     cli.watch(Rem(), runs, interval=60, iterations=1, sleep=lambda _: None, platform=client(opener))
