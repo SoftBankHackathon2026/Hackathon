@@ -118,10 +118,14 @@ _OWNED_BY = re.compile(r"\bOWNED BY (\S+)", re.I)
 _TABLE_ELEMENT_KEYWORDS = frozenset(
     {"CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "EXCLUDE", "LIKE"}
 )
+_ADD_COLUMN = re.compile(r"^ADD (?:COLUMN )?(?:IF NOT EXISTS )?(.+)$", re.I)
+_ALTER_COLUMN_TYPE = re.compile(
+    r"^ALTER (?:COLUMN )?\S+ (?:SET DATA )?TYPE (.+)$", re.I
+)
 # 열 정의에서 타입이 끝나는 자리(열 제약의 첫 단어).
 _COLUMN_CONSTRAINT = re.compile(
     r"\b(?:NOT|NULL|DEFAULT|PRIMARY|REFERENCES|UNIQUE|CHECK|COLLATE"
-    r"|GENERATED|CONSTRAINT)\b",
+    r"|GENERATED|CONSTRAINT|USING)\b",
     re.I,
 )
 
@@ -184,6 +188,8 @@ def _read_statement(statement: str, scan: _Scan) -> None:
         if _PRIMARY_KEY.search(body):
             scan.tables[table] = True
         _check_table_body(table, body, scan)
+        if not _ARRAY.search(body) and _has_unsupported_altered_column(body):
+            scan.add("unsupported_column_type", table)
     elif match := _CREATE_TRIGGER.match(statement):
         scan.add("user_trigger", _normalize(match.group(1)))
     elif match := _CREATE_POLICY.match(statement):
@@ -235,31 +241,63 @@ def _has_unsupported_column(body: str) -> bool:
     )
 
 
+def _has_unsupported_altered_column(body: str) -> bool:
+    return any(
+        column_type not in _SUPPORTED_COLUMN_TYPES
+        for column_type in _altered_column_types(body)
+    )
+
+
 def _column_types(body: str) -> list[str]:
-    types = []
-    for element in _top_level_elements(body):
-        first_word = element.split(" ", 1)[0].upper()
-        if first_word in _TABLE_ELEMENT_KEYWORDS:
-            continue
-        name = re.match(r'"[^"]+"|\S+', element)
-        if name is None:
-            continue
-        definition = element[name.end() :]
-        definition = _COLUMN_CONSTRAINT.split(definition, maxsplit=1)[0]
-        definition = re.sub(r"\([^)]*\)", " ", definition)
-        definition = definition.lower().replace("pg_catalog.", "")
-        types.append(" ".join(definition.replace('"', "").split()))
-    return types
-
-
-def _top_level_elements(body: str) -> list[str]:
-    # CREATE TABLE 뒤 첫 괄호 안을 깊이 1 의 쉼표로 나눈다. 괄호가 없으면
+    # CREATE TABLE 뒤 첫 괄호 안이 열·테이블 제약 목록이다. 괄호가 없으면
     # (PARTITION OF 등) 열이 없다.
     start = body.find("(")
     if start < 0:
         return []
+    elements = _split_top_level(body[start + 1 :])
+    return [
+        column_type
+        for element in elements
+        if (column_type := _column_type(element)) is not None
+    ]
+
+
+def _altered_column_types(body: str) -> list[str]:
+    # ALTER TABLE 의 동작 목록에서 ADD COLUMN 과 ALTER COLUMN ... TYPE 만 본다.
+    types = []
+    for action in _split_top_level(body):
+        if match := _ADD_COLUMN.match(action):
+            column_type = _column_type(match.group(1))
+            if column_type is not None:
+                types.append(column_type)
+        elif match := _ALTER_COLUMN_TYPE.match(action):
+            types.append(_normalize_type(match.group(1)))
+    return types
+
+
+def _column_type(element: str) -> str | None:
+    first_word = element.split(" ", 1)[0].upper()
+    if first_word in _TABLE_ELEMENT_KEYWORDS:
+        return None
+    name = re.match(r'"[^"]+"|\S+', element)
+    if name is None:
+        return None
+    return _normalize_type(element[name.end() :])
+
+
+def _normalize_type(definition: str) -> str:
+    definition = _COLUMN_CONSTRAINT.split(definition, maxsplit=1)[0]
+    definition = re.sub(r"\([^)]*\)", " ", definition)
+    # 따옴표는 지우지 않는다. "char"(1바이트 내부 타입)는 char 와 다른 타입이다.
+    definition = definition.lower().replace("pg_catalog.", "")
+    return " ".join(definition.split())
+
+
+def _split_top_level(text: str) -> list[str]:
+    # 괄호 깊이 0 의 쉼표로 나눈다. 여는 괄호 없이 닫는 괄호를 만나면
+    # 거기서 끝난다(CREATE TABLE 본문의 끝).
     elements, depth, current = [], 0, []
-    for char in body[start + 1 :]:
+    for char in text:
         if char == "(":
             depth += 1
         elif char == ")":

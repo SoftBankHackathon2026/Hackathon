@@ -63,6 +63,11 @@ crosscloud discover --direction gcp_to_aws --project PROJECT \
 *   `3`: 결과는 다 냈지만 `report.decisions` 가 남았다. 사람이 먼저 고른다.
     `--repo` 를 주지 않은 워크로드, 결합이 있는 워크로드, 수집하지 못한 것
     (Omission)도 여기에 들어간다.
+
+    워크로드 신원의 권한(작업 역할·서비스 계정으로 닿는 대응표 밖 의존)은
+    수집하지 않고 Omission 으로 남긴다. 그래서 작업 역할이 있는 ECS
+    워크로드는 종료 `3` 이다. `gcp_to_aws` 는 Cloud Run 이 늘 서비스 계정을
+    가지므로 워크로드가 하나라도 있으면 종료 `0` 이 될 수 없다.
 *   `1`: 실행 실패(자격 증명·API·파일 쓰기 오류). 한 줄로 알린다.
 *   `2`: 인자 오류.
 

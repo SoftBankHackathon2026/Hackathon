@@ -149,6 +149,26 @@ def test_detects_support_limit(schema_sql, expected):
             ("unsupported_column_type", "public.t"),
         ),
         (
+            'CREATE TABLE t (id int PRIMARY KEY, flag "char");',
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY);"
+            "ALTER TABLE t ADD COLUMN ip inet;",
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY);"
+            "ALTER TABLE ONLY public.t ADD COLUMN a int,"
+            " ADD COLUMN IF NOT EXISTS b money;",
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY, a int);"
+            "ALTER TABLE t ALTER COLUMN a TYPE interval;",
+            ("unsupported_column_type", "public.t"),
+        ),
+        (
             "CREATE TABLE t (id int PRIMARY KEY, at time with time zone);",
             ("unsupported_column_type", "public.t"),
         ),
@@ -172,6 +192,17 @@ def test_supported_column_type_spellings_pass():
         UNIQUE (u)
     );
     """
+
+    assert support_limits.find_support_limits(schema_sql) == ()
+
+
+def test_supported_alter_table_columns_pass():
+    schema_sql = (
+        "CREATE TABLE t (id int, a int);"
+        "ALTER TABLE t ADD COLUMN b text, ADD COLUMN c numeric(10, 2);"
+        "ALTER TABLE t ALTER COLUMN a SET DATA TYPE bigint;"
+        "ALTER TABLE ONLY t ADD CONSTRAINT t_pkey PRIMARY KEY (id);"
+    )
 
     assert support_limits.find_support_limits(schema_sql) == ()
 
