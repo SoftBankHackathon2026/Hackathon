@@ -1,0 +1,60 @@
+# Kafka Connect(Debezium) — 운영자 PC 예시. compose 프로젝트
+# ccx-<세션>-connect.
+#
+# Kafka 데이터(CDC 토픽, Connect 의 config·offset·status 토픽)는 이름 붙은
+# 볼륨 kafka-data 에 둔다. 그래서 down(볼륨 유지) 뒤 다시 up 해도 원가연
+# job 이 이어진다. 볼륨을 지우는 down -v 는 마지막 job 이 끝난 뒤에만 한다.
+#
+# 이미지는 원가연 migration/connect 를 그대로 빌드한다. 비밀번호는
+# EnvVarConfigProvider 로 env 에서만 읽는다(migration.cloud 커넥터 설정의
+# ${env:<이름>}). 아래는 AWS→GCP 방향이다. 반대 방향은 GCP_CDC_PASSWORD·
+# AWS_SINK_PASSWORD 로 바꾼다 — 이름 목록은 render-handoff 가 돌려준다.
+name: ccx-${SESSION:?세션 이름}-connect
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      # KRaft 는 16바이트 UUID 의 base64url(22자)만 받는다. 고정값이라
+      # 볼륨을 남긴 채 다시 up 해도 같은 클러스터로 이어진다.
+      CLUSTER_ID: MK0TP78MSLqyDpy80cOaPw
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes: [kafka-data:/var/lib/kafka/data]
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
+  connect:
+    build: ../../../migration/connect
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: ccx-connect
+      CONFIG_STORAGE_TOPIC: ccx_configs
+      OFFSET_STORAGE_TOPIC: ccx_offsets
+      STATUS_STORAGE_TOPIC: ccx_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      AWS_CDC_PASSWORD: ${AWS_CDC_PASSWORD:?원본 cdc 비밀번호}
+      GCP_SINK_PASSWORD: ${GCP_SINK_PASSWORD:?대상 sink 비밀번호}
+    ports: ["127.0.0.1:8083:8083"]
+    depends_on: [kafka]
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
+volumes:
+  kafka-data:
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
+networks:
+  default:
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
