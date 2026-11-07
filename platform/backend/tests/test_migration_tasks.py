@@ -222,3 +222,22 @@ def test_delete_endpoint_removes_a_task_and_its_plan_says_so(monkeypatch):
     assert client.delete("/api/v1/migrations/forward_001").status_code == 422
     assert client.delete(f"/api/v1/migrations/{job_id}").status_code == 204
     assert client.get(f"/api/v1/migrations/{job_id}").status_code == 404
+
+
+def test_fleet_marks_only_unstarted_created_tasks_as_removable(monkeypatch):
+    monkeypatch.delenv("ONEPORT_ACCESS_PIN", raising=False)
+    monkeypatch.setattr(MigrationService, "has_started", lambda self, job_id: False)
+    client = TestClient(create_app(auth_mode="demo"), headers=ORIGIN)
+    job_id = client.post(
+        "/api/v1/migrations", json={"source_env": "onprem", "target_env": "aws"}
+    ).json()["job_id"]
+
+    def removable():
+        jobs = client.get("/api/v1/fleet").json()["migrations"]
+        return {m["job_id"]: m["removable"] for m in jobs}
+
+    before = removable()
+    assert before[job_id] is True
+    assert before["forward_001"] is False
+    client.post(f"/api/v1/migrations/{job_id}/commands", json={"action": "run"})
+    assert removable()[job_id] is False

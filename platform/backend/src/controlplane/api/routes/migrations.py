@@ -42,8 +42,18 @@ router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
 
 @router.get("/fleet")
-def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
-    return service.get_fleet()
+def fleet(
+    service: FleetDep,
+    migrations: MigrationsDep,
+    tasks: TasksDep,
+    commands: CutoverCommandsDep,
+    identity: ViewerIdentity,
+) -> Fleet:
+    view = service.get_fleet()
+    started = _started(migrations, commands)
+    for summary in view.migrations:
+        summary.removable = tasks.removable(summary.job_id, started)
+    return view
 
 
 @router.get("/fleet/environments/{env_id}/components/{component_id}/pods/{pod}/logs")

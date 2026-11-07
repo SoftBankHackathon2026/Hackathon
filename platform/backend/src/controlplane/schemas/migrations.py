@@ -157,6 +157,7 @@ class MigrationSummary(BaseModel):
     writes: WriteCounts
     downtime: DowntimeEvidence
     verify_mismatch: int | None = None
+    removable: bool = False
 
 
 class Fleet(BaseModel):

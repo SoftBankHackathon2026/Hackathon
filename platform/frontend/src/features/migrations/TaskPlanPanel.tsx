@@ -1,9 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { errorMessage } from "../../api/client";
-import { deleteMigration } from "../../api/taskPlan";
 import { StatusDot } from "../../components/StatusDot";
 import { taskPlanQueryOptions } from "./queries";
 import { STEP_STATUS_LABELS, STEP_STATUS_TONES, stepNote } from "./taskPlan";
+import { confirmDeleteTask, useDeleteTask } from "./useDeleteTask";
 
 export function TaskPlanRoute({ jobId }: { jobId: string }) {
   const plan = useQuery(taskPlanQueryOptions(jobId));
@@ -72,13 +72,8 @@ export function TaskPlanPanel({ jobId }: { jobId: string }) {
 }
 
 function DeleteTask({ jobId }: { jobId: string }) {
-  const queryClient = useQueryClient();
-  const remove = useMutation({
-    mutationFn: () => deleteMigration(jobId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["fleet"] });
-      window.location.hash = "#migrations";
-    },
+  const remove = useDeleteTask(jobId, () => {
+    window.location.hash = "#migrations";
   });
   return (
     <div className="plan-delete">
@@ -90,8 +85,7 @@ function DeleteTask({ jobId }: { jobId: string }) {
         className="secondary"
         disabled={remove.isPending}
         onClick={() => {
-          if (window.confirm(`${jobId} 작업을 지울까요? 되돌릴 수 없어요.`))
-            remove.mutate();
+          if (confirmDeleteTask(jobId)) remove.mutate();
         }}
       >
         {remove.isPending ? "지우는 중…" : "작업 삭제"}
