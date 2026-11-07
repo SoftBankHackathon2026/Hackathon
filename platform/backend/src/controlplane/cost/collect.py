@@ -187,6 +187,8 @@ def exporter_nodes(core: Any, now: datetime | None = None) -> list[dict[str, Any
         try:
             reading = json.loads((item.data or {})[EXPORTER_DATA_KEY])
             updated_at = datetime.fromisoformat(reading["updated_at"])
+            if updated_at.tzinfo is None:
+                continue
             name = str(reading["node"])
             capacity = {"cpu": str(reading["vcpus"]), "memory": str(reading["memory_bytes"])}
         except (KeyError, TypeError, ValueError):

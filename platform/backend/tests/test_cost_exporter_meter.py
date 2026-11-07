@@ -192,6 +192,16 @@ def test_exporter_fallback_drops_stale_readings_and_keeps_newest_per_node():
             exporter_reading("master", 8, 16, age=10),
             exporter_reading("master", 1, 1, age=10),
             {"reading.json": json.dumps({"node": "x", "vcpus": 1, "memory_bytes": 1})},
+            {
+                "reading.json": json.dumps(
+                    {
+                        "node": "naive",
+                        "vcpus": 1,
+                        "memory_bytes": 1,
+                        "updated_at": NOW.replace(tzinfo=None).isoformat(),
+                    }
+                )
+            },
         ],
     )
     nodes = list_nodes(core, lambda n: n, NOW)
