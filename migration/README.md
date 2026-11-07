@@ -267,6 +267,8 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 
 ## Harbor 온프레미스 목적지 준비
 
+[AWS ECR 이미지 이관 도구](docs/image-migration/README.md)는 준비된 Harbor 프로젝트에 이미지를 복사하고 검증된 주소를 인계합니다.
+
 별도 Ansible 모듈 `python -m migration.harbor_infra`로 기존 Harbor 조사·신규 설치·접근권한·노드 인증서 신뢰 설정을 준비합니다. 실제 업무 이미지 복사는 수행하지 않습니다. [설치와 플랫폼 호출 안내](docs/harbor-infra/README.md)를 참조하십시오.
 
 # OpenBao 온프레미스 준비
