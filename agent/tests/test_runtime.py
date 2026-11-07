@@ -132,3 +132,22 @@ def test_watch_sends_config_and_rerun_cuts_wait_short(tmp_path: Path) -> None:
     assert client.beats[0]["config"]["slack"]["mode"] == "webhook"
     assert client.beats[0]["interval_seconds"] == 60
     runs.close()
+
+
+def test_settings_change_mid_wait_beats_now_and_uses_new_interval(tmp_path: Path) -> None:
+    runtime, remediator = make(tmp_path)
+    runs = RunStore(tmp_path)
+
+    def run():
+        r = runs.create("job")
+        runs.update(r, R.NOTHING_TO_FIX, "정상")
+        return r
+
+    remediator.run = run
+    client = FakeClient([[], [{"id": 5, "kind": "settings", "payload": {"interval_seconds": 30}}]])
+    sleeps: list[float] = []
+    cli.watch(remediator, runs, interval=60, iterations=2, sleep=sleeps.append, platform=client, runtime=runtime)
+    assert sleeps == [10.0, 10.0, 10.0]
+    assert [b["interval_seconds"] for b in client.beats] == [60, 30, 30]
+    assert client.beats[1]["config"]["settings_applied_at"] is not None
+    runs.close()
