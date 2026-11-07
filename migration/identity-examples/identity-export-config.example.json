@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "migration_id": "<이관 ID>",
+  "source": {
+    "provider": "keycloak",
+    "base_url": "https://<Keycloak 주소>",
+    "realm": "<realm>",
+    "client_id": "<서비스 계정 client ID>",
+    "client_secret_file": "<비밀 파일 경로>"
+  },
+  "target": {
+    "provider": "aws-identity-center",
+    "region": "<리전>",
+    "instance_arn": "<Identity Center 인스턴스 ARN>",
+    "identity_store_id": "<Identity Store ID>",
+    "account_ids": [
+      "<계정 ID>"
+    ]
+  }
+}

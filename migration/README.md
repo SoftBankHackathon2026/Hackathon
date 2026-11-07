@@ -10,6 +10,8 @@
 
 실제 클라우드·온프레미스 환경의 이관 완료를 뜻하지 않습니다. Kubernetes 로그인 설정과 업무 앱의 설정 인계, 사용자 자격증명 등록, 실제 주체의 접근 검증은 별도로 확인해야 합니다.
 
+반대 방향인 `python -m migration.identity_export`는 Keycloak의 사용자·그룹·역할을 운영자 대응표에 따라 AWS IAM Identity Center의 사용자·그룹·계정별 권한 세트 할당으로 옮깁니다. 비밀번호·MFA는 옮기지 않으며 사용자는 Identity Center 등록 절차를 마쳐야 합니다. [동작·필요 권한·제한](docs/identity-export/README.md)을 참고하십시오.
+
 `업무-아젠다/01-DB-이전-계획.md` 의 "구성과 INSERT 워커", "온프렘에서 AWS로", "전환과 복구", "데이터 검증" 절을 그대로 코드로 옮긴 것이다.
 INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을 한 디렉터리에 모았다.
 

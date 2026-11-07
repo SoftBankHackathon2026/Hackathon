@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "identity_export_mapping",
+  "inventory_hash": "<collect 결과의 inventory_hash>",
+  "options": {
+    "include_disabled_users": false,
+    "user_scope": "mapped_members"
+  },
+  "bindings": [
+    {
+      "source": {
+        "kind": "group",
+        "path": "/<상위 그룹>/<하위 그룹>"
+      },
+      "target_group": "keycloak/<상위 그룹>/<하위 그룹>",
+      "review_ref": "<검토 기록>",
+      "assignments": [
+        {
+          "account_id": "<계정 ID>",
+          "permission_set": "<권한 세트 이름 또는 ARN>"
+        }
+      ]
+    },
+    {
+      "source": {
+        "kind": "realm_role",
+        "role": "<realm 역할>"
+      },
+      "target_group": "keycloak-realm-role/<realm 역할>",
+      "review_ref": "<검토 기록>",
+      "assignments": [
+        {
+          "account_id": "<계정 ID>",
+          "permission_set": "<권한 세트 이름 또는 ARN>"
+        }
+      ]
+    },
+    {
+      "source": {
+        "kind": "client_role",
+        "client": "<client ID>",
+        "role": "<client 역할>"
+      },
+      "target_group": "keycloak-client-role/<client ID>/<client 역할>",
+      "review_ref": "",
+      "assignments": []
+    }
+  ]
+}
