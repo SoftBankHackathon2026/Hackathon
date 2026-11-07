@@ -122,18 +122,26 @@ STEPS: tuple[StepDef, ...] = (
 )
 
 AWS_TO_ONPREM: Route = ("aws", ONPREM)
+ONPREM_TO_AWS: Route = (ONPREM, "aws")
 CLOUD_PAIRS: tuple[Route, ...] = (("aws", "gcp"), ("gcp", "aws"))
 ONPREM_CLOUD: tuple[Route, ...] = tuple(
     pair for cloud in CLOUDS for pair in ((ONPREM, cloud), (cloud, ONPREM))
 )
 
 TOOLS: dict[StepId, dict[Route, str]] = {
-    StepId.IMAGES: {AWS_TO_ONPREM: "migration.image_migration"},
+    StepId.IMAGES: {
+        AWS_TO_ONPREM: "migration.image_migration",
+        ONPREM_TO_AWS: "migration.image_export",
+    },
     StepId.SECRETS: {
         AWS_TO_ONPREM: "migration.secrets",
+        ONPREM_TO_AWS: "migration.secrets_export",
         **{pair: "crosscloud" for pair in CLOUD_PAIRS},
     },
-    StepId.IDENTITY: {AWS_TO_ONPREM: "migration.identity"},
+    StepId.IDENTITY: {
+        AWS_TO_ONPREM: "migration.identity",
+        ONPREM_TO_AWS: "migration.identity_export",
+    },
     StepId.DATA_SYNC: {
         **{pair: "migration.cutover" for pair in ONPREM_CLOUD},
         **{pair: "migration.cloud" for pair in CLOUD_PAIRS},
@@ -172,6 +180,8 @@ def tool_for(step: StepId, source: str, target: str) -> str | None:
     if step == StepId.DATA_MAPPING:
         return "플랫폼 데이터 매핑"
     if step == StepId.INFRA_CHECK:
+        if target == "aws":
+            return "migration.aws_target_check"
         if target != ONPREM:
             return None
         return "migration.harbor_infra · openbao_infra · keycloak_infra · wazuh_infra"

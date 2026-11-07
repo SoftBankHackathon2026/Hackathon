@@ -45,14 +45,22 @@ def test_aws_to_onprem_uses_the_onprem_import_tools():
     assert found[StepId.DATA_SYNC] == "migration.cutover"
 
 
-@pytest.mark.parametrize(
-    "source, target", [("onprem", "aws"), ("onprem", "gcp"), ("gcp", "onprem")]
-)
+@pytest.mark.parametrize("source, target", [("onprem", "gcp"), ("gcp", "onprem")])
 def test_directions_without_a_tool_are_marked_unsupported(source, target):
     found = statuses(source, target)
     assert found[StepId.IMAGES] == StepStatus.UNSUPPORTED
     assert found[StepId.IDENTITY] == StepStatus.UNSUPPORTED
     assert found[StepId.DATA_SYNC] == StepStatus.PENDING
+
+
+def test_onprem_to_aws_uses_the_export_tools():
+    found = tools("onprem", "aws")
+    assert found[StepId.INFRA_CHECK] == "migration.aws_target_check"
+    assert found[StepId.IMAGES] == "migration.image_export"
+    assert found[StepId.SECRETS] == "migration.secrets_export"
+    assert found[StepId.IDENTITY] == "migration.identity_export"
+    assert found[StepId.DATA_SYNC] == "migration.cutover"
+    assert StepStatus.UNSUPPORTED not in statuses("onprem", "aws").values()
 
 
 def test_cloud_to_cloud_moves_data_and_secrets_with_the_cloud_tools():
