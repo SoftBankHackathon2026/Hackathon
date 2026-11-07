@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import time
+from datetime import UTC, datetime
 from typing import Callable
 
 from migration.policy_client import DecisionStore, OpaHttpEvaluator
@@ -69,16 +70,26 @@ def build_remediator(cfg: AgentConfig, runs: RunStore, decisions: DecisionStore)
                       auto_apply=cfg.auto_apply, stage=cfg.smoke.stage, approve_command=cfg.approve_command)
 
 
+BUSY_STATES = frozenset({R.WAITING_APPROVAL, R.APPLYING})
+APPLYING_STALE_SECONDS = 900
+
+
+def _stale(run: Run, at: datetime) -> bool:
+    if run.state != R.APPLYING:
+        return False
+    return (at - datetime.fromisoformat(run.updated_at.replace("Z", "+00:00"))).total_seconds() > APPLYING_STALE_SECONDS
+
+
 def watch(
     remediator: Remediator, runs: RunStore, *, interval: float, iterations: int | None = None,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] = time.sleep, now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> None:
     log = logging.getLogger("agent.watch")
     done = 0
     while iterations is None or done < iterations:
         latest = next(iter(runs.recent()), None)
-        if latest is not None and latest.state == R.WAITING_APPROVAL:
-            log.info("승인 대기 중인 실행 %s 이 있어 새로 판정하지 않는다", latest.run_id)
+        if latest is not None and latest.state in BUSY_STATES and not _stale(latest, now()):
+            log.info("진행 중인 실행 %s (%s) 이 있어 새로 판정하지 않는다", latest.run_id, latest.state)
         else:
             run = remediator.run()
             log.info("실행 %s 끝: %s", run.run_id, run.state)

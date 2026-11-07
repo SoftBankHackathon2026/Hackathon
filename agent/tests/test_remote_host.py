@@ -165,3 +165,18 @@ def test_probe_retries_after_broken_forward(captured: dict, monkeypatch: pytest.
     calls["n"] = 0
     assert not PostgresProber(ProbeSettings(attempts=1), env={}, sleep=sleeps.append).probe(CONFIG).ok
     assert calls["n"] == 1
+
+
+def test_watch_waits_while_approved_run_is_applying(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    runs = RunStore(tmp_path)
+    applying = runs.create("job")
+    runs.update(applying, R.APPLYING, "승인됨")
+    remediator = CountingRemediator(runs)
+    cli.watch(remediator, runs, interval=1, iterations=2, sleep=lambda _: None)
+    assert remediator.calls == 0
+    later = lambda: datetime.now(UTC) + timedelta(seconds=cli.APPLYING_STALE_SECONDS + 60)
+    cli.watch(remediator, runs, interval=1, iterations=1, sleep=lambda _: None, now=later)
+    assert remediator.calls == 1
+    runs.close()

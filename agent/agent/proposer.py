@@ -58,6 +58,8 @@ OUTPUT_SCHEMA: dict[str, Any] = {
     },
 }
 
+REPORT_SKILL = (Path(__file__).parent / "skills" / "report.md").read_text(encoding="utf-8").strip()
+
 # 값이 아니라 이름만 정한다. 비밀값은 여기 없다.
 _ENV_ALLOWLIST: tuple[str, ...] = ("PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "TMPDIR", "CODEX_API_KEY")
 
@@ -127,6 +129,8 @@ def build_prompt(reasons: Sequence[Mapping[str, Any]], target_db: Mapping[str, A
         "[최종 응답]",
         "지정된 JSON 스키마로만 답한다. changes 에는 실제로 바꾼 키와 새 값만 넣는다. 바꿀 것이 없으면 빈 배열로 둔다.",
         "cause 는 원인, impact 는 이 변경의 영향, verification 은 검증 방법을 한국어 한두 문장으로 쓴다.",
+        "",
+        REPORT_SKILL,
     ])
 
 

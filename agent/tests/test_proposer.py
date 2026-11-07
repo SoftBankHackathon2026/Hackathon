@@ -397,3 +397,11 @@ def test_status_keeps_recent_jobs_only(shared: Path) -> None:
         status.record(f"job-{i}", 0)
     finished = json.loads((shared / ".runner-status.json").read_text())["finished"]
     assert len(finished) == RunnerStatus.KEEP_FINISHED and "job-0" not in finished
+
+
+def test_prompt_carries_report_skill() -> None:
+    from agent.proposer import REPORT_SKILL, build_prompt
+
+    prompt = build_prompt(REASONS, TARGET_DB)
+    assert REPORT_SKILL in prompt
+    assert "해요체" in REPORT_SKILL
