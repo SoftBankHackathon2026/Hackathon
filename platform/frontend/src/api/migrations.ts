@@ -255,7 +255,7 @@ export type MigrationSeries = {
 };
 export type MigrationEvent = {
   at: string;
-  kind: "stage" | "gate" | "switch" | "verify" | "warning";
+  kind: "stage" | "gate" | "switch" | "verify" | "warning" | "command";
   title: string;
   detail: string;
 };
@@ -285,5 +285,49 @@ export function getEvents(jobId: string, signal?: AbortSignal) {
   return request<MigrationEvent[]>(
     `migrations/${encodeURIComponent(jobId)}/events`,
     { signal },
+  );
+}
+
+/** 전환 제어 명령. 플랫폼은 저장만 하고 러너 Pod 의 보고기가 가져가 실행한다(pull). */
+export type CommandAction =
+  "run" | "approve" | "abort" | "retry" | "force_retry";
+export type CommandStatus =
+  "pending" | "running" | "succeeded" | "waiting_approval" | "failed";
+export type CutoverCommand = {
+  id: string;
+  job_id: string;
+  action: CommandAction;
+  approval_id: string | null;
+  note: string | null;
+  /** login 모드의 요청자 이메일. demo·operator 모드는 null */
+  requested_by: string | null;
+  requested_at: string;
+  status: CommandStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  /** cutover 종료 코드: 0 성공, 3 승인 대기, 그 외 실패 */
+  exit_code: number | null;
+  /** 결과를 올릴 때 러너가 읽은 cutover 단계 */
+  stage: string | null;
+  /** 비밀값을 가린 stdout+stderr 끝 4000자 */
+  log_tail: string | null;
+};
+export type CommandRequest = {
+  action: CommandAction;
+  approval_id?: string;
+  note?: string;
+};
+
+export function listCommands(jobId: string, signal?: AbortSignal) {
+  return request<CutoverCommand[]>(
+    `migrations/${encodeURIComponent(jobId)}/commands`,
+    { signal },
+  );
+}
+
+export function requestCommand(jobId: string, body: CommandRequest) {
+  return request<CutoverCommand>(
+    `migrations/${encodeURIComponent(jobId)}/commands`,
+    { method: "POST", body },
   );
 }

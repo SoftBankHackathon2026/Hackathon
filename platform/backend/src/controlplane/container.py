@@ -27,11 +27,17 @@ from controlplane.integrations.live import JournalFleet
 from controlplane.integrations.simulator import SimulatedFleet
 from controlplane.providers.loader import load_platform
 from controlplane.providers.registry import ProviderRegistry
+from controlplane.repositories.cutover_commands import (
+    CommandRepository,
+    CutoverCommandJournal,
+    MemoryCutoverCommands,
+)
 from controlplane.repositories.enrollments import EnrollmentStore
 from controlplane.repositories.fleet_journal import FleetJournal
 from controlplane.repositories.releases import ReleaseStore
 from controlplane.services.auth import AuthService, LoginThrottle
 from controlplane.services.builds import BuildService
+from controlplane.services.cutover_commands import CutoverCommandService
 from controlplane.services.deployments import DeploymentService
 from controlplane.services.enrollments import EnrollmentService, aws_principal_from_environment
 from controlplane.services.environments import EnvironmentService
@@ -67,6 +73,7 @@ class Container:
     ingest: IngestService | None
     ingest_token: SecretStr | None
     costs: CostService
+    cutover_commands: CutoverCommandService
     enrollments: EnrollmentService | None = None
     connections: ConnectionService | None = None
 
@@ -115,6 +122,10 @@ def _check_operator_token(
         return
     if not token or len(token.get_secret_value()) < MIN_OPERATOR_TOKEN_LENGTH:
         raise ValueError("Execution requires an explicit operator token")
+
+
+def _command_store(store: ReleaseStore | None) -> CommandRepository:
+    return CutoverCommandJournal(store) if store is not None else MemoryCutoverCommands()
 
 
 def _fleet_source(config: FleetConfig, store: ReleaseStore | None) -> FleetSource:
@@ -178,6 +189,7 @@ def build_container(
             CostStore(store).get if store else (lambda env_id: None),
         ),
         connections=_connections(store, mode),
+        cutover_commands=CutoverCommandService(fleet_config, _command_store(store)),
         enrollments=EnrollmentService(EnrollmentStore(store), aws_principal_from_environment())
         if store
         else None,
