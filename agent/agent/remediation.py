@@ -40,6 +40,15 @@ TITLES: dict[str, str] = {
 QUIET_STATES = frozenset({R.NOTHING_TO_FIX})
 
 
+UNVERIFIED_ALERT_AFTER = 3
+
+
+def unverified(decision: Decision) -> bool:
+    return decision.outcome == "hold" and bool(decision.reason_codes) and all(
+        code.endswith("-UNVERIFIED") for code in decision.reason_codes
+    )
+
+
 def fixable(decision: Decision) -> bool:
     """AI 에게 넘겨도 되는 판정인가. deny 이고 사유가 전부 APP-01-* 일 때만이다. hold·error 는 사람 몫이다."""
     return decision.outcome == "deny" and bool(decision.reason_codes) and all(
@@ -142,7 +151,8 @@ class Remediator:
             self._finish(run, R.NOTHING_TO_FIX, "OPA allow. 고칠 것 없음")
             return
         if not fixable(decision):
-            self._finish(run, R.HANDED_OFF, f"AI 범위 밖 ({decision.outcome}: {_codes(decision)}). 사람에게 넘긴다")
+            self._finish(run, R.HANDED_OFF, f"AI 범위 밖 ({decision.outcome}: {_codes(decision)}). 사람에게 넘긴다",
+                         alert_after=UNVERIFIED_ALERT_AFTER if unverified(decision) else 1)
             return
 
         self._notify(run, f"🔎 *AI 수정 시작*  `{run.run_id}`\n• OPA 판정: *{decision.outcome}*\n• 사유: {_code_list(decision)}")
@@ -251,15 +261,21 @@ class Remediator:
     # 기록·보고
     # ------------------------------------------------------------------
 
-    def _finish(self, run: Run, state: str, message: str, **detail: Any) -> None:
-        previous = next((r for r in self.d.runs.recent(2) if r.run_id != run.run_id), None)
+    def _finish(self, run: Run, state: str, message: str, *, alert_after: int = 1, **detail: Any) -> None:
+        previous = [r for r in self.d.runs.recent(alert_after + 1) if r.run_id != run.run_id][:alert_after]
         self.d.runs.update(run, state, message, **detail)
         if state in QUIET_STATES:
             log.info("[%s] %s", run.run_id, message)
             return
-        if state == R.HANDED_OFF and previous is not None and previous.state == state and self._last_message(previous) == message:
-            log.info("[%s] 같은 사유로 다시 넘김. 알림은 생략한다: %s", run.run_id, message)
-            return
+        if state == R.HANDED_OFF:
+            streak = 0
+            for earlier in previous:
+                if earlier.state != state or self._last_message(earlier) != message:
+                    break
+                streak += 1
+            if streak != alert_after - 1:
+                log.info("[%s] 같은 사유 %d번째. 알림은 생략한다: %s", run.run_id, streak + 1, message)
+                return
         self._notify(run, f"{TITLES.get(state, state)}  `{run.run_id}`\n{message}")
 
     def _approve_hint(self, run_id: str) -> str:

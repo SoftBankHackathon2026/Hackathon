@@ -99,9 +99,13 @@ AI 에게 묻기 전에 지금 설정으로 DB 에 붙어 보고(진단), 실패
 `platform.url` 과 `agent.env` 의 `ONEPORT_INGEST_TOKEN`(플랫폼 보고기와 같은 ingest 토큰)을 넣으면 watch 가 주기마다 플랫폼에 보고한다.
 호스트는 밖에서 들어오는 연결을 받지 않으므로 모두 에이전트가 먼저 부른다.
 
-- 상태: `POST /api/v1/ingest/agent/heartbeat`
+- 상태: `POST /api/v1/ingest/agent/heartbeat`. 현재 설정(`config`)도 함께 보낸다. Slack 연결 방식(webhook/bot/none), 스레드, 고칠 수 있는 키와 계획값, 샌드박스 이미지·모델이 들어가고 토큰·webhook 주소 같은 비밀은 넣지 않는다.
 - 실행 기록: 바뀐 실행만 `PUT /api/v1/ingest/agent/runs/<run_id>`
 - 승인·거절: `GET /api/v1/ingest/agent/approvals` 로 가져와 처리하고 `POST .../approvals/<id>/ack` 로 결과를 알린다. 승인자는 실행 기록에 남는다.
+- 명령: `GET /api/v1/ingest/agent/commands` 로 가져와 처리하고 `POST .../commands/<id>/ack` 에 결과 문장을 남긴다. 기다리는 동안 10초마다 확인한다.
+  - `settings`: `auto_apply`(bool), `interval_seconds`(30~3600), `slack_enabled`(bool), `slack_thread_ts`(빈 값 또는 `1700000000.000100` 꼴)만 바꿀 수 있다. 다른 키나 범위 밖 값은 거절한다. 바꾼 값은 `state_dir/settings.json` 에 남아 재시작해도 유지된다(`agent.yaml` 보다 우선).
+  - `rerun`: 남은 대기 시간을 건너뛰고 바로 다시 판정한다.
 - Slack 승인 대기 메시지에 플랫폼 링크가 붙는다.
+- `APP-01-UNVERIFIED` 보류(스모크 일시 실패)는 같은 내용이 3번 연속일 때만 Slack 으로 알린다.
 
 플랫폼에 닿지 않아도 판정·수정은 그대로 하고 로그만 남긴다.
