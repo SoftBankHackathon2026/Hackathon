@@ -135,3 +135,46 @@ EOF
 ```sh
 bash /opt/oneport/releases/<커밋>/deploy.sh /opt/oneport/releases/<커밋> <레지스트리> <커밋>
 ```
+
+## GCP 관리형 서비스 읽기 (Workload Identity Federation)
+
+비용 화면의 GCP 관리형 서비스(Cloud SQL, Managed Kafka, LB, Cloud NAT, VM, GCS)는 수집기가 GCP API 로 읽는다. 키 파일 없이 EC2 인스턴스 역할로 GCP 서비스 계정을 대신 쓴다.
+
+```sh
+GCP_PROJECT=<프로젝트 ID> AWS_PROFILE=<프로필> bash platform/deploy/ec2/gcp-wif.sh
+```
+
+- GCP 에 워크로드 ID 풀 `oneport-aws`, AWS 공급자 `oneport-ec2`, 서비스 계정 `oneport-cost-reader` 를 만든다. 공급자 조건은 인스턴스 역할 `ghost-oneport-platform-ec2` 하나만 받는다.
+- 서비스 계정 역할: `roles/cloudsql.viewer`, `roles/managedkafka.viewer`, `roles/compute.viewer`, `roles/storage.bucketViewer`, `roles/monitoring.viewer` (모두 읽기 전용).
+- 자격 증명 설정 파일(비밀값 없음, IMDSv2 로 AWS 자격 증명을 얻는 방법만 적힘)을 SSM 으로 `/opt/oneport/secrets/gcp/credentials.json` 에 두고 수집기를 다시 띄운다. compose 는 이 폴더를 `/etc/oneport/gcp` 로 붙이고 `GOOGLE_APPLICATION_CREDENTIALS` 를 가리킨다.
+- 파일이 없으면 수집기는 "관리형 서비스: GCP 읽기 실패 (DefaultCredentialsError)" 로 남기고 나머지는 그대로 계산한다.
+- 돌리는 사람은 GCP 프로젝트 IAM 관리 권한과, AWS 쪽 `sts:GetCallerIdentity`·`ec2:DescribeInstances`·`ssm:SendCommand` 권한이 있어야 한다.
+
+## 온프렘 환경 연결 (#48)
+
+화면의 「환경 연결 추가」에서 복사한 명령을 단말에서 실행하면, 단말이 키 중계(broker)와 TLS 1.3·ML-DSA 로 붙고 WireGuard 터널로 Kubernetes 환경정보를 보내요. 데모 모드에서도 켜지고, 그때는 설정한 tenant 하나로 동작해요.
+
+| 구성 | 위치 |
+|---|---|
+| API 연결 층 | `migration/connection/platform_bridge/Dockerfile` 이 API 이미지 위에 연결 패키지와 OpenSSL 3.5 를 얹어요 |
+| Redis, 키 중계 | compose profile `connection`. 중계는 TCP 8443, UDP 51820 을 써요(보안그룹에서 열어 둬야 해요) |
+| 단말 배포본 | Caddy 가 `/opt/oneport/connection/public` 을 `https://<도메인>/releases/` 로 내요 |
+| 키·설정 | `/opt/oneport/connection/` 의 `server.env`, `server/`(작업 서명키, 런타임 토큰), `broker/`(중계 설정, 인증서, 키, 네트워크 정책) |
+
+CD 는 저장소 변수 `ONEPORT_CONNECTION_RELEASE_MLDSA_PUBLIC_KEY`, `ONEPORT_CONNECTION_RELEASE_ED25519_PUBLIC_KEY`(공개 검증키)가 있을 때 중계 이미지를 빌드하고, 인스턴스에 `server.env` 와 `broker/broker.json` 이 있으면 profile 을 켜요. 없으면 지금처럼 연결 기능 없이 떠요.
+
+키와 서명한 배포본은 CI 에 두지 않고 로컬에서 만들어요. 개인키는 로컬 0700 폴더에만 두고 레포·이미지·로그에 넣지 않아요.
+
+```sh
+mkdir -m 700 ~/.oneport-connection
+python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <도메인> --openssl <OpenSSL 3.5 이상> trust
+# 같은 공개 검증키로 amd64·arm64 단말 프로그램을 빌드한 뒤 (broker.Dockerfile 의 build 단계)
+python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <도메인> --openssl <OpenSSL> \
+  release --version <버전> --sequence <이전보다 큰 수> --days 30 --endpoint <고정 IP>:51820 --amd64 <폴더> --arm64 <폴더>
+python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <도메인> config --tenant <tenant> --gateway <gateway>
+```
+
+`server.env`, `server/`, `broker/` 는 SSM SecureString 임시 파라미터로 옮기고 바로 지워요. `release/<버전>` 은 인스턴스의 `/opt/oneport/connection/public/<버전>` 에 두어요(0755/0644). 배포본 서명 기한(기본 30일)이 지나거나 중계 인증서(397일)가 끝나기 전에 다시 만들어요.
+
+- 단말은 Ubuntu 24.04(amd64, arm64)만 받아요. 온프렘 노드(22.04)에서는 설치 스크립트가 멈춰요.
+- 중계는 한 번에 단말 하나와 터널을 열어요.

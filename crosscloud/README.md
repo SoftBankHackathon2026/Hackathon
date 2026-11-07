@@ -21,11 +21,46 @@
 | `src/crosscloud/mapping/` | 서비스 대응표, 판정, 원가연 지원 제한 검사 |
 | `src/crosscloud/cli.py` | `crosscloud` 명령 |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
+| `src/crosscloud/audit_copy/` | 감사 기록 이관 최소판. 원본 바이트 복사기, bundle·manifest, CloudTrail 오프라인 검증기 |
+| `terraform/audit/` | 감사 기록 보존 버킷 2개(GCS 보존 정책 미잠금, S3 Object Lock 활성) |
 | `tests/` | 단위 시험 |
 
 `Inventory` 스키마는 비밀로 의심되거나 분류가 불명인 env 값을 받지 않는다
 (`attestation.suspected_values_retained` 는 0 만, `plain_nonsecret` 이 아닌 env
 항목의 `value` 는 `null` 만 받는다).
+
+## 감사 기록 이관
+
+감사 로그를 원본 바이트 그대로 다른 클라우드의 보존 버킷으로 옮기고, 옮긴
+뒤 대상 버킷만 읽어 검증한다. 로그 내용은 해석하지 않는다.
+
+*   **AWS→GCP:** CloudTrail 로그와 다이제스트를 GCS 로 옮기고
+    `ccx-<run>/bundle.json`(경로 대응표, 객체별 SHA-256, 다이제스트 서명)을
+    남긴다. 검증기는 다이제스트 체인 서명(SHA256withRSA)과 로그 해시를 본다.
+    변조는 `invalid`, 삭제는 `missing` 이다. backfill 체인과 검증이 꺼졌던
+    구간은 `evidence: none` 으로 표시한다.
+*   **GCP→AWS:** `gcloud logging copy` 결과 파일을 S3 로 옮기고
+    `ccx-<run>/manifest.json` 을 남긴다. 공급자 서명이 없으므로 검증 결과는
+    언제나 `no_evidence` 이고, 해시는 이관 중 불변만 증명한다.
+
+**신뢰 기준은 대상 버킷 밖에 둔다.** 이관 명령은 이관 기록(`--receipt`,
+bundle·manifest 의 SHA-256·객체 수·체인 시작/끝 다이제스트)을 운영자 PC 에
+쓴다. 검증은 이 기록과 맞는 bundle·manifest 만 믿고, 공개키는 운영자가
+보관한 `aws cloudtrail list-public-keys` 출력 파일(리전마다 하나)만 쓴다.
+
+결과는 넷 중 하나다. 종료 코드를 괄호에 적는다.
+
+*   `valid`(0): 모든 객체를 서명으로 확인했다.
+*   `invalid`(1): 변조·누락·이관 기록 불일치가 있다.
+*   `no_evidence`(3): 어긋난 것은 없지만 서명으로 확인한 객체가 없다.
+*   `partial`(4): 일부만 서명으로 확인했다. 다이제스트가 덮지 않는 객체(아직
+    다이제스트가 오지 않은 최신 로그, backfill 만 덮는 로그 등)나 검증 꺼짐
+    구간이 있다. 개수는 `counts` 에 있다.
+
+입력 파일·`--run` 형식 오류는 한 줄 메시지와 종료 코드 2 다.
+
+명령은 `python -m crosscloud.audit_copy.cli --help` 로 본다. 버킷은
+`terraform/audit/` 가 만들고, 잠그지 않는다.
 
 ## 사용법
 

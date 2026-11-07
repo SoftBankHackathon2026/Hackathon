@@ -324,3 +324,52 @@ def test_collection_pending_snapshot_does_not_expose_signed_task(client, svc, fi
             through_tunnel=True,
         )
     assert client.get(path).json()["collectionPending"] is False
+
+
+@pytest.fixture
+def demo_client(svc):
+    app = FastAPI()
+    app.state.container = SimpleNamespace(
+        connections=svc,
+        auth_mode=AuthMode.DEMO,
+        http=SimpleNamespace(allowed_origins=["https://platform.example.test"]),
+    )
+    register_exception_handlers(app)
+    app.include_router(connections.router)
+    with TestClient(app) as client:
+        client.headers["Origin"] = "https://platform.example.test"
+        yield client
+
+
+def test_demo_mode_acts_as_configured_tenant_without_session(demo_client):
+    assert demo_client.get("/api/v1/connections/capabilities").json()["available"]
+    response = demo_client.post(
+        "/api/v1/connections",
+        json={"publicKey": PUBLIC, "operationId": "operation_demo_123456"},
+    )
+    assert response.status_code == 201
+    listed = demo_client.get("/api/v1/connections").json()
+    assert [item["organization"] for item in listed] == ["team"]
+    assert listed[0]["permissions"]["approveDevice"] is True
+
+
+def test_demo_mode_still_requires_platform_origin(demo_client):
+    demo_client.headers["Origin"] = "https://attacker.example.test"
+    assert demo_client.post("/api/v1/connections", json={}).status_code == 403
+    del demo_client.headers["Origin"]
+    assert demo_client.post("/api/v1/connections", json={}).status_code == 403
+
+
+def test_operator_mode_keeps_connections_closed(svc):
+    app = FastAPI()
+    app.state.container = SimpleNamespace(
+        connections=svc,
+        auth_mode=AuthMode.OPERATOR,
+        http=SimpleNamespace(allowed_origins=["https://platform.example.test"]),
+    )
+    register_exception_handlers(app)
+    app.include_router(connections.router)
+    with TestClient(app) as client:
+        client.headers["Origin"] = "https://platform.example.test"
+        assert client.get("/api/v1/connections/capabilities").json()["available"] is False
+        assert client.get("/api/v1/connections").status_code == 403
