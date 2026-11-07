@@ -82,9 +82,9 @@ backfill 다이제스트는 로그 기간보다 늦게 서명될 수 있다(bund
     거부한다.
 *   **GCP 권한:** 현재 값을 버전 목록에서 고르므로, crosscloud 를 실행하는 GCP
     신원에 `secretmanager.versions.list` 가 필요하다(secretAccessor 에는 없다).
-*   **대상 소유권:** 대상 그릇 이름이 이 실행의 접두사(`ccx-<run>-`)로
-    시작하지 않으면 값을 읽기 전에 거부한다. 남의 Secret 에 버전을 더하지
-    않는다.
+*   **대상 소유권:** 대상은 이 실행의 짧은 그릇 이름(`ccx-<run>-<키>`)만
+    받는다. 그 밖의 이름과 전체 이름(GCP `projects/…`, AWS ARN)은 값을 읽기
+    전에 거부한다. 남의 Secret 에 버전을 더하지 않는다.
 *   **버전 고정:** 소비자(Cloud Run `secret_env`)는 버전 번호로 참조한다.
     GCP 에서 되돌리기(파기) 뒤 `latest` 는 파기된 버전을 가리켜 읽기가
     실패한다. `target_app` 은 `latest` 를 받지 않는다.

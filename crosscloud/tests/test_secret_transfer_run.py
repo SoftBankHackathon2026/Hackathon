@@ -1,10 +1,12 @@
 import logging
 import traceback
 
+import boto3
 import pytest
+from botocore import stub
 from memory_secret_store import MemorySecretStore
 
-from crosscloud.secret_transfer import run, store
+from crosscloud.secret_transfer import run, store, store_aws
 
 _CANARY = b"canary-7f3a91-should-not-leak"
 _RUN_ID = "ccx-s1-forward"
@@ -315,28 +317,73 @@ def test_transfer_refuses_target_outside_run_prefix_before_reading(target_id):
     assert target.versions == {}
 
 
-@pytest.mark.parametrize(
-    "target_id",
-    [
-        "projects/p/secrets/ccx-s1-db-url",
-        "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:"
-        "ccx-s1-db-url-AbCdEf",
-    ],
+# AWS Secret 이름은 '/' 를 허용하고 SecretId 를 원문 그대로 쓴다. 그래서
+# 전체 이름·ARN 의 마지막 조각만 보면 남의 Secret 이 통과한다. 짧은 이름만
+# 받는다.
+_FOREIGN_FULL_NAMES = (
+    "projects/prod/secrets/ccx-s1-db-url",
+    "projects/other/secrets/ccx-s1-db-url",
+    "arn:aws:secretsmanager:ap-northeast-2:999988887777:secret:"
+    "ccx-s1-db-url-AbCdEf",
+    "ccx-s1-x/../../other",
+    "ccx-s1-db:url",
+    "ccx-s1-",
 )
-def test_transfer_accepts_full_resource_names_inside_run_prefix(target_id):
+
+
+@pytest.mark.parametrize("target_id", _FOREIGN_FULL_NAMES)
+def test_transfer_accepts_only_short_names_inside_run_prefix(target_id):
     source = MemorySecretStore({"src/db-url": _CANARY})
     target = MemorySecretStore()
 
-    results = run.transfer_secrets(
-        (_item(target=target_id),),
-        frozenset({"src/db-url"}),
-        source,
-        target,
-        _RUN_ID,
-        target_name_prefix=_PREFIX,
-    )
+    with pytest.raises(run.SecretTransferError) as excinfo:
+        run.transfer_secrets(
+            (_item(target=target_id),),
+            frozenset({"src/db-url"}),
+            source,
+            target,
+            _RUN_ID,
+            target_name_prefix=_PREFIX,
+        )
 
-    assert [r.verified for r in results] == [True]
+    assert excinfo.value.error_class == "not_allowed"
+    assert source.reads == []
+    assert target.versions == {}
+
+
+@pytest.mark.parametrize(
+    "target_id",
+    [
+        "projects/prod/secrets/ccx-s1-db-url",
+        "arn:aws:secretsmanager:ap-northeast-2:999988887777:secret:"
+        "ccx-s1-db-url-AbCdEf",
+        "ccx-s1-x/../../other",
+    ],
+)
+def test_aws_target_outside_run_prefix_is_refused_before_any_call(target_id):
+    # 실제 AwsSecretStore 에 응답 없는 Stubber 를 건다 — API 를 한 번이라도
+    # 부르면 Stubber 가 오류를 낸다.
+    secrets = boto3.client(
+        "secretsmanager",
+        region_name="ap-northeast-2",
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",
+    )
+    source = MemorySecretStore({"src/db-url": _CANARY})
+    with stub.Stubber(secrets) as stubber:
+        with pytest.raises(run.SecretTransferError) as excinfo:
+            run.transfer_secrets(
+                (_item(target=target_id),),
+                frozenset({"src/db-url"}),
+                source,
+                store_aws.AwsSecretStore(secrets),
+                _RUN_ID,
+                target_name_prefix=_PREFIX,
+            )
+        stubber.assert_no_pending_responses()
+
+    assert excinfo.value.error_class == "not_allowed"
+    assert source.reads == []
 
 
 def test_transfer_rejects_malformed_target_name_prefix():

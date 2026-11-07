@@ -14,6 +14,7 @@ import dataclasses
 import hashlib
 import hmac
 import logging
+import re
 from collections.abc import Sequence
 from typing import Literal
 
@@ -39,9 +40,9 @@ class SecretTransferItem:
     """옮길 Secret 한 쌍. 대상 그릇은 Terraform 이 미리 만든다.
 
     대상 그릇 이름은 두 클라우드 모두 `<실행 접두사>-<키>` 다(AWS
-    modules/base storage.tf, GCP target_base main.tf). 대상 식별자는 그 짧은
-    이름이나 전체 리소스 이름(GCP `projects/…/secrets/<이름>`, AWS Secret ARN)
-    이다.
+    modules/base storage.tf, GCP target_base main.tf). target_secret_id 는 그
+    짧은 이름만 받는다 — 전체 이름(GCP `projects/…/secrets/…`, AWS ARN)은
+    받지 않는다. 짧은 이름은 저장소가 자기 프로젝트·계정 안에서 해석한다.
     """
 
     source_secret_id: str
@@ -91,9 +92,11 @@ def transfer_secrets(
         source: 원본 클라우드 저장소.
         target: 대상 클라우드 저장소.
         run_id: 이 실행의 식별자. 쓰기 토큰의 재료다.
-        target_name_prefix: 이 실행의 이름 접두사(`ccx-<run>`). 대상 그릇
-            이름이 `접두사-` 로 시작하지 않으면 아무 값도 읽지 않고 멈춘다 —
-            이 실행이 만들지 않은 남의 Secret 에 버전을 더하지 않는다.
+        target_name_prefix: 이 실행의 이름 접두사(`ccx-<run>`). 대상
+            식별자가 `접두사-<키>`(키는 영문·숫자·`_`·`-`) 짧은 이름 전체와
+            맞지 않으면 아무 값도 읽지 않고 멈춘다 — 이 실행이 만들지 않은
+            남의 Secret 에 버전을 더하지 않는다. `/`·`:` 가 든 전체 이름과
+            ARN 은 다른 프로젝트·계정을 가리킬 수 있어 거부한다.
 
     Returns:
         쌍마다 결과. 모두 verified 다.
@@ -173,24 +176,19 @@ def _refuse_foreign_targets(
     items: Sequence[SecretTransferItem], name_prefix: str
 ) -> None:
     residue.check_name_prefix(name_prefix)
+    # 짧은 이름 전체 일치만 받는다(fail-closed). AWS 이름은 '/' 를 허용하고
+    # SecretId 를 원문 그대로 쓰므로, 조각만 보는 검사는 남의 Secret 을
+    # 통과시킨다.
+    own = re.compile(rf"{re.escape(name_prefix)}-[A-Za-z0-9_-]+")
     foreign = sorted(
         {
             i.target_secret_id
             for i in items
-            if not _short_name(i.target_secret_id).startswith(f"{name_prefix}-")
+            if not own.fullmatch(i.target_secret_id)
         }
     )
     if foreign:
         raise SecretTransferError("not_allowed", ", ".join(foreign))
-
-
-def _short_name(secret_id: str) -> str:
-    # GCP 전체 이름은 마지막 조각, AWS ARN 은 `:secret:` 뒤(이름-무작위 6자).
-    if secret_id.startswith("projects/"):
-        return secret_id.rsplit("/", 1)[1]
-    if secret_id.startswith("arn:"):
-        return secret_id.partition(":secret:")[2]
-    return secret_id
 
 
 def _transfer_one(
