@@ -253,8 +253,8 @@ SQLite 요청 기록의 committed 집합 S(같은 created_at 범위)와 대조�
 **기준점과 범위.** cutover 는 COPYING 시작 때 원본 `max(created_at)` 을 기준점으로 저장한다. 행이 INSERT 전용·불변(request_id·payload·created_at 고정, UPDATE/DELETE 없음)이라는 전제에서
 기준점 이전 집합은 CATCHING_UP 에서 한 번 확정하면 다시 읽지 않고, 전환 구간(DRAINING~VERIFYING)은 행을 읽지 않고 기준점 이후·이전 건수만 양쪽에서 센다(체크포인트 `counts_pre_stop`·`counts_post_stop`·`counts_pre_grant`·`counts_final`).
 그래서 전환 구간의 DB 작업은 인덱스 범위 count 네 쌍뿐이다. 행 단위 비교가 필요하면 전환이 끝난 뒤 `python -m migration.verify --mode post --since <watermark>` 를 따로 돌린다.
-`--method digest` 는 양쪽 서버에서 request_id 앞 두 자리로 256 버킷을 나눠 버킷별 건수와 모든 필드의 md5 를 계산해 비교한다(정렬은 uuid 바이트 순, created_at 은 UTC 마이크로초 문자열).
-digest 가 다른 버킷만 행을 읽어 B−T, 필드 불일치 ID 를 남기고, S−T 는 ID 묶음 조회로 확인한다. post 모드에서는 대상에 새 행이 있어 digest 를 쓰지 않는다.
+`--method digest` 는 양쪽 서버에서 request_id 앞 두 자리로 256 버킷을 나눠, 행마다 모든 필드의 md5(32자)를 만들고 그 지문들을 request_id 순으로 이어 붙인 md5 를 버킷 digest 로 낸다(서버가 집계 중 드는 것은 행 수 × 32바이트, 행 원문은 전송도 적재도 안 함. 정렬은 uuid 바이트 순, created_at 은 UTC 마이크로초 문자열).
+digest 가 다른 버킷만 행을 읽어 B−T, 필드 불일치 ID 를 남긴다. S−T 는 ledger 를 request_id 순 5000건 페이지로 흘려 보내며 대상에 `= ANY(uuid[])` 로 물어 빠진 ID 만 남기므로 S 집합 전체를 메모리에 올리지 않는다. post 모드에서는 대상에 새 행이 있어 digest 를 쓰지 않는다.
 `sql/001_demo.sql` 의 `migration_demo_created_at_idx` 인덱스가 범위 조회를 받친다. 기존 DB 는 `init_db` 를 다시 실행해(재실행 안전) 인덱스를 만든다.
 
 ## 실행 절차 (온프렘 → AWS)

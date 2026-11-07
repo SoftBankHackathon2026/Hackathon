@@ -21,7 +21,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import psycopg
 from psycopg import sql
@@ -179,34 +179,48 @@ def compare_by_digest(
     sconn: psycopg.Connection[Any],
     tconn: psycopg.Connection[Any],
     table: str,
-    committed: set[str],
+    committed_pages: Iterable[list[str]],
     *,
     since: datetime | None,
     upto: datetime | None,
 ) -> Comparison:
-    """digest 방식: 버킷 digest 가 모두 같으면 B=T 로 확정하고 S-T 만 묶음 조회한다. 다른 버킷은 행을 읽어 비교한다."""
+    """digest 방식: 버킷 digest 가 모두 같으면 B=T 로 확정하고 S-T 만 묶음 조회한다. 다른 버킷은 행을 읽어 비교한다.
+
+    committed_pages 는 ledger 의 S 집합을 페이지(ID 묶음) 단위로 내는 iterable 이다. 페이지마다 대상에 `= ANY(uuid[])` 로
+    묻고 빠진 ID 만 남기므로 S 집합 전체를 메모리에 올리지 않는다. digest 가 다른 버킷에 속한 ID 만 따로 모아 행 비교에 넘긴다.
+    """
     src_d = dbmod.bucket_digests(sconn, table, since=since, upto=upto)
     tgt_d = dbmod.bucket_digests(tconn, table, since=since, upto=upto)
     sconn.commit(); tconn.commit()
     bad = compare_digests(src_d, tgt_d)
+    bad_set = set(bad)
     src_total = sum(n for n, _ in src_d.values())
     tgt_total = sum(n for n, _ in tgt_d.values())
+
+    # S-T: digest 가 같은 버킷의 커밋 요청은 대상에 있어야 한다 (B=T 이므로 S-T = S-B). 행을 읽지 않고 ID 묶음으로 확인한다.
+    committed_count = 0
+    committed_in_bad: set[str] = set()
+    missing: set[str] = set()
+    for page in committed_pages:
+        committed_count += len(page)
+        rest = [rid for rid in page if rid[:2] not in bad_set]
+        committed_in_bad.update(rid for rid in page if rid[:2] in bad_set)
+        if rest:
+            missing |= dbmod.missing_ids(tconn, table, rest)
+    tconn.commit()
+
     if bad:
         log.info("digest 불일치 버킷 %d/%d: 해당 버킷 행만 다시 읽는다", len(bad), max(len(src_d), len(tgt_d)))
         src_rows = load_rows(sconn, table, since=since, upto=upto, buckets=bad)
         tgt_rows = load_rows(tconn, table, since=since, upto=upto, buckets=bad)
-        committed_in_bad = {rid for rid in committed if rid[:2] in set(bad)}
         cmp = compare(src_rows, tgt_rows, committed_in_bad)
-        cmp.source_count, cmp.target_count, cmp.committed_count = src_total, tgt_total, len(committed)
+        cmp.source_count, cmp.target_count = src_total, tgt_total
     else:
-        cmp = Comparison(source_count=src_total, target_count=tgt_total, committed_count=len(committed))
+        cmp = Comparison(source_count=src_total, target_count=tgt_total, committed_count=committed_count)
+    cmp.committed_count = committed_count
     cmp.method = "digest"
     cmp.mismatched_buckets = bad
-    # S-T: digest 가 같은 버킷의 커밋 요청은 대상에 있어야 한다 (B=T 이므로 S-T = S-B). 행을 읽지 않고 ID 묶음으로 확인한다.
-    rest = {rid for rid in committed if rid[:2] not in set(bad)}
-    if rest:
-        missing = dbmod.missing_ids(tconn, table, rest)
-        tconn.commit()
+    if missing:
         cmp.committed_missing_in_target = sorted(set(cmp.committed_missing_in_target) | missing)
         cmp.committed_missing_in_source = sorted(set(cmp.committed_missing_in_source) | missing)
     return cmp
@@ -235,36 +249,40 @@ def run(
     # ledger(S 집합)를 DB 보다 먼저 읽는다. 워커가 계속 쓰는 중에 DB 를 먼저 읽으면 그 사이에 커밋된 요청이
     # ledger 에만 있어 S-T 로 잘못 잡힌다(2026-11-05 리허설). 먼저 읽으면 그 사이 커밋은 대상에만 있는
     # 행이 되고, post 모드에서는 other_writer_in_target 으로 보고될 뿐 실패가 아니다.
+    # digest 방식은 ledger 를 페이지 단위로 흘려 보내며 대상에 묻는다(S 집합 전체를 메모리에 올리지 않음).
+    store = RequestStore(state_dir) if state_dir is not None else None
+    if store is None:
+        log.warning("--state-dir 없음: S 집합(커밋 확인 요청) 비교를 건너뛴다")
     committed: set[str] = set()
     committed_on_target: set[str] = set()
-    if state_dir is not None:
-        store = RequestStore(state_dir)
-        try:
+    try:
+        if store is not None and method != "digest":
             committed = store.committed_ids_in_scope(since=since_ts, upto=upto_ts)
             committed_on_target = store.committed_ids_in_scope(target, since=since_ts, upto=upto_ts)
-        finally:
-            store.close()
-    else:
-        log.warning("--state-dir 없음: S 집합(커밋 확인 요청) 비교를 건너뛴다")
 
-    scope = {"since": format_ts(since_ts), "upto": format_ts(upto_ts), "method": method}
-    log.info("원본 %s / 대상 %s 비교 범위 %s", src_spec, tgt_spec, scope)
-    with dbmod.connect(src_spec, statement_timeout_ms=600_000) as sconn, \
-            dbmod.connect(tgt_spec, statement_timeout_ms=600_000) as tconn:
-        src_ident = dbmod.server_identity(sconn).as_dict()
-        tgt_ident = dbmod.server_identity(tconn).as_dict()
-        if method == "digest":
-            if mode == "post":
-                # 전환 후 대상에는 새 행이 있어 digest 가 어긋난다. post 는 delta 를 rows 로 비교하고,
-                # digest 는 기준점 이전(불변) 집합에만 쓴다.
-                raise ConfigError("digest 방식은 pre 모드(기준점 이전 집합)에만 쓴다")
-            cmp = compare_by_digest(sconn, tconn, table, committed, since=since_ts, upto=upto_ts)
-        else:
-            src_rows = load_rows(sconn, table, since=since_ts, upto=upto_ts)
-            tgt_rows = load_rows(tconn, table, since=since_ts, upto=upto_ts)
-            allowed_extra = committed_on_target if mode == "post" else set()
-            cmp = compare(src_rows, tgt_rows, committed, allowed_extra=allowed_extra,
-                          tolerate_other_writers=(mode == "post"))
+        scope = {"since": format_ts(since_ts), "upto": format_ts(upto_ts), "method": method}
+        log.info("원본 %s / 대상 %s 비교 범위 %s", src_spec, tgt_spec, scope)
+        with dbmod.connect(src_spec, statement_timeout_ms=600_000) as sconn, \
+                dbmod.connect(tgt_spec, statement_timeout_ms=600_000) as tconn:
+            src_ident = dbmod.server_identity(sconn).as_dict()
+            tgt_ident = dbmod.server_identity(tconn).as_dict()
+            if method == "digest":
+                if mode == "post":
+                    # 전환 후 대상에는 새 행이 있어 digest 가 어긋난다. post 는 delta 를 rows 로 비교하고,
+                    # digest 는 기준점 이전(불변) 집합에만 쓴다.
+                    raise ConfigError("digest 방식은 pre 모드(기준점 이전 집합)에만 쓴다")
+                pages: Iterable[list[str]] = (store.iter_committed_ids_in_scope(since=since_ts, upto=upto_ts)
+                                              if store is not None else ())
+                cmp = compare_by_digest(sconn, tconn, table, pages, since=since_ts, upto=upto_ts)
+            else:
+                src_rows = load_rows(sconn, table, since=since_ts, upto=upto_ts)
+                tgt_rows = load_rows(tconn, table, since=since_ts, upto=upto_ts)
+                allowed_extra = committed_on_target if mode == "post" else set()
+                cmp = compare(src_rows, tgt_rows, committed, allowed_extra=allowed_extra,
+                              tolerate_other_writers=(mode == "post"))
+    finally:
+        if store is not None:
+            store.close()
 
     report = {
         "generated_at": datetime.now(UTC).isoformat(),

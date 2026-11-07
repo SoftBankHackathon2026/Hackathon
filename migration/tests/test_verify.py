@@ -117,6 +117,10 @@ def test_committed_ids_in_scope_filters_by_created_at(tmp_path):
         assert store.committed_ids_in_scope(since=wm) == {"id1", "id2"}          # 기준점 이후만
         assert store.committed_ids_in_scope(upto=wm) == {"id0"}                   # 기준점까지(포함)
         assert store.committed_ids_in_scope("aws", since=wm) == {"id2"}
+        # 페이지 단위 스트리밍: batch=1 이면 세 페이지, 범위 밖 행만 있는 페이지는 건너뛴다. 전체를 모으지 않는다
+        assert list(store.iter_committed_ids_in_scope(batch=1)) == [["id0"], ["id1"], ["id2"]]
+        assert list(store.iter_committed_ids_in_scope(since=wm, batch=1)) == [["id1"], ["id2"]]
+        assert list(store.iter_committed_ids_in_scope(upto=wm, batch=2)) == [["id0"]]
     finally:
         store.close()
 
