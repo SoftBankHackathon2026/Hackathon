@@ -1,0 +1,22 @@
+schema_version: 1
+request_id: image-migration-001
+source:
+  account_id: '123456789012'
+  region: ap-northeast-2
+  # profile: oneport-ecr-readonly
+target:
+  url: https://registry.example.com:8444
+  organization_id: team-ghost
+  installation_id: registry-01
+  project: migrated
+  # project_overrides:
+  #   oneport/api: isolated-api
+  credentials_ref: /run/oneport/harbor-image-migration.json
+  # Omit when the worker already trusts Harbor's certificate.
+  ca_ref: /run/oneport/harbor-ca.pem
+execution:
+  state_dir: /var/lib/oneport/image-migration
+  skopeo_version: '1.18.0'
+  copy_timeout_seconds: 3600
+  # Set true only after arranging exclusive writes or immutable destination tags.
+  exclusive_write: false

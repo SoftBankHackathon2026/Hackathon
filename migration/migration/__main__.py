@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 COMMANDS: tuple[tuple[str, str], ...] = (
+    ("migration.image_migration", "AWS ECR 이미지 전수 조회·Harbor 복사·검증"),
     ("migration.openbao_infra", "OpenBao 탐색·Ubuntu 설치·인증 설정·키 인계"),
     ("migration.identity", "Identity Center 수집·업무/환경 대응표·온프레미스 적용·검증"),
     ("migration.keycloak_infra", "Keycloak 환경 탐색·점검·지정 Kubernetes 노드의 호스트 설치"),
