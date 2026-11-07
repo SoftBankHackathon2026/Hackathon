@@ -71,9 +71,7 @@ class PlatformClient:
 
     def sync(self, runs: RunStore, limit: int = 20) -> int:
         sent = 0
-        for run in reversed(runs.recent(limit)):
-            if run.state in QUIET_STATES:
-                continue
+        for run in reversed(runs.recent(limit, exclude=QUIET_STATES)):
             events = runs.events(run.run_id)
             if self._pushed.get(run.run_id) != _mark(run, events) and self.push_run(run, events):
                 sent += 1
