@@ -244,8 +244,8 @@ def test_actual_bao_and_postgres_json_rotation(live, monkeypatch):
         user, db = admin.execute("SELECT current_user, current_database()").fetchone()
         admin.execute(
             sql.SQL(
-                "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
-            ).format(sql.Identifier(role))
+                "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+            ).format(sql.Identifier(role), sql.Literal("old"))
         )
         try:
             s.source.values["v2"] = SecretValue(
