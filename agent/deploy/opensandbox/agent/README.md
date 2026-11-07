@@ -75,5 +75,5 @@ oneport-agent fault restore                            # 에이전트가 못 고
 ```
 
 - 승인 시연: `/etc/oneport-agent/agent.yaml` 의 `auto_apply: false` 로 두면 제안·검사·탐침까지 하고 멈춘다. 승인하면 쓰기·재시작·재판정을 한다.
-- Slack: `agent.env` 에 `SLACK_BOT_TOKEN=xoxb-...`, `agent.yaml` 의 `slack.channel` 에 채널 ID 를 넣으면 시작·제안·반영·결과가 채널에 올라간다. 봇은 그 채널에 초대돼 있어야 한다(`chat:write`).
+- Slack: `agent.env` 에 `SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...`(Incoming Webhook, 채널 하나에만 쓸 수 있어 권한이 가장 좁다)를 넣으면 시작·제안·반영·결과가 그 채널에 올라간다. 봇 토큰을 쓰려면 `SLACK_BOT_TOKEN=xoxb-...`(`chat:write`)와 `agent.yaml` 의 `slack.channel` 을 넣는다. 웹훅이 있으면 웹훅을 쓴다.
 - `oneport-agent` 는 서비스와 같은 사용자·환경변수로 `python -m agent` 를 부른다. `fault` 는 `agent.demo_fault` 다.
