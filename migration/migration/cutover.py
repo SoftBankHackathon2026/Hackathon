@@ -21,12 +21,12 @@ from . import verify as verifymod
 from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask_config, prepare_source, \
     sink_kafka_offsets, template_variables
 from .config import Config, ConfigError, load_config
-from .state import CutoverJob, CutoverStore, RequestStore
+from .state import CutoverJob, CutoverStore
 from .cutover_policy import CutoverPolicyGate
 from .ingress_client import HttpIngressClient, IngressClientError, check_app_ready
 from .traffic_client import HttpTrafficClient
 from .policy_client import build_check
-from .worker_client import HttpWorkerClient, WorkerClientError
+from .bot_client import HttpBotClient, BotClientError
 
 log = logging.getLogger("migration.cutover")
 
@@ -54,13 +54,10 @@ class ApprovalRequired(RuntimeError):
 # ---- 포트 (외부 시스템 추상화; 테스트에서 대체) --------------------------------
 
 
-class WorkerPort(Protocol):
-    def set_generation_limit(self, limit: int) -> dict[str, Any]: ...
+class BotPort(Protocol):
     def status(self) -> dict[str, Any]: ...
-    def pause(self) -> dict[str, Any]: ...
-    def resume(self) -> dict[str, Any]: ...
-    def drain(self, timeout: float = 60.0) -> dict[str, Any]: ...
-    def switch_target(self, target: str, phase: str | None = None) -> dict[str, Any]: ...
+    def set_generation(self, enabled: bool, *, expected_run_id: str, expected_ledger_id: str,
+                       limit: int | None = None) -> dict[str, Any]: ...
 
 
 class ConnectPort(Protocol):
@@ -103,7 +100,7 @@ class TrafficPort(Protocol):
 
 
 class IngressPort(Protocol):
-    """접수 서비스(durable-ingress) 제어. 워커와 같은 순서로 pause → target → resume 한다."""
+    """접수 서비스(durable-ingress) 제어. pause → target → resume 한다."""
 
     def status(self) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
@@ -276,7 +273,7 @@ class VerifyAdapter:
             method: str = "rows") -> dict[str, Any]:
         path = self.report_dir / f"verify-{self.config.job.job_id}-{label}.json"
         cmp = verifymod.run(self.config, source=self.config.job.source, target=self.config.job.target,
-                            state_dir=self.state_dir, mode=mode, report_path=path, extra_meta={"label": label},
+                            state_dir=None, mode=mode, report_path=path, extra_meta={"label": label},
                             since=since, upto=upto, method=method)
         return {"passed": cmp.passed, "counts": cmp.counts, "report": str(path), "method": cmp.method,
                 "scope": {"since": since, "upto": upto}, "mismatched_bucket_count": len(cmp.mismatched_buckets),
@@ -317,11 +314,10 @@ class IngressAdapter:
 
 @dataclass
 class Ports:
-    worker: WorkerPort
+    bot: BotPort
     connect: ConnectPort
     db: DbPort
     verify: VerifyPort
-    request_store: RequestStore | None = None
     ingress: IngressPort | None = None   # None 이면 접수 큐는 운영자가 수동으로 제어한다
     traffic: TrafficPort | None = None
 
@@ -355,7 +351,7 @@ class Cutover:
         self.cc = config.cutover
         self.job = store.load(self.job_id) or CutoverJob(
             job_id=self.job_id, direction=f"{self.source}->{self.target}", source=self.source,
-            target=self.target, stage=PRECHECK, checkpoint={"grant_tracking_version": 1}, updated_at="")
+            target=self.target, stage=PRECHECK, checkpoint={"grant_tracking_version": 1, "writer_mode": "traffic_bot_v1"}, updated_at="")
         if (self.job.source, self.job.target) != (self.source, self.target):
             raise ConfigError(f"저장된 작업 {self.job_id} 의 방향({self.job.direction})이 설정과 다르다")
 
@@ -461,6 +457,73 @@ class Cutover:
     def _route_name(self, job_target: str) -> str:
         return self.config.traffic.route_target(job_target)
 
+    def _bot_snapshot(self) -> dict[str, Any]:
+        st = self.p.bot.status()
+        for key in ("run_id", "ledger_id"):
+            if not isinstance(st.get(key), str) or not st[key]:
+                raise CutoverError(f"트래픽봇 {key} 누락: 제어 API 이미지 갱신 필요")
+        for key in ("generated_total", "pending", "committed", "failed", "unknown"):
+            if type(st.get(key)) is not int or not 0 <= st[key] <= 2**53 - 1:
+                raise CutoverError(f"트래픽봇 {key} 상태가 유효하지 않다")
+        if st.get("generation") not in ("running", "stopped") or st.get("control_enabled") is not True:
+            raise CutoverError("트래픽봇 생성 제어가 활성화되어야 한다")
+        if st["unknown"]:
+            raise CutoverError("트래픽봇 커밋 여부 미확인 요청이 남아 있다")
+        if st.get("fatal") or st.get("paused") is not False:
+            raise CutoverError("트래픽봇 전달이 중지되거나 오류 상태다")
+        if st.get("request_endpoint") != self.config.bot.request_endpoint:
+            raise CutoverError("트래픽봇 요청 경로가 설정한 접수 큐와 다르다")
+        identity = self.job.checkpoint.get("bot_identity")
+        if identity and any(st[k] != identity[k] for k in ("run_id", "ledger_id")):
+            raise CutoverError("트래픽봇 원장/run_id 변경: 기존 작업 자동 재개 불가")
+        if st["failed"] > self.job.checkpoint.get("bot_failed_before", st["failed"]):
+            raise CutoverError("이전 중 트래픽봇 실패 요청 발생")
+        return st
+
+    def _set_bot_generation(self, enabled: bool, limit: int | None = None) -> dict[str, Any]:
+        # Read identity even on stop. Never control a replacement bot using old checkpoints.
+        st = self.p.bot.status()
+        identity = self.job.checkpoint.get("bot_identity")
+        if not identity or any(st.get(k) != identity[k] for k in ("run_id", "ledger_id")):
+            raise CutoverError("트래픽봇 원장/run_id 변경: 제어 거부")
+        out = self.p.bot.set_generation(enabled, expected_run_id=identity["run_id"],
+                                        expected_ledger_id=identity["ledger_id"], limit=limit)
+        if not enabled and out.get("generation") != "stopped":
+            raise CutoverError("트래픽봇 생성 정지 확인 실패")
+        return out
+
+    def _start_bot_batch(self, label: str, count: int) -> None:
+        key = f"bot_{label}_limit"
+        st = self._bot_snapshot()
+        target = self.source if label == "source" else self.target
+        snap = self._ingress_snapshot()
+        if snap["target"] != self._ingress_name(target) or snap["mode"] != "running":
+            raise CutoverError("트래픽봇 시작 전 접수 큐 경로/실행 상태 불일치")
+        if not self.p.db.app_can_insert(target):
+            raise CutoverError("트래픽봇 대상 앱 INSERT 권한이 없다")
+        if key not in self.job.checkpoint:
+            self._save(**{key: st["generated_total"] + count})
+        limit = self.job.checkpoint[key]
+        if st["generated_total"] > limit:
+            raise CutoverError("트래픽봇 생성 건수가 저장된 한도를 초과했다")
+        self._set_bot_generation(st["generated_total"] < limit, limit=limit)
+
+    def _wait_bot_settled(self) -> dict[str, Any]:
+        def settled() -> tuple[bool, dict[str, Any]]:
+            st = self._bot_snapshot()
+            return st["generation"] == "stopped" and st["pending"] == 0, st
+        return self._wait("traffic_bot_settled", settled)
+
+    def _wait_bot_batch(self, label: str) -> dict[str, Any]:
+        st = self._wait_bot_settled()
+        if st["generated_total"] != self.job.checkpoint[f"bot_{label}_limit"]:
+            raise CutoverError("트래픽봇이 지정한 요청 건수에 도달하기 전에 중지됐다")
+        return st
+
+    def _app_ready(self, target: str) -> tuple[bool, dict[str, Any]]:
+        info = self.ingress.check_app(target)
+        return bool(info.get("ok")) and not info.get("skipped"), info
+
     # ---- 단계 -----
 
     def stage_precheck(self) -> None:
@@ -479,23 +542,15 @@ class Cutover:
             problems.append(f"원본 wal_level={src.get('wal_level')} (logical 필요)")
         if src.get("cdc_replication") is False:
             problems.append("원본 CDC 계정에 REPLICATION 권한이 없다")
-        ws = self.p.worker.status()
+        if self.p.bot is None or self.ingress is None:
+            raise CutoverError("트래픽봇과 접수 큐 제어 설정이 모두 필요하다")
+        bs = self._bot_snapshot()
         if self.cc.demo_total_rows is not None:
             if (src.get("row_count") != 800 or tgt.get("row_count") != 0
                     or self.p.db.count_rows(self.source, "seed") != 800):
                 problems.append("1000-row demo requires source=800 seed rows and an empty target")
-            if (ws.get("max_generated") != 200 or ws.get("generation_limit") != 0
-                    or ws.get("generated_total") != 0 or ws.get("queue_length") != 0
-                    or ws.get("in_flight") or ws.get("state") != "RUNNING"):
-                problems.append("1000-row demo requires a fresh bounded worker (200 maximum, 0 released)")
-        if ws.get("target") != self.source:
-            problems.append(f"워커 target={ws.get('target')} 이 원본 {self.source} 가 아니다")
-        known = ws.get("known_targets")
-        if known is not None:  # 구버전 워커는 이 키가 없다
-            for name in (self.source, self.target):
-                if name not in known:
-                    problems.append(f"워커 설정에 target {name} 이 없다 (known_targets={list(known)}). "
-                                    "워커 ConfigMap 에 추가하지 않으면 SWITCHING 의 /target 전환이 실패한다")
+            if bs["generation"] != "stopped" or bs["generated_total"] != 0 or bs["pending"] or bs["failed"]:
+                problems.append("1000-row demo requires a fresh stopped traffic bot")
         connectors = self.p.connect.list_connectors()
         ingress_info: dict[str, Any] | None = None
         if self.ingress is not None:
@@ -519,11 +574,20 @@ class Cutover:
                 problems.append(f"공개 도메인 경로={traffic_info['target']} 이 원본({src_route}) 이 아니다")
         if problems:
             raise CutoverError("PRECHECK 실패: " + "; ".join(problems))
-        self._save(COPYING, precheck={"source": src, "target": tgt, "worker": {k: ws.get(k) for k in ("state", "target", "phase", "counters")},
+        self._save(COPYING, bot_identity={"run_id": bs["run_id"], "ledger_id": bs["ledger_id"]},
+                   bot_failed_before=bs["failed"], precheck={"source": src, "target": tgt, "bot": bs,
                                      "connectors": connectors, "ingress": ingress_info, "traffic": traffic_info})
 
     def stage_copying(self) -> None:
         self._policy_guard("pre_start")
+        self._set_bot_generation(False)
+        snap = self._ingress_snapshot()
+        if snap["target"] != self._ingress_name(self.source):
+            raise CutoverError("복사 시작 전 접수 큐가 원본을 가리켜야 한다")
+        self._wait("source_app_ready", lambda: self._app_ready(self.source))
+        if snap["mode"] != "running":
+            self.ingress.resume(str(snap["epoch"]))
+        self._wait_bot_settled()
         # 기준점은 커넥터 등록(스냅샷 시작) 전에 한 번만 잡는다. 이후 모든 판정은 이 시각 뒤에 만들어진 행만 본다.
         if "watermark" not in self.job.checkpoint:
             wm = self._step("watermark", lambda: {"created_at": self.p.db.max_created_at(self.source)})
@@ -539,7 +603,7 @@ class Cutover:
             # (2026-11-05 리허설처럼) 양쪽이 1,000건이어도 영원히 기다리다 타임아웃된다.
             seed_src = self.p.db.count_rows(self.source, "seed")
             seed_tgt = self.p.db.count_rows(self.target, "seed")
-            return healthy and seed_tgt >= seed_src and seed_src > 0, {"connectors": states, "seed_source": seed_src, "seed_target": seed_tgt}
+            return healthy and seed_tgt == seed_src, {"connectors": states, "seed_source": seed_src, "seed_target": seed_tgt}
 
         info = self._wait("snapshot", snapshot_done)
         copy_count = self.p.db.count_rows(self.source)
@@ -548,8 +612,7 @@ class Cutover:
         self._save(CATCHING_UP, copying=info, source_count_at_copy=copy_count)
 
     def stage_catching_up(self) -> None:
-        if self.cc.demo_total_rows is not None:
-            self._step("demo_release_source", lambda: self.p.worker.set_generation_limit(100))
+        self._start_bot_batch("source", self.cc.min_live_rows_after_snapshot)
         wm = self.watermark
 
         # 1) 스냅샷 집합(기준점 이전)을 한 번 확정한다. 아직 sink 가 적용 중이면 통과할 때까지 기다린다.
@@ -577,6 +640,7 @@ class Cutover:
                         "latest_applied": applied, "watermark": wm}
 
         info = self._wait("catching_up", caught_up)
+        self._wait_bot_batch("source")
         if self.cc.demo_total_rows is not None:
             info["source"] = self.p.db.count_rows(self.source)
             if info["source"] != 900:
@@ -592,10 +656,8 @@ class Cutover:
         self._policy_guard("pre_cutover")
         if not self.job.checkpoint.get("fence_started_at"):
             self._save(fence_started_at=time.time())
-        self._step("worker_pause", lambda: {"state": self.p.worker.pause().get("state")})
-        drain = self._step("worker_drain", lambda: self.p.worker.drain(timeout=120))
-        if not drain.get("settled"):
-            raise CutoverError(f"워커 진행 중 요청이 정리되지 않았다: {drain}")
+        self._set_bot_generation(False)
+        self._wait_bot_settled()
         ingress_paused: dict[str, Any] | None = None
         if self.ingress is not None:
             # 접수는 계속 받되(202) 앱으로 보내는 것만 멈춘다. settled 가 아니면 원본을 닫지 않는다.
@@ -611,19 +673,13 @@ class Cutover:
         rejected = self.p.db.test_insert_rejected(self.source, sentinel)
         if not rejected:
             raise CutoverError("원본 앱 계정의 시험 INSERT 가 거절되지 않았다. 차단 실패")
-        ws = self.p.worker.status()
-        if ws.get("state") != "PAUSED" or ws.get("in_flight"):
-            raise CutoverError(f"워커가 PAUSED 가 아니거나 진행 중 요청이 있다: {ws.get('state')} {ws.get('in_flight')}")
-        last = drain.get("last_committed") or {}
-        self._save(DRAINING, fenced={"sentinel": sentinel, "rejected": True, "last_committed": last,
-                                    "queue_length": ws.get("queue_length"),
+        latest = self.p.db.latest_ids(self.source, 1)
+        self._save(DRAINING, fenced={"sentinel": sentinel, "rejected": True,
+                                    "last_committed": {"request_id": latest[0] if latest else None},
                                     "ingress": ingress_paused})
 
     def stage_draining(self) -> None:
         last_id = ((self.job.checkpoint.get("fenced") or {}).get("last_committed") or {}).get("request_id")
-        if last_id is None and self.p.request_store is not None:
-            rec = self.p.request_store.last_committed(self.source)
-            last_id = rec.request_id if rec else None
         sink = self.config.job.sink_connector
         stable_since: dict[str, Any] = {"offsets": None, "at": None}
         offsets_supported = self.p.connect.offsets(sink) is not None
@@ -718,38 +774,22 @@ class Cutover:
                 }, source="migration.cutover"),
             }
             self._policy_guard("final_verify", checks)
+        if not self.job.checkpoint.get("target_grant_attempted"):
+            self._set_bot_generation(False)
+            self._wait_bot_settled()
+            snap = self._ingress_snapshot()
+            if snap["mode"] != "paused" or snap["in_flight"] or snap["target"] != self._ingress_name(self.source):
+                raise CutoverError("대상 권한을 열기 전 접수 큐가 원본에서 정지되어야 한다")
+            self._save(target_rows_before=self.p.db.count_rows(self.target))
+        if "target_rows_before" not in self.job.checkpoint:
+            raise CutoverError("대상 쓰기 전 건수 기준점이 없다. 수동 복구 필요")
         self._save(target_grant_attempted=True)
         self._step("grant_target_app_insert", lambda: (self.p.db.grant_app_insert(self.target), {"granted": True})[1])
-        phase_after = self.config.job.live_phase_after
-
-        def switch() -> dict[str, Any]:
-            ws = self.p.worker.status()
-            if ws.get("target") == self.target:
-                return {"already": True, "target": ws.get("target")}
-            res = self.p.worker.switch_target(self.target, phase_after)
-            return {"target": res.get("target"), "phase": res.get("phase"), "last_switch": res.get("last_switch")}
-
-        switched = self._step("worker_switch_target", switch)
-        ws = self.p.worker.status()
-        if ws.get("target") != self.target:
-            raise CutoverError(f"워커 target 이 {self.target} 가 아니다: {ws.get('target')}")
-        expected_db = self.config.target(self.target).dbname
-        ident = ((ws.get("last_switch") or {}).get("identity") or {})
-        if ident and ident.get("database") not in (None, expected_db):
-            raise CutoverError(f"워커가 붙은 DB 가 기대와 다르다: {ident}")
-        before = int((ws.get("committed_by_target") or {}).get(self.target, 0))
-        if self.cc.demo_total_rows is not None:
-            # Persist before releasing generation: a crash/retry must not move the baseline.
-            if "committed_on_target_before" not in self.job.checkpoint:
-                self._save(committed_on_target_before=before)
-            before = int(self.job.checkpoint["committed_on_target_before"])
-            self._step("demo_release_target", lambda: self.p.worker.set_generation_limit(200))
-        self._step("worker_resume", lambda: {"state": self.p.worker.resume().get("state")})
-        ingress_switch = self._switch_ingress() if self.ingress is not None else None
+        ingress_switch = self._switch_ingress()
         traffic_switch = self._switch_traffic() if self.p.traffic is not None else None
-        self._save(VERIFYING, switched=switched, committed_on_target_before=before,
-                   switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ingress=ingress_switch,
-                   traffic=traffic_switch)
+        self._start_bot_batch("target", self.cc.min_rows_after_switch)
+        self._save(VERIFYING, switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                   ingress=ingress_switch, traffic=traffic_switch)
 
     def _switch_traffic(self) -> dict[str, Any]:
         desired = self._route_name(self.target)
@@ -773,7 +813,7 @@ class Cutover:
 
         def app_ready() -> tuple[bool, dict[str, Any]]:
             res = self.ingress.check_app(self.target)  # type: ignore[union-attr]
-            return bool(res.get("ok")), res
+            return bool(res.get("ok")) and not res.get("skipped"), res
 
         # 대상 앱의 쓰기 열기(GitOps) 가 끝나기를 기다린다. 읽기만 하므로 _step 이 아니다.
         ready = self._wait("target_app_ready", app_ready)
@@ -799,30 +839,38 @@ class Cutover:
             res = self.ingress.resume(str(cur.get("epoch")))  # type: ignore[union-attr]
             return {"already": False, "mode": res.get("mode"), "epoch": res.get("epoch")}
 
-        resumed = self._step("ingress_resume", resume)
+        # A queue process restarts paused. Reconcile live state even if an earlier
+        # resume response was checkpointed before the runner crashed.
+        resumed = resume()
+        self.store.mark_step(self.job_id, "ingress_resume", {"result": resumed})
+        snap = self._ingress_snapshot()
+        if snap["mode"] != "running" or snap["target"] != desired:
+            raise CutoverError("접수 큐 대상/재개 확인 실패")
         return {"app_ready": ready, "target": targeted, "resume": resumed}
 
     def stage_verifying(self) -> None:
-        base = int(self.job.checkpoint.get("committed_on_target_before", 0))
-        need = base + self.cc.min_rows_after_switch
-
-        def enough() -> tuple[bool, dict[str, Any]]:
-            ws = self.p.worker.status()
-            n = int((ws.get("committed_by_target") or {}).get(self.target, 0))
-            if ws.get("state") == "ERROR":
-                raise CutoverError(f"워커 ERROR: {ws.get('last_error')}")
-            return n >= need, {"committed_on_target": n, "need": need, "state": ws.get("state"),
-                               "mismatch": (ws.get("counters") or {}).get("mismatch")}
-
-        info = self._wait("post_switch_rows", enough)
+        # Resume only the remaining requests of the saved batch after a transient failure.
+        if "bot_target_limit" not in self.job.checkpoint:
+            raise CutoverError("대상 트래픽봇 한도 기록이 없다. 수동 복구 필요")
+        snap = self._ingress_snapshot()
+        if snap["target"] != self._ingress_name(self.target):
+            raise CutoverError("검증 재개 전 접수 큐 대상이 바뀌었다. 수동 복구 필요")
+        self._switch_ingress()
+        self._start_bot_batch("target", self.cc.min_rows_after_switch)
+        bs = self._wait_bot_batch("target")
+        self._set_bot_generation(False)
+        base = self.job.checkpoint.get("target_rows_before")
+        if base is None:
+            raise CutoverError("대상 쓰기 전 건수 기준점이 없다. 수동 복구 필요")
+        target_rows = self.p.db.count_rows(self.target)
+        info = {"bot": bs, "target_rows_before": base, "target_rows": target_rows}
+        if target_rows < base + self.cc.min_rows_after_switch:
+            raise CutoverError(f"대상 신규 쓰기 부족: {info}")
         if self.cc.demo_total_rows is not None:
             source_rows = self.p.db.count_rows(self.source)
-            target_rows = self.p.db.count_rows(self.target)
             if source_rows != 900 or target_rows != 1000:
                 raise CutoverError(f"demo row budget mismatch: source={source_rows}, target={target_rows}")
             info["demo_rows"] = {"source": source_rows, "target": target_rows}
-        if int(info.get("mismatch") or 0) > 0:
-            raise CutoverError(f"워커가 불변 필드 불일치를 기록했다: {info}")
         if self.p.db.app_can_insert(self.source):
             raise CutoverError("원본 앱 쓰기가 다시 열려 있다")
         if self.ingress is not None:
@@ -858,24 +906,26 @@ class Cutover:
 
     def plan(self) -> list[tuple[str, str]]:
         return [
-            (PRECHECK, "양쪽 접속·스키마·권한·wal_level·워커 target·Connect 접근 확인"),
+            (PRECHECK, "양쪽 DB·트래픽봇 제어/원장·접수 큐 경로·Connect 확인"),
             (COPYING, "기준점(원본 max(created_at)) 저장, publication/slot 준비, Source/Sink 등록, snapshot(seed) 완료 대기"),
             (CATCHING_UP, f"기준점 이전 집합 digest 확정 → 기준점 이후 최소 {self.cc.min_live_rows_after_snapshot}건 반영 확인"),
             (READY, "승인 대기 (--approve)"),
-            (FENCING, "워커 pause → drain" + (" → 접수 큐 pause(settled)" if self.config.ingress.enabled else "")
+            (FENCING, "트래픽봇 생성 정지 → 미확인 요청 처리 완료" + (" → 접수 큐 pause(settled)" if self.config.ingress.enabled else "")
              + " → 원본 REVOKE INSERT + 세션 종료 → 시험 INSERT 거절 확인"),
             (DRAINING, "마지막 커밋 요청의 대상 반영·기준점 이후 건수 일치·sink offset 정체 확인"),
             (SYNC_CONFIRMED, "기준점 이후·이전 건수 확인 → 커넥터 증거 보관·삭제 → 건수 재확인"),
-            (SWITCHING, "대상 GRANT INSERT → 워커 /target → /resume"
+            (SWITCHING, "대상 GRANT INSERT"
              + (" → 대상 앱 readiness → 접수 큐 /target → /resume" if self.config.ingress.enabled else "")
              + (" → 공개 도메인 경로 전환" if self.config.traffic.enabled else "")
              + "  [여기부터 자동 원복 없음]"),
             (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 건수 확인(대상 delta ≥ 원본, 스냅샷 건수 일치)"),
-            (COMPLETED, "완료"),
+            (COMPLETED, "트래픽봇 생성 정지·미확인 요청 0 확인 후 완료"),
         ]
 
     def run(self, *, retry: bool = False, force_retry: bool = False) -> str:
         stage = self.job.stage
+        if stage not in (COMPLETED, ROLLED_BACK) and self.job.checkpoint.get("writer_mode") != "traffic_bot_v1":
+            raise CutoverError("옛 DB 워커 작업은 자동 재개하지 않는다. 상태 확인 후 새 job_id 로 시작해야 한다")
         if stage in (ABORTED, NEEDS_RECOVERY):
             failed = str(self.job.checkpoint.get("failed_stage") or PRECHECK)
             if stage == NEEDS_RECOVERY and not force_retry:
@@ -905,7 +955,13 @@ class Cutover:
                 raise
             except Exception as exc:  # noqa: BLE001 - 어떤 실패든 상태를 남긴다
                 failure = NEEDS_RECOVERY if self._target_writes_possible(current) else ABORTED
-                self._save(failure, failed_stage=current, error=str(exc)[:1000])
+                stop_error = None
+                if self.job.checkpoint.get("bot_identity"):
+                    try:
+                        self._set_bot_generation(False)
+                    except Exception:
+                        stop_error = "BOT_STOP_FAILED"
+                self._save(failure, failed_stage=current, error=str(exc)[:1000], bot_stop_error=stop_error)
                 if current == SWITCHING and failure == ABORTED:
                     try:
                         self.abort_rollback()
@@ -932,7 +988,7 @@ class Cutover:
         return False
 
     def abort_rollback(self) -> dict[str, Any]:
-        """ABORTED 이고 대상 쓰기 전이면: 커넥터 삭제, 원본 앱 INSERT 복구, 워커(원본) 재개."""
+        """ABORTED 이고 대상 쓰기 전이면: 커넥터 삭제, 원본 앱 INSERT 복구, 접수 큐(원본) 재개, 트래픽봇은 정지 유지."""
         if self.job.stage != ABORTED:
             raise CutoverError(f"abort 는 ABORTED 상태에서만 가능 (현재 {self.job.stage})")
         failed = str(self.job.checkpoint.get("failed_stage") or PRECHECK)
@@ -940,9 +996,7 @@ class Cutover:
             raise CutoverError("대상 쓰기 이후 실패는 자동 원복하지 않는다")
         if self.p.db.app_can_insert(self.target):
             raise CutoverError("대상 앱 쓰기가 열려 있다. 자동 원복 불가")
-        ws = self.p.worker.status()
-        if ws.get("target") != self.source:
-            raise CutoverError("워커 target 이 원본이 아니다. 수동 확인 필요")
+        self._set_bot_generation(False)
         if self.ingress is not None:
             snap = self._ingress_snapshot()
             if snap.get("target") != self._ingress_name(self.source):
@@ -954,7 +1008,7 @@ class Cutover:
         out["source_app_insert"] = self.p.db.app_can_insert(self.source)
         if not out["source_app_insert"]:
             raise CutoverError("원본 쓰기 복구 확인 실패")
-        out["worker"] = self.p.worker.resume().get("state")
+        out["bot"] = "stopped"
         if self.ingress is not None:
             snap = self._ingress_snapshot()
             if snap.get("target") != self._ingress_name(self.source):
@@ -988,14 +1042,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | None) -> Cutover:
+    if not config.bot.control_url or not config.bot.request_endpoint or not config.ingress.enabled:
+        raise ConfigError("러너에는 bot.control_url, bot.request_endpoint, ingress.control_url 이 필요하다")
+    for target in (config.job.source, config.job.target):
+        config.ingress.ingress_target(target)
+        check = config.ingress.app_checks.get(target)
+        if check is None or not check.environment or check.database != config.target(target).dbname:
+            raise ConfigError(f"ingress.app_checks.{target}: 실제 environment/database readiness 확인 필요")
     store = CutoverStore(state_dir)
     docs = load_connector_template_pair("forward", template_variables(config))
     ports = Ports(
-        worker=HttpWorkerClient(config.worker.url),
+        bot=HttpBotClient(config.bot),
         connect=ConnectClient(config.kafka.connect_url),
         db=PgAdminPort(config),
         verify=VerifyAdapter(config, state_dir, report_dir),
-        request_store=RequestStore(state_dir),
         ingress=IngressAdapter(config) if config.ingress.enabled else None,
         traffic=HttpTrafficClient(config.traffic) if config.traffic.enabled else None,
     )
@@ -1021,7 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
             job = store.load(config.job.job_id)
             stage = job.stage if job else PRECHECK
             print(f"[dry-run] job={config.job.job_id} {config.job.source}->{config.job.target} 현재 단계={stage}")
-            cut = Cutover(config, store, Ports(worker=None, connect=None, db=None, verify=None),  # type: ignore[arg-type]
+            cut = Cutover(config, store, Ports(bot=None, connect=None, db=None, verify=None),  # type: ignore[arg-type]
                           connector_docs={}, approve=args.approve)
             start = STAGES.index(stage) if stage in STAGES else 0
             for name, desc in cut.plan()[start:]:
@@ -1042,7 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError,) as exc:
         log.error("설정 오류: %s", exc)
         return EXIT_CONFIG
-    except (CutoverError, ConnectError, WorkerClientError, IngressClientError, psycopg.Error) as exc:
+    except (CutoverError, ConnectError, BotClientError, IngressClientError, psycopg.Error) as exc:
         log.error("전환 실패: %s", exc)
         return EXIT_FAILED
     finally:

@@ -73,7 +73,7 @@ def test_direct_calls_cannot_bypass(stage, config, state_dir, fakes):
     cut.policy_gate = deny
     with pytest.raises(CutoverPolicyError): getattr(cut, stage)()
     assert fakes['db'].calls == []
-    assert fakes['worker'].calls == []
+    assert fakes['bot'].calls == []
     assert fakes['connect'].puts == []
 
 
@@ -84,7 +84,7 @@ def test_changed_plan_after_restart_blocks(config, state_dir, fakes):
     cut = _build(config, state_dir, fakes)
     cut.policy_gate = lambda *args: {'plan_digest': 'changed', 'execution_digest': 'test'}
     with pytest.raises(Exception, match='저장된 작업'): cut.stage_fencing()
-    assert not fakes['worker'].calls
+    assert not fakes['bot'].calls
 
 
 def test_wait_limit_blocks_before_grant(config, state_dir, fakes, setup_gate):

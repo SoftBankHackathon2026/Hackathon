@@ -86,7 +86,7 @@ def test_changed_limits_do_not_silently_replace_plan(runtime):
         gate('pre_cutover')
 
 
-def test_refresh_deny_blocks_cutover_before_db_and_worker(runtime, state_dir, fakes):
+def test_refresh_deny_blocks_cutover_before_db_and_bot(runtime, state_dir, fakes):
     config, gate, _, _, instance, _ = runtime
     cut = _build(config, state_dir, fakes)
     cut.policy_gate = gate
@@ -95,7 +95,7 @@ def test_refresh_deny_blocks_cutover_before_db_and_worker(runtime, state_dir, fa
         with pytest.raises(CutoverPolicyError, match=r':deny$'):
             cut.stage_fencing()
         assert not fakes['db'].calls
-        assert not fakes['worker'].calls
+        assert not fakes['bot'].calls
     finally:
         cut.store.close()
 

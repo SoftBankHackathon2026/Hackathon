@@ -146,6 +146,29 @@ class WorkerConfig:
 
 
 @dataclass(frozen=True)
+class BotConfig:
+    """HTTP 요청 생성기. DB 대상 변경은 ingress 가 담당한다."""
+
+    control_url: str = ""
+    token_env: str = "BOT_CONTROL_TOKEN"
+    request_endpoint: str = ""
+    timeout_seconds: float = 15.0
+
+    def __post_init__(self) -> None:
+        from urllib.parse import urlsplit
+        import math
+        for name in ("control_url", "request_endpoint"):
+            value = getattr(self, name)
+            if not value:
+                continue
+            url = urlsplit(value)
+            if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.query or url.fragment:
+                raise ConfigError(f"bot.{name}: 인증정보·쿼리 없는 HTTP(S) URL 필요")
+        if not self.token_env or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ConfigError("bot: token_env 와 양수 timeout_seconds 필요")
+
+
+@dataclass(frozen=True)
 class CutoverConfig:
     demo_total_rows: int | None = None  # opt-in: 800 seed + 100 CDC + 100 target
     state_dir: str = "/var/lib/worker"
@@ -228,7 +251,8 @@ class Config:
     targets: Mapping[str, TargetConfig]
     job: JobConfig = field(default_factory=JobConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
-    worker: WorkerConfig = field(default_factory=WorkerConfig)
+    worker: WorkerConfig = field(default_factory=WorkerConfig)  # standalone legacy CLI only
+    bot: BotConfig = field(default_factory=BotConfig)
     cutover: CutoverConfig = field(default_factory=CutoverConfig)
     ingress: IngressConfig = field(default_factory=IngressConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
@@ -424,6 +448,7 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         job=job,
         kafka=_dataclass_from(KafkaConfig, raw.get("kafka"), "kafka"),
         worker=_dataclass_from(WorkerConfig, raw.get("worker"), "worker"),
+        bot=_dataclass_from(BotConfig, raw.get("bot"), "bot"),
         cutover=_dataclass_from(CutoverConfig, raw.get("cutover"), "cutover"),
         ingress=_parse_ingress(raw.get("ingress"), targets),
         traffic=_parse_traffic(raw.get("traffic"), targets),

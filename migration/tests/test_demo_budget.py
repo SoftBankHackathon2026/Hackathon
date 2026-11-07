@@ -1,119 +1,69 @@
-"""Real worker/SQLite and cutover orchestration; CDC/backend/policy are simulated."""
+"""Bounded HTTP-bot batches replace the retired DB worker in demo orchestration."""
 from dataclasses import replace
-import time
 
 import pytest
 
 from migration.config import ConfigError, parse_config
-from migration.cutover import ApprovalRequired, COMPLETED, Cutover, CutoverError, Ports, VERIFYING
-from migration.loadgen import Worker, WorkerSettings
-from migration.state import CutoverStore, RequestStore
-from tests.test_cutover import FakeConnect, FakeDb, FakeVerify, FakeWorker
-from tests.test_loadgen import MemoryBackend
+from migration.cutover import ApprovalRequired, COMPLETED, CutoverError, VERIFYING
+from tests.test_cutover import fakes, _build, _simulate_replication
 
 
-def test_800_plus_100_plus_100_and_resume_after_target_writes(config, state_dir, monkeypatch):
+def demo(config, fakes):
     config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000,
-                     min_live_rows_after_snapshot=100, min_rows_after_switch=100,
-                     poll_interval_seconds=0.01))
-    backends = {name: MemoryBackend(name) for name in ('onprem', 'aws')}
-    requests = RequestStore(state_dir)
-    worker = Worker(WorkerSettings(run_id='demo', phase='onprem_live', target='onprem',
-                    max_generated=200, rate_per_second=500, state_dir=state_dir, known_targets=('onprem', 'aws')),
-                    requests, backends.__getitem__)
-    connect = FakeConnect()
-
-    class DemoDb(FakeDb):
-        def count_rows(self, target, phase=None):
-            if connect.connectors:
-                self.seed['aws'] = 800
-                backends['aws'].rows.update(backends['onprem'].rows)
-            return self.seed[target] + (0 if phase == 'seed' else len(backends[target].rows))
-
-        def precheck(self, target, *, is_source):
-            return {**super().precheck(target, is_source=is_source), 'row_count': self.count_rows(target)}
-
-        def latest_ids(self, target, n, *, since=None):
-            return list(backends[target].rows)[-n:]
-
-        def count_rows_in_scope(self, target, *, since=None, upto=None):
-            self.count_rows(target)  # 복제 흉내(원본→대상 복사)는 count_rows 에 있다
-            return self.seed[target] if upto is not None else len(backends[target].rows)
-
-        def row_exists(self, target, request_id):
-            return request_id in backends[target].rows
-
-    db = DemoDb(); db.seed = {'onprem': 800, 'aws': 0}
-    ports = Ports(worker=worker, connect=connect, db=db, verify=FakeVerify(), request_store=requests)
-    docs = {kind: {'name': getattr(config.job, kind + '_connector'), 'config': {}}
-            for kind in ('source', 'sink')}
-
-    def cutover():
-        return Cutover(config, CutoverStore(state_dir), ports, connector_docs=docs, approve='local-test',
-                       policy_gate=lambda *a: {'plan_digest': 'test', 'execution_digest': 'test'})
-
-    worker.start()
-    try:
-        first = cutover(); first.approve = None
-        with pytest.raises(ApprovalRequired):
-            first.run()
-        assert db.count_rows('onprem') == db.count_rows('aws') == 900
-        assert worker.status()['generated_total'] == 100
-        # Model a process crash after target resume but before saving VERIFYING.
-        second = cutover()
-        original_save = second._save
-        def crash_after_resume(stage=None, **checkpoint):
-            if stage == VERIFYING:
-                raise RuntimeError('simulated crash after target resume')
-            return original_save(stage, **checkpoint)
-        monkeypatch.setattr(second, '_save', crash_after_resume)
-        with pytest.raises(RuntimeError, match='simulated crash'):
-            second.run()
-        deadline = time.monotonic() + 5
-        while worker.status()['committed_by_target'].get('aws', 0) != 100:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        resumed = cutover()
-        assert resumed.run(force_retry=True) == COMPLETED
-        assert resumed.job.checkpoint['committed_on_target_before'] == 0
-        assert worker.status()['generated_total'] == 200
-        assert db.count_rows('onprem') == 900
-        assert db.count_rows('aws') == 1000
-        assert worker.generate_one() is None
-        assert len(backends['onprem'].rows) == 100
-        assert sum(row[1] == config.job.live_phase_after for row in backends['aws'].rows.values()) == 100
-    finally:
-        worker.stop(); requests.close()
+                     min_live_rows_after_snapshot=100, min_rows_after_switch=100))
+    fakes['db'].seed = {'onprem': 800, 'aws': 0}
+    fakes['db'].rows = {'onprem': 800, 'aws': 0}
+    _simulate_replication(fakes)
+    return config
 
 
-def test_demo_configuration_rejects_a_budget_that_cannot_finish(config):
+def test_800_plus_100_plus_100_and_retry_after_target_delivery(config, state_dir, fakes, monkeypatch):
+    config = demo(config, fakes)
+    first = _build(config, state_dir, fakes)
+    with pytest.raises(ApprovalRequired):
+        first.run()
+    assert fakes['db'].rows == {'onprem': 900, 'aws': 900}
+    assert fakes['bot'].generated == 100 and fakes['bot'].generation == 'stopped'
+    second = _build(config, state_dir, fakes, approve='test')
+    original_save = second._save
+    def crash(stage=None, **checkpoint):
+        if stage == VERIFYING:
+            raise RuntimeError('crash after target delivery')
+        original_save(stage, **checkpoint)
+    monkeypatch.setattr(second, '_save', crash)
+    with pytest.raises(CutoverError, match='crash after target delivery'):
+        second.run()
+    resumed = _build(config, state_dir, fakes, approve='test')
+    assert resumed.run(force_retry=True) == COMPLETED
+    assert resumed.job.checkpoint['target_rows_before'] == 900
+    assert fakes['bot'].generated == 200
+    assert fakes['bot'].generation == 'stopped' and fakes['bot'].pending == 0
+    assert fakes['db'].rows == {'onprem': 900, 'aws': 1000}
+    assert [n for enabled, n in fakes['bot'].calls if enabled] == [100, 200]
+    assert not (state_dir / 'requests.sqlite3').exists()
+
+
+def test_demo_configuration_rejects_invalid_budget(config):
     with pytest.raises(ConfigError):
-        replace(config.cutover, demo_total_rows=1000)  # existing 3/2 thresholds
+        replace(config.cutover, demo_total_rows=1000)
     with pytest.raises(ConfigError):
         replace(config.cutover, demo_total_rows=1001, min_live_rows_after_snapshot=100, min_rows_after_switch=100)
 
 
 @pytest.mark.parametrize('value', [None, 1000])
-def test_yaml_demo_option_keeps_numeric_or_null(config, value):
+def test_yaml_demo_option(config, value):
     from tests.conftest import RAW_CONFIG
     raw = {**RAW_CONFIG, 'cutover': {'demo_total_rows': value}}
     assert parse_config(raw).cutover.demo_total_rows == value
 
 
-@pytest.mark.parametrize('legacy_worker', [True, False])
-def test_demo_precheck_refuses_old_worker_or_existing_data(config, state_dir, legacy_worker):
-    config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000,
-                     min_live_rows_after_snapshot=100, min_rows_after_switch=100))
-    db = FakeDb()
-    if legacy_worker:
-        db.rows['onprem'] = db.seed['onprem'] = 800
-    worker = FakeWorker('onprem')
-    status = worker.status
-    if not legacy_worker:
-        worker.status = lambda: {**status(), 'max_generated': 200, 'generation_limit': 0,
-                                 'generated_total': 0, 'queue_length': 0}
-    cut = Cutover(config, CutoverStore(state_dir), Ports(worker=worker, db=db,
-                  connect=FakeConnect(), verify=FakeVerify()), connector_docs={})
+@pytest.mark.parametrize('problem', ['rows', 'generated', 'running', 'pending'])
+def test_demo_refuses_unprepared_data_or_bot(config, state_dir, fakes, problem):
+    config = demo(config, fakes)
+    if problem == 'rows': fakes['db'].rows['onprem'] = 801
+    if problem == 'generated': fakes['bot'].generated = 1
+    if problem == 'running': fakes['bot'].generation = 'running'
+    if problem == 'pending': fakes['bot'].pending = 1
     with pytest.raises(CutoverError, match='1000-row demo'):
-        cut.stage_precheck()
-    assert not db.calls, 'precheck must refuse before changing DB permissions or CDC'
+        _build(config, state_dir, fakes).run()
+    assert fakes['db'].calls == []
