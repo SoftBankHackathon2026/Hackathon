@@ -21,7 +21,7 @@ jobs:
         run: python -m pip check
       - name: Run identity and database migration regressions
         working-directory: migration
-        run: python -m pytest --tb=short --ignore=tests/test_keycloak_ansible.py tests/identity tests/test_*.py
+        run: python -m pytest --tb=short tests/identity $(ls tests/test_*.py | grep -v test_keycloak_ansible.py)
       - name: Check identity source and tests
         run: |
           ruff check migration/migration/identity migration/tests/identity
