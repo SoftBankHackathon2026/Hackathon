@@ -29,6 +29,8 @@
 | `src/crosscloud/target_deploy.py` | 대상 앱을 대상 DB 프로필로 재배포(Cloud Run·ECS) |
 | `src/crosscloud/ingress_drain.py` | 접수 큐 정리 전 미처리 0 확인 |
 | `deploy/operator-pc/` | 운영자 PC compose 예시(접수 큐·Redis·Connect)와 순서 |
+| `src/crosscloud/rehearsal/` | 실클라우드 왕복 리허설 단계(`python -m crosscloud.rehearsal`). Terraform 출력 → 인계 입력 대응 |
+| `deploy/rehearsal/` | 왕복 리허설 런북(순서·소요·과금 자원·정리·실행 전 확인) |
 | `schema/inventory.schema.json` | `Inventory` JSON 형식의 정본 |
 | `src/crosscloud/secret_transfer/` | Secret 값 이관(AWS↔GCP). 값은 메모리 bytes 로만 다루고 SHA-256 으로 대조 |
 | `src/crosscloud/datapath.py` | 원가연 전환 도구용 DB 로그인(admin·app·cdc·sink·verify)과 대상 스키마 준비 |
