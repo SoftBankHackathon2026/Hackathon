@@ -27,6 +27,7 @@ import {
   topResources,
   envLabels,
   type EnvLabel,
+  withoutDisconnected,
 } from "./costView";
 import {
   BASIS_LABELS,
@@ -817,8 +818,9 @@ function priceSources(overview: CostOverview) {
 const TABS: Tab[] = ["overview", "migration", "environments"];
 
 export function CostsPage({ tab: initial }: { tab?: string } = {}) {
-  const { data: overview } = useSuspenseQuery(costsQueryOptions());
+  const { data: costs } = useSuspenseQuery(costsQueryOptions());
   const fleet = useQuery(fleetQueryOptions());
+  const overview = withoutDisconnected(costs, fleet.data?.environments);
   const label = envLabels(overview, fleet.data?.environments);
   // 탭은 주소(#costs/<탭>)가 정한다. 같은 화면에서 주소만 바뀌어도(뒤로 가기, 링크) 따라간다.
   const tab: Tab = TABS.includes(initial as Tab)
