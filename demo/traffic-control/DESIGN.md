@@ -1,5 +1,8 @@
 # 데모 트래픽 제어 앱 설계
 
+> 2026-11-08: INSERT 워커가 퇴역했다(gitops #75). 지금 제어 대상은 traffic-bot 하나이고, 화면은 심사위원이
+> 처음 봐도 알 수 있게 "요청이 흐르는 길"과 "지금 저장되는 DB"를 보여 준다. 아래 워커 관련 절은 기록으로 남긴다.
+
 시연 때 두 봇(INSERT 워커, traffic-bot)을 버튼으로 켜고 끄는 작은 앱이다. 평소에는 두 봇을 멈춰 DB 가 쓸데없이
 커지지 않게 하고, 시연 때는 "DB 에 직접 쓰는 내부 시스템"과 "HTTP 로 들어오는 사용자 요청" 두 종류의 쓰기가
 전환을 어떻게 지나가는지 켜고 끄며 보여 준다.
@@ -21,6 +24,7 @@
 | 접속 | 공개 주소 없음(ClusterIP). 운영자가 `kubectl port-forward` 로 연다. 온프렘 제어 API 는 밖에 열지 않는다 |
 | 인증 | 운영자·에이전트 모두 공유 키 HMAC 서명. 키는 전송하지 않는다 |
 | 전환 중 | 진행 중인 전환이 있으면 버튼을 잠근다. cutover 가 쓰는 레버(워커 pause/resume·접수 큐)는 건드리지 않는다 |
+| 화면 | 한국어·일본어 병기. 요청 흐름(봇 → 접수 큐 → 앱 → DB)과 접수 큐가 지금 넘기는 대상(온프렘 DB / AWS RDS)을 보여 준다. 운영자 키 입력은 접어 둔다 |
 | 워커 시연 예산 모드 | `max_generated` 가 설정된 워커(총 1,000건 시연, 6d72cbf)는 cutover 가 생성량을 정한다. 앱은 **표시만** 한다 |
 
 ## 3. 구성
@@ -33,10 +37,9 @@
                                          │   GET  /agent/commands  에이전트 서명 필요 ◀─┐ 127.0.0.1, 2초마다
                                          │   POST /agent/report    에이전트 서명 필요 ◀─┤
                                          └ agent 컨테이너 (agent.py, migration-tools 이미지) ┘
-      agent →  GET  db-insert-worker:8080/status (10초마다, 부하 제한)
-               POST db-insert-worker:8080/generation        {enabled}   ← 연속 모드에서만
-               GET  traffic-bot-control:9091/control
+      agent →  GET  traffic-bot-control:9091/control
                POST traffic-bot-control:9091/control/generation {enabled} (Bearer)
+               GET  durable-ingress-control:9092/status     (지금 저장 대상 표시, 읽기만)
                GET  migration-connect:8083/connectors       (전환 잠금 판단)
                워커 PVC db-insert-worker-state/cutover.sqlite3 를 mode=ro 로 (전환 잠금 판단)
 ```
@@ -56,7 +59,7 @@
 - 생성만 멈추고 배달(재시도·확인)은 계속한다. 장부·run_id 는 그대로라 다시 켜면 번호가 이어진다.
 - 재시작하면 `BOT_GENERATION` 값으로 돌아간다. 평소 멈춰 두려면 gitops 에서 `BOT_GENERATION=stopped` 로 둔다.
 
-### INSERT 워커 (Hackathon `migration/loadgen.py`)
+### INSERT 워커 (Hackathon `migration/loadgen.py`) — 2026-11-08 퇴역, 제어 대상에서 뺐다
 
 - 연속 모드(`max_generated` 없음)에만 `POST /generation {"enabled": bool}` 을 더한다. 생성만 멈추고 대기열 전송은 계속한다.
   값은 `worker.json` 에 저장해 liveness 재시작 뒤에도 유지한다.
@@ -70,8 +73,9 @@
 1. Kafka Connect 에 커넥터가 하나라도 있다.
 2. `cutover.sqlite3` 에 종료되지 않은 작업이 있다. 종료는 `COMPLETED`·`ABORTED`·`ROLLED_BACK`, 그리고
    `manual_resolution` 기록이 붙은 작업이다. 해소 기록 없는 `NEEDS_RECOVERY` 도 잠근다(사람이 확정 전).
-3. 워커 상태가 `SWITCHING` 이다.
-4. 에이전트 보고가 15초 넘게 끊겼다(서버 판단).
+3. 에이전트 보고가 15초 넘게 끊겼다(서버 판단).
+
+접수 큐 대상(`/status`)은 표시용이라 읽기에 실패해도 잠그지 않는다.
 
 이유: cutover 는 CATCHING_UP 에서 원본에 100건이 더 쌓이길, VERIFYING 에서 대상에 100건이 커밋되길 기다린다.
 그 사이 워커 생성을 끄면 단계가 시간 초과로 실패한다.
@@ -91,7 +95,6 @@
   서버도 공개 `node` 이미지 + ConfigMap 으로 올린다(온프렘은 GKE Artifact Registry 비공개 이미지를 받지 못한다).
 - 워커 PVC 를 붙이고 워커와 같은 노드에 둔다(RWO local-path). SQLite 는 `mode=ro` 로만 연다. 마운트를 readOnly 로
   하면 WAL DB 를 열고 있는 프로세스가 없을 때 `-shm` 을 못 만들어 열리지 않는다(컨테이너로 확인).
-- 워커 `/status` 는 10초에 한 번만 부른다. 11-07 워커가 `/status` 부하 중 liveness 로 재시작된 일이 있다.
 - 명령은 한 번에 하나씩 실행하고 결과(성공·거절 사유)를 다음 보고에 담는다. 명령을 스스로 재시도하지 않는다.
 - 에이전트는 상태를 "맞추지" 않는다. 사람이 누른 명령만 실행한다(cutover 가 바꾼 상태와 다투지 않으려고).
 
@@ -101,7 +104,7 @@
 | --- | --- | --- |
 | server.js·lib·public·agent.py | 온프렘 k3s `hackathon`, 파드 하나 | gitops `apps/demo-traffic-control` + `argocd/onprem/demo-traffic-control.yaml`, 키는 손으로 만든 Secret `demo-traffic-control` |
 | traffic-bot 제어 경로 | sample-app PR → CI 이미지 → gitops 태그 | 제어 Service `traffic-bot-control:9091`, `BOT_CONTROL_TOKEN` Secret |
-| 워커 생성 스위치 | Hackathon PR → migration 이미지 → gitops 태그 | 가연님 리뷰(시연 예산 모드와 같은 파일) |
+| 워커 생성 스위치 | Hackathon #142 (머지됨) | 워커 퇴역으로 지금은 쓰지 않는다 |
 
 봇 쪽 변경이 배포되기 전에는 앱이 그 봇을 "미지원"으로 표시하고 버튼을 끈다. 앱과 에이전트는 먼저 띄울 수 있다.
 
@@ -120,4 +123,4 @@
 
 - 서버 복제본 1개·메모리 상태: 재시작하면 처리 중 명령 결과를 잃을 수 있다. 봇 상태는 다음 보고로 다시 보인다.
 - 운영자 노트북이 온프렘 클러스터에 닿지 않으면(시연장 네트워크·VPN) 화면을 열 수 없다.
-- 시연 예산 모드에서는 워커를 끌 수 없다. 그 시연에서 "봇 2개 연출"은 traffic-bot 만 켜고 끄는 것으로 한다.
+- 봇은 traffic-bot 하나다. "봇 두 개로 상황 연출"은 워커 퇴역으로 할 수 없고, traffic-bot 을 켜고 끄며 접수 큐가 전환 중에도 요청을 받는 모습을 보여 준다.

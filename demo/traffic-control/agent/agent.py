@@ -1,10 +1,11 @@
-"""데모 트래픽 제어 온프렘 에이전트. 표준 라이브러리만 쓴다 (migration-tools 이미지에서 실행).
+"""데모 트래픽 제어 에이전트. 표준 라이브러리만 쓴다 (migration-tools 이미지에서 실행).
 
-온프렘에서 화면 서버(server.js)와 한 파드에 돌며, 서버에 붙어 사람이 누른 명령을 봇에 전달한다.
+온프렘에서 화면 서버(server.js)와 한 파드에 돌며, 서버에 붙어 사람이 누른 명령을 traffic-bot 에 전달한다.
   - 2초마다 서명한 보고(POST /agent/report)를 보내고 명령(GET /agent/commands)을 가져간다.
   - 명령은 사람이 누른 것만 한 번씩 실행한다. 상태를 스스로 맞추거나 재시도하지 않는다.
-  - 전환이 진행 중이면(커넥터·종료 안 된 작업·워커 SWITCHING) 실행하지 않고 거절을 보고한다.
-설계: demo/traffic-control/DESIGN.md
+  - 전환이 진행 중이면(커넥터·끝나지 않은 작업) 실행하지 않고 거절을 보고한다.
+  - 접수 큐가 지금 요청을 어느 앱·DB 로 넘기는지 읽어 화면에 보여 준다(읽기만 한다).
+INSERT 워커는 2026-11-08 퇴역했다(gitops #75). 설계: demo/traffic-control/DESIGN.md
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-VERSION = "1"
+VERSION = "2"
 TERMINAL = {"COMPLETED", "ABORTED", "ROLLED_BACK"}
 
 
@@ -72,13 +73,13 @@ def http_json(method: str, url: str, *, body: Any = None, headers: dict[str, str
 class Settings:
     control_url: str
     agent_key: str
-    worker_url: str = "http://db-insert-worker:8080"
     bot_url: str = "http://traffic-bot-control:9091"
     bot_token: str | None = None
+    ingress_url: str = "http://durable-ingress-control:9092"
+    ingress_token: str | None = None
     connect_url: str = "http://migration-connect:8083"
     cutover_db: str = "/var/lib/worker/cutover.sqlite3"
     poll_seconds: float = 2.0
-    worker_status_seconds: float = 10.0
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> "Settings":
@@ -90,13 +91,13 @@ class Settings:
             raise SystemExit("CONTROL_URL must be http(s)")
         return cls(
             control_url=url, agent_key=key,
-            worker_url=env.get("WORKER_URL", cls.worker_url).rstrip("/"),
             bot_url=env.get("BOT_CONTROL_URL", cls.bot_url).rstrip("/"),
             bot_token=env.get("BOT_CONTROL_TOKEN") or None,
+            ingress_url=env.get("INGRESS_CONTROL_URL", cls.ingress_url).rstrip("/"),
+            ingress_token=env.get("INGRESS_CONTROL_TOKEN") or None,
             connect_url=env.get("CONNECT_URL", cls.connect_url).rstrip("/"),
             cutover_db=env.get("CUTOVER_DB", cls.cutover_db),
             poll_seconds=float(env.get("POLL_SECONDS", "2")),
-            worker_status_seconds=float(env.get("WORKER_STATUS_SECONDS", "10")),
         )
 
 
@@ -104,33 +105,6 @@ class Settings:
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def summarize_worker(status: dict[str, Any]) -> dict[str, Any]:
-    """워커 /status → 상태판 필드. 시연 예산 모드와 미지원 버전은 제어하지 않는다."""
-    budget = status.get("max_generated") is not None
-    supported = "generation_enabled" in status
-    mode = "budget" if budget else ("continuous" if supported else "unsupported")
-    generation = None
-    if supported and not budget:
-        generation = "running" if status.get("generation_enabled") else "stopped"
-    store = status.get("store_counts") or {}
-    reason = None
-    if budget:
-        reason = "시연 예산 모드: 생성량은 전환 도구가 정합니다"
-    elif not supported:
-        reason = "이 워커 버전에는 생성 스위치가 없습니다"
-    return {
-        "reachable": True, "mode": mode, "generation": generation,
-        "controllable": mode == "continuous",
-        "state": status.get("state"), "target": status.get("target"),
-        "rate_per_second": status.get("rate_per_second"),
-        "pending": status.get("queue_length"), "committed": store.get("committed"),
-        "generated_total": status.get("generated_total"),
-        "generation_limit": status.get("generation_limit"),
-        "max_generated": status.get("max_generated"),
-        "reason": reason, "observed_at": now_iso(),
-    }
 
 
 def summarize_bot(control: dict[str, Any], token_present: bool) -> dict[str, Any]:
@@ -178,8 +152,7 @@ def open_cutover_jobs(db_path: str) -> list[str]:
 
 
 def compute_lock(*, connectors: list[str] | None, connect_error: str | None,
-                 open_jobs: list[str] | None, jobs_error: str | None,
-                 worker_state: str | None) -> dict[str, Any]:
+                 open_jobs: list[str] | None, jobs_error: str | None) -> dict[str, Any]:
     """전환 중이면 잠근다. 확인할 수 없는 것도 잠금 사유다(실패하면 닫힘)."""
     reasons = []
     if connect_error:
@@ -190,8 +163,6 @@ def compute_lock(*, connectors: list[str] | None, connect_error: str | None,
         reasons.append(f"전환 상태 확인 실패({jobs_error})")
     elif open_jobs:
         reasons.append(f"끝나지 않은 전환 작업: {', '.join(open_jobs)[:120]}")
-    if worker_state == "SWITCHING":
-        reasons.append("워커가 대상 DB 를 바꾸는 중(SWITCHING)")
     return {"locked": bool(reasons), "reasons": reasons}
 
 
@@ -201,24 +172,9 @@ def compute_lock(*, connectors: list[str] | None, connect_error: str | None,
 class Agent:
     settings: Settings
     http: Callable[..., Any] = http_json
-    clock: Callable[[], float] = time.monotonic
-    _worker_cache: dict[str, Any] | None = None
-    _worker_at: float = field(default=-1e9)
     _results: list[dict[str, Any]] = field(default_factory=list)
 
     # 관측 -------------------------------------------------------------
-    def worker(self, force: bool = False) -> dict[str, Any]:
-        # /status 는 무겁다(장부 집계). 11-07 부하 중 liveness 재시작이 있어 주기를 제한한다.
-        if not force and self._worker_cache and \
-                self.clock() - self._worker_at < self.settings.worker_status_seconds:
-            return self._worker_cache
-        try:
-            summary = summarize_worker(self.http("GET", f"{self.settings.worker_url}/status"))
-        except HttpError as exc:
-            summary = unreachable(exc.code)
-        self._worker_cache, self._worker_at = summary, self.clock()
-        return summary
-
     def bot(self) -> dict[str, Any]:
         try:
             return summarize_bot(self.http("GET", f"{self.settings.bot_url}/control"),
@@ -228,7 +184,17 @@ class Agent:
                 return unreachable("NOT_SUPPORTED", "이 봇 버전에는 제어 경로가 없습니다")
             return unreachable(exc.code)
 
-    def lock(self, worker: dict[str, Any]) -> dict[str, Any]:
+    def route(self) -> dict[str, Any]:
+        """접수 큐가 지금 요청을 넘기는 대상. 표시용이라 실패해도 잠그지 않는다."""
+        headers = {"Authorization": f"Bearer {self.settings.ingress_token}"} \
+            if self.settings.ingress_token else {}
+        try:
+            got = self.http("GET", f"{self.settings.ingress_url}/status", headers=headers)
+        except HttpError as exc:
+            return {"known": False, "error": exc.code}
+        return {"known": True, "target": got.get("target"), "mode": got.get("mode")}
+
+    def lock(self) -> dict[str, Any]:
         connectors, connect_error = None, None
         try:
             got = self.http("GET", f"{self.settings.connect_url}/connectors")
@@ -243,33 +209,24 @@ class Agent:
         except (sqlite3.Error, OSError) as exc:
             jobs_error = type(exc).__name__
         return compute_lock(connectors=connectors, connect_error=connect_error,
-                            open_jobs=open_jobs, jobs_error=jobs_error,
-                            worker_state=worker.get("state"))
+                            open_jobs=open_jobs, jobs_error=jobs_error)
 
     # 명령 -------------------------------------------------------------
     def execute(self, command: dict[str, Any]) -> dict[str, Any]:
         cid, target, action = command.get("id"), command.get("target"), command.get("action")
         result = {"id": cid, "ok": False}
-        if target not in ("worker", "bot") or action not in ("start", "stop"):
+        if target != "bot" or action not in ("start", "stop"):
             return {**result, "error": "INVALID_COMMAND"}
         # 서버가 확인했어도 실행 직전 상태로 다시 판단한다.
-        worker = self.worker(force=True)
-        lock = self.lock(worker)
+        lock = self.lock()
         if lock["locked"]:
             return {**result, "error": "CUTOVER_LOCK: " + "; ".join(lock["reasons"])[:150]}
-        enabled = action == "start"
+        if not self.settings.bot_token:
+            return {**result, "error": "BOT_CONTROL_TOKEN_MISSING"}
         try:
-            if target == "worker":
-                if not worker.get("controllable"):
-                    return {**result, "error": f"WORKER_NOT_CONTROLLABLE:{worker.get('mode')}"}
-                self.http("POST", f"{self.settings.worker_url}/generation", body={"enabled": enabled})
-                self.worker(force=True)
-            else:
-                if not self.settings.bot_token:
-                    return {**result, "error": "BOT_CONTROL_TOKEN_MISSING"}
-                self.http("POST", f"{self.settings.bot_url}/control/generation",
-                          body={"enabled": enabled},
-                          headers={"Authorization": f"Bearer {self.settings.bot_token}"})
+            self.http("POST", f"{self.settings.bot_url}/control/generation",
+                      body={"enabled": action == "start"},
+                      headers={"Authorization": f"Bearer {self.settings.bot_token}"})
         except HttpError as exc:
             return {**result, "error": exc.code}
         return {**result, "ok": True}
@@ -282,11 +239,9 @@ class Agent:
                          headers={"X-Demo-Auth": header})
 
     def step(self) -> None:
-        worker = self.worker()
-        bot = self.bot()
         report = {"agent": {"version": VERSION, "host": socket.gethostname()},
-                  "bots": {"worker": worker, "bot": bot},
-                  "lock": self.lock(worker), "results": self._results}
+                  "bots": {"bot": self.bot()}, "route": self.route(),
+                  "lock": self.lock(), "results": self._results}
         self._signed("POST", "/agent/report", report)
         self._results = []
         commands = self._signed("GET", "/agent/commands").get("commands", [])
