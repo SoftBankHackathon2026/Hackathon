@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+from functools import partial
 
 from .cloud import collect_cloud, discover_cloud
-from .collector import InventoryError, Kubectl, collect, discover
+from .collector import InventoryError, Kubectl, collect, discover, run_bounded
+from .observation import MAX_NAMESPACES, observe
 from .schema import inventory_digest
 
 
@@ -14,7 +16,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="선택한 Kubernetes 환경의 읽기 전용 정보 수집"
     )
-    parser.add_argument("operation", choices=("discover", "collect"))
+    parser.add_argument("operation", choices=("discover", "collect", "observe"))
     parser.add_argument("--request-id", required=True)
     parser.add_argument("--device-id", required=True)
     parser.add_argument("--epoch", required=True, type=int)
@@ -23,6 +25,8 @@ def main(argv=None) -> int:
         "--provider", choices=("kubernetes", "aws", "gcp"), default="kubernetes"
     )
     parser.add_argument("--cloud-context")
+    parser.add_argument("--namespace-uid")
+    parser.add_argument("--namespaces", default="")
     args = parser.parse_args(argv)
     try:
         binding = {
@@ -36,6 +40,23 @@ def main(argv=None) -> int:
                 if args.provider == "kubernetes"
                 else discover_cloud(args.provider)
             )
+        elif args.operation == "observe":
+            namespaces = args.namespaces.split(",") if args.namespaces else []
+            if (
+                args.provider != "kubernetes"
+                or not args.target_id
+                or not args.namespace_uid
+                or len(namespaces) > MAX_NAMESPACES
+            ):
+                raise InventoryError("INVALID_OBSERVATION_SCOPE")
+            result = {
+                "report": observe(
+                    Kubectl(runner=partial(run_bounded, timeout=8)),
+                    target_id=args.target_id,
+                    namespace_uid=args.namespace_uid,
+                    namespaces=namespaces,
+                )
+            }
         else:
             if not args.target_id:
                 raise InventoryError("TARGET_SELECTION_REQUIRED")

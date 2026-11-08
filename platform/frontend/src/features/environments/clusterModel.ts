@@ -248,12 +248,18 @@ export function clusterRailRows(env: FleetEnvironment): ClusterRailRow[] {
       ? "warn"
       : undefined;
   rows.push({
-    label: measured ? "사용률" : "요청률",
+    label: measured
+      ? "사용률"
+      : env.observed_namespaces
+        ? "범위 내 요청률"
+        : "요청률",
     value: `CPU ${percent(shareOf(cpu))}, 메모리 ${percent(shareOf(mem))}`,
     tone: worst,
     title: measured
       ? "할당 가능량 대비 실사용량"
-      : "실사용량을 읽지 못해 할당 가능량 대비 요청량으로 보여 줘요",
+      : env.observed_namespaces
+        ? `조회한 네임스페이스의 요청량 ÷ 할당 가능량 (${env.observed_namespaces.join(", ")})`
+        : "실사용량을 읽지 못해 할당 가능량 대비 요청량으로 보여 줘요",
   });
   return rows;
 }

@@ -68,9 +68,16 @@ impl Binding {
         Ok(())
     }
 }
-pub fn verify_job(job: &Value, public: &str, device: &str, epoch: u64) -> Result<&'static str> {
+pub fn verify_job(
+    job: &Value,
+    public: &str,
+    request: &str,
+    device: &str,
+    epoch: u64,
+) -> Result<&'static str> {
     let p = &job["payload"];
-    if p["device_id"] != device
+    if p["request_id"] != request
+        || p["device_id"] != device
         || p["epoch"].as_u64() != Some(epoch)
         || p["expires_at_ms"].as_u64().unwrap_or(0) <= crate::now_ms()
     {
@@ -85,6 +92,7 @@ pub fn verify_job(job: &Value, public: &str, device: &str, epoch: u64) -> Result
     match p["operation"].as_str() {
         Some("environment.discover") => Ok("discover"),
         Some("environment.inspect") => Ok("collect"),
+        Some("environment.observe") => Ok("observe"),
         _ => Err("operation forbidden".into()),
     }
 }

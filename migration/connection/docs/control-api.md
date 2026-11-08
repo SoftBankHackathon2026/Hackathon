@@ -80,7 +80,7 @@ Snapshot의 `collectionPending`은 유효한 수집 작업이 있고 승인·터
 
 브로커 보고 `/{id}/tunnel`은 epoch/connection_id/state를 필수로 받습니다. READY는 checks=2(양방향 확인), key_expires_at_ms(최대 30분), lease_expires_at_ms(최대 60초)를 요구합니다. 같은 세대의 키 수명을 heartbeat로 늘릴 수 없습니다. Snapshot의 tunnelChecks=4는 화면의 인증·키 설정·WireGuard·양방향 확인 네 단계를 뜻합니다. 새 세대는 진행 중 수집 작업을 무효화합니다.
 
-단말의 poll/discovered/inventory 요청은 **터널 서비스가 중계한 runtime `/{id}/device`**에서만 처리합니다. 외부 공개 경로에서 같은 서명 요청을 보내도 거절합니다. 조회 작업은 job_id/operation/device_id/request_id/epoch/target_id/expires_at_ms를 담고 `migration/job/v1\n` 접두부로 서명합니다. 조회 작업의 유효기간은 120초이고 단말 수집 실행 상한은 90초입니다. 실행 중에도 15초마다 서명된 확인 요청으로 터널의 60초 임대를 유지하며 완료 시 작업 만료를 재검사합니다. operation은 environment.inspect만 허용합니다. 설치·셸·비밀 읽기 작업은 없습니다.
+단말의 poll/discovered/inventory 요청은 **터널 서비스가 중계한 runtime `/{id}/device`**에서만 처리합니다. 외부 공개 경로에서 같은 서명 요청을 보내도 거절합니다. 조회 작업은 job_id/operation/device_id/request_id/epoch/target_id/expires_at_ms를 담고 `migration/job/v1\n` 접두부로 서명합니다. 조회 작업의 유효기간은 120초이고 단말 수집 실행 상한은 90초입니다. 실행 중에도 15초마다 서명된 확인 요청으로 터널의 60초 임대를 유지하며 완료 시 작업 만료를 재검사합니다. 등록 조회에는 `environment.inspect`를 사용합니다. 설치·셸·비밀 읽기 작업은 없습니다.
 
 inventory 결과는 `{job_id,report}`입니다. report의 요청·단말·세대·선택 대상·수집 시각과 고정 허용 필드를 검사합니다. 결과와 표시 요약을 대조하여 원문 자격증명을 넣는 임의 필드를 허용하지 않습니다. 같은 조직의 브라우저라도 다른 대상·해시·세대의 결과로 등록할 수 없습니다.
 
@@ -99,3 +99,7 @@ python -m pytest migration/connection/tests/test_control_integration.py -q
 ```
 
 공개키·감사 기록의 주기적 보존기간 정리, 별도 프로젝트 권한 모델, 실제 고객 네트워크와 Kubernetes 인수 시험은 추가 운영 검증 대상입니다. 연결 완료를 설치·이관 완료로 표시하지 않습니다.
+
+등록된 온프레미스 환경을 주기적으로 읽는 단말은 터널의 `poll` 데이터에 `observation_version: 1`을 보냅니다. 연결 서비스는 진행 중인 등록 조회를 우선하며, 정상 연결에서 60초 간격으로 서명된 `environment.observe` 작업을 발급합니다. 작업에는 등록한 대상과 클러스터 식별자, 등록 당시 워크로드에서 확인된 네임스페이스(최대 16개)가 포함됩니다. 해당 목록이 비어 있으면 클러스터와 노드만 조회합니다.
+
+단말은 기존 Kubernetes 접속 설정으로 조회한 뒤 `observation` 동작의 `{job_id, report}`로 허용된 상태 필드만 보냅니다. 전체 조회가 실패하면 `report: null`을 보냅니다. 개별 조회 결과가 권한·가용성·응답 크기 한계로 빠지면 해당 항목은 미확인으로 처리합니다. 서버는 같은 요청·단말·연결 세대에서 발급된 미만료 작업과 대상 범위를 검증하고, 최신 성공 결과를 등록 자료와 따로 저장합니다. 기존 단말은 설치된 배포본을 갱신하기 전까지 등록 당시 정보가 표시됩니다.
