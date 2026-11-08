@@ -32,7 +32,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: viewer
-          image: asia-northeast3-docker.pkg.dev/ghost-project-513812/ghost/demo-viewer:3470c08ad55b810074701bcd18bfe13e6fb12b95
+          image: asia-northeast3-docker.pkg.dev/ghost-project-513812/ghost/demo-viewer:50b028afe540721adbe09c38833798151098d455
           ports: [{name: http, containerPort: 5050}]
           env:
             - {name: PORT, value: "5050"}
