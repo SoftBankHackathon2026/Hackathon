@@ -29,8 +29,8 @@ def test_nothing_to_fix_is_not_announced(make_world) -> None:
 
 def test_same_hand_off_is_announced_once(make_world) -> None:
     w = make_world(kv=good_kv(), evaluator=FakeEvaluator(extra_reason="EVIDENCE-MISSING", force_outcome="hold"))
-    for _ in range(3):
-        assert w.remediator.run().state == "HANDED_OFF"
+    states = [w.remediator.run().state for _ in range(3)]
+    assert states == ["HANDED_OFF", "REPEATED", "REPEATED"]
     assert len(w.notes) == 1 and w.notes[0].startswith("🙋 *사람 확인 필요*")
 
 
@@ -85,11 +85,13 @@ def test_config_reads_thread_and_approve_command() -> None:
 
 def test_unverified_hold_alerts_only_after_three_in_a_row(make_world) -> None:
     w = make_world(kv=good_kv(), evaluator=FakeEvaluator(extra_reason="APP-01-UNVERIFIED", force_outcome="hold"))
-    for _ in range(2):
-        assert w.remediator.run().state == "HANDED_OFF"
+    first = w.remediator.run()
+    assert first.state == "HANDED_OFF"
+    assert w.remediator.run().state == "REPEATED"
     assert w.notes == []
     w.remediator.run()
-    assert len(w.notes) == 1 and w.notes[0].startswith("🙋")
+    assert len(w.notes) == 1 and w.notes[0].startswith("🙋") and f"`{first.run_id}`" in w.notes[0]
+    assert "같은 사유 3번째" in w.notes[0]
     for _ in range(3):
         w.remediator.run()
     assert len(w.notes) == 1

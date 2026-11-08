@@ -10,11 +10,11 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
-from .runs import NOTHING_TO_FIX, Run, RunStore
+from .runs import NOTHING_TO_FIX, REPEATED, Run, RunStore
 
 log = logging.getLogger("agent.platform")
 AGENT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
-QUIET_STATES = frozenset({NOTHING_TO_FIX})
+QUIET_STATES = frozenset({NOTHING_TO_FIX, REPEATED})
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

@@ -24,6 +24,8 @@ RESTART_FAILED = "RESTART_FAILED"
 RESOLVED = "RESOLVED"
 UNRESOLVED = "UNRESOLVED"
 ERROR = "ERROR"
+# 바로 앞 넘김과 같은 사유로 다시 넘긴 실행. 첫 실행에 횟수만 더하고 따로 보고하지 않는다.
+REPEATED = "REPEATED"
 
 # 프로세스 종료 코드 0 인 끝 상태. 나머지는 사람이 봐야 한다.
 OK_STATES = frozenset({NOTHING_TO_FIX, WAITING_APPROVAL, RESOLVED})
