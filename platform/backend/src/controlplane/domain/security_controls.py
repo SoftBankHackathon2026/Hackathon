@@ -2,6 +2,9 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from controlplane.domain.compliance_mappings import ISMAP, ISMS_CLOUD
 from controlplane.domain.fleet import EnvironmentSnapshot, Workload
 from controlplane.schemas.migrations import ComponentView
 from controlplane.schemas.security import Category, ControlResult, Severity, Standard
@@ -12,10 +15,37 @@ STANDARDS = [
     Standard(id="CIS-GCP", name="CIS Google Cloud Platform Foundation Benchmark"),
     Standard(id="NSA-K8S", name="NSA/CISA Kubernetes Hardening Guide"),
     Standard(id="ONEPORT", name="Oneport 마이그레이션 정책 (OPA)"),
+    Standard(
+        id=ISMAP.standard,
+        name="ISMAP 政府情報システムのためのセキュリティ評価制度",
+        kind="coverage",
+        version=ISMAP.version,
+        note=f"{ISMAP.basis} 기준. 고객 측 기술 통제만 점검하고 조직·인적·물리 통제는 점검하지 않아요.",
+    ),
+    Standard(
+        id=ISMS_CLOUD.standard,
+        name="ISMS 클라우드 보안 인증 (ISO/IEC 27017)",
+        kind="coverage",
+        version=ISMS_CLOUD.version,
+        note=f"{ISMS_CLOUD.basis} 기준. 고객 측 기술 통제만 점검하고 조직·인적·물리 통제는 점검하지 않아요.",
+    ),
 ]
 DIGEST_IMAGE = re.compile(r"@sha256:[0-9a-f]{64}$")
+MINOR_VERSION = re.compile(r"^v?(\d+)\.(\d+)")
+
+
+class SecurityPolicy(BaseModel):
+    """환경마다 달라질 수 있는 점검 기준값. 값은 설정(core.config.SecuritySettings)에서 온다."""
+
+    model_config = ConfigDict(frozen=True)
+
+    japan_regions: frozenset[str]
+    k8s_min_minor: str = Field(pattern=r"^\d+\.\d+$")
+    k8s_max_node_skew: int = Field(ge=0)
+
 
 Check = Callable[[EnvironmentSnapshot], ControlResult]
+PolicyCheck = Callable[[EnvironmentSnapshot, SecurityPolicy], ControlResult]
 
 
 @dataclass(frozen=True)
@@ -26,9 +56,11 @@ class Control:
     severity: Severity
     standard_refs: tuple[str, ...]
     remediation: str
-    check: Check
+    check: Check | PolicyCheck
     why: str = ""
     targets: tuple[str, ...] = ()
+    # True 면 check 가 (snapshot, policy) 를 받는다.
+    uses_policy: bool = False
 
 
 def passed(detail: str) -> ControlResult:
@@ -41,6 +73,10 @@ def failed(detail: str) -> ControlResult:
 
 def unknown(detail: str = "근거를 수집하지 못했어요.") -> ControlResult:
     return ControlResult(status="unknown", detail=detail)
+
+
+def not_applicable(detail: str) -> ControlResult:
+    return ControlResult(status="not_applicable", detail=detail)
 
 
 def declared(value: bool | None, yes: str, no: str) -> ControlResult:
@@ -161,6 +197,74 @@ def _declared(attribute: str, yes: str, no: str) -> Check:
     return check
 
 
+def _has_database(snapshot: EnvironmentSnapshot) -> bool:
+    return any(service.kind == "postgres" for service in snapshot.config.data_services)
+
+
+def _database_only(check: Check) -> Check:
+    def guarded(snapshot: EnvironmentSnapshot) -> ControlResult:
+        if not _has_database(snapshot):
+            return not_applicable("이 환경에는 DB가 없어요.")
+        return check(snapshot)
+
+    return guarded
+
+
+def _japan_region(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -> ControlResult:
+    env = snapshot.config
+    if env.provider == "onprem":
+        return unknown(
+            f"온프렘 사이트 '{env.region}'는 클라우드 리전 코드가 아니어서 "
+            "데이터가 일본에 있는지 판단할 수 없어요."
+        )
+    located = [(f"{env.kind.upper()} 클러스터", env.region)] + [
+        (service.name, service.region or env.region) for service in env.data_services
+    ]
+    outside = [
+        f"{name}({region})" for name, region in located if region not in policy.japan_regions
+    ]
+    if outside:
+        return failed(f"일본 밖 리전: {', '.join(outside)}")
+    regions = sorted({region for _, region in located})
+    return passed(f"클러스터와 데이터 서비스 {len(located)}개 모두 일본 리전({', '.join(regions)})")
+
+
+def _minor(version: str | None) -> tuple[int, int] | None:
+    match = MINOR_VERSION.match(version or "")
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def _supported_versions(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -> ControlResult:
+    cluster = snapshot.cluster
+    control_plane = _minor(cluster.version)
+    if not cluster.connected or control_plane is None:
+        return unknown("컨트롤플레인 버전을 읽지 못했어요.")
+    floor = _minor(policy.k8s_min_minor)
+    shown = f"v{control_plane[0]}.{control_plane[1]}"
+    if control_plane < floor:
+        return failed(f"컨트롤플레인 {shown}: 지원 하한 v{policy.k8s_min_minor} 미만")
+    if cluster.nodes is None:
+        return unknown(f"컨트롤플레인 {shown}는 지원 범위지만 노드 버전을 읽지 못했어요.")
+    kubelets = {n.name: _minor(n.kubelet_version) for n in cluster.nodes if n.kubelet_version}
+    kubelets = {name: minor for name, minor in kubelets.items() if minor is not None}
+    if cluster.nodes and not kubelets:
+        return unknown(f"컨트롤플레인 {shown}는 지원 범위지만 노드 버전을 읽지 못했어요.")
+    problems = []
+    for name, (major, minor) in sorted(kubelets.items()):
+        if (major, minor) > control_plane:
+            problems.append(f"{name} v{major}.{minor}(컨트롤플레인보다 새 버전)")
+        elif major != control_plane[0] or control_plane[1] - minor > policy.k8s_max_node_skew:
+            problems.append(f"{name} v{major}.{minor}(허용 차이 {policy.k8s_max_node_skew} 초과)")
+        elif (major, minor) < floor:
+            problems.append(f"{name} v{major}.{minor}(지원 하한 미만)")
+    if problems:
+        return failed(f"노드 버전 문제: {', '.join(problems)}")
+    return passed(
+        f"컨트롤플레인 {shown}, 노드 {len(kubelets)}개 모두 허용 차이 "
+        f"{policy.k8s_max_node_skew} 이내"
+    )
+
+
 def _db_private(snapshot: EnvironmentSnapshot) -> ControlResult:
     public = snapshot.config.declared.db_public
     if public is None:
@@ -187,7 +291,7 @@ CONTROLS: tuple[Control, ...] = (
         "critical",
         ("ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"),
         "DB를 사설 서브넷/ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
-        _db_private,
+        _database_only(_db_private),
     ),
     Control(
         "NET-03",
@@ -297,7 +401,7 @@ CONTROLS: tuple[Control, ...] = (
         "high",
         ("ONEPORT", "CIS-GCP 6.4"),
         "rds.force_ssl=1, Cloud SQL ssl_mode=ENCRYPTED_ONLY 또는 pg_hba hostssl만 허용하세요.",
-        _declared("db_tls_required", "DB가 TLS 연결만 허용", "DB가 평문 연결 허용"),
+        _database_only(_declared("db_tls_required", "DB가 TLS 연결만 허용", "DB가 평문 연결 허용")),
     ),
     Control(
         "DATA-02",
@@ -306,7 +410,9 @@ CONTROLS: tuple[Control, ...] = (
         "high",
         ("AWS-FSBP RDS.3",),
         "스토리지 암호화를 켜세요.",
-        _declared("db_encrypted_at_rest", "DB 스토리지 암호화", "DB 스토리지 미암호화"),
+        _database_only(
+            _declared("db_encrypted_at_rest", "DB 스토리지 암호화", "DB 스토리지 미암호화")
+        ),
     ),
     Control(
         "DATA-03",
@@ -315,7 +421,7 @@ CONTROLS: tuple[Control, ...] = (
         "medium",
         ("AWS-FSBP RDS.11", "CIS-GCP 6.7"),
         "자동 백업 또는 주기 덤프를 구성하세요.",
-        _declared("db_backups", "DB 백업 구성됨", "DB 백업 없음"),
+        _database_only(_declared("db_backups", "DB 백업 구성됨", "DB 백업 없음")),
     ),
     Control(
         "DATA-04",
@@ -380,6 +486,28 @@ CONTROLS: tuple[Control, ...] = (
         "ResourceQuota/LimitRange로 자원 상한을 두세요.",
         _resource_quota,
     ),
+    Control(
+        "JP-01",
+        "일본 리전 데이터 저장",
+        "japan",
+        "high",
+        (),
+        "클러스터와 DB·메시지·오브젝트 스토리지를 도쿄(ap-northeast-1, asia-northeast1) "
+        "또는 오사카(ap-northeast-3, asia-northeast2) 리전에 두세요. 백업·복제본도 같은 범위에 두세요.",
+        _japan_region,
+        uses_policy=True,
+    ),
+    Control(
+        "JP-09",
+        "지원되는 클러스터/노드 버전",
+        "japan",
+        "medium",
+        (),
+        "컨트롤플레인을 지원 기간 안의 버전으로 올리고, 노드 그룹도 컨트롤플레인과 같은 "
+        "마이너 버전으로 맞추세요.",
+        _supported_versions,
+        uses_policy=True,
+    ),
 )
 
 
@@ -407,6 +535,8 @@ CONTROL_WHY = {
     "DET-04": "흐름 로그가 없으면 차단된 접근 시도나 예상하지 못한 통신을 사후에 확인할 수 없어요.",
     "GOV-01": "정책 게이트 없이 전환하면 DB 노출이나 미동기화 같은 조건을 사람이 놓쳐도 그대로 진행돼요.",
     "GOV-02": "자원 상한이 없으면 한 앱의 폭주가 같은 클러스터의 다른 앱까지 멈추게 할 수 있어요.",
+    "JP-01": "일본 정부·공공 시스템은 데이터 소재지와 준거법을 일본으로 두도록 요구해요. 일본 밖 리전에 두면 외국 법률이 적용될 수 있고 개인정보의 국외 이전 절차도 필요해져요.",
+    "JP-09": "지원이 끝난 버전은 보안 패치가 나오지 않아요. 노드와 컨트롤플레인 버전이 벌어지면 업그레이드가 밀리고 알려진 취약점이 남아요.",
 }
 CONTROL_TARGETS = {
     "NET-02": ("postgres",),
@@ -431,5 +561,11 @@ def affected_components(control_id: str, components: list[ComponentView]) -> lis
     return [c.name for c in components if c.kind in targets or c.layer in targets]
 
 
-def evaluate(snapshot: EnvironmentSnapshot) -> dict[str, ControlResult]:
-    return {control.id: control.check(snapshot) for control in CONTROLS}
+def run_check(
+    control: Control, snapshot: EnvironmentSnapshot, policy: SecurityPolicy
+) -> ControlResult:
+    return control.check(snapshot, policy) if control.uses_policy else control.check(snapshot)
+
+
+def evaluate(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -> dict[str, ControlResult]:
+    return {control.id: run_check(control, snapshot, policy) for control in CONTROLS}

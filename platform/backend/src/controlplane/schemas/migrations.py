@@ -22,6 +22,8 @@ class DataService(BaseModel):
     kind: Literal["postgres", "kafka", "object_storage", "vector_db"]
     name: str
     managed: bool
+    # 환경과 다른 리전에 둔 관리형 서비스만 적는다. 비우면 환경 리전에 있다고 본다.
+    region: str | None = None
 
 
 ComponentLayer = Literal["entry", "platform", "app", "migration", "data", "link"]

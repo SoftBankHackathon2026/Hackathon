@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Control } from "../src/api/security.ts";
 import {
+  CATEGORY_LABELS,
+  COVERAGE_BAND_LABELS,
+  COVERAGE_LABEL,
   filterControls,
   compareSummary,
   groupByCategory,
   hasEnoughEvidence,
+  isCoverageStandard,
   NO_FILTERS,
   overviewScore,
   scoreTone,
   standardCompliance,
   standardId,
+  STATUS_LABELS,
+  statusTone,
 } from "../src/features/security/posture.ts";
 
 function control(
@@ -155,4 +161,46 @@ test("compareSummary explains the migration in a sentence and names strengthened
   const weak = compareSummary({ regressions: ["B"], improvements: [] }, list);
   assert.equal(weak.sentence, "도착 환경에서 새로 실패한 통제가 1개 있어요");
   assert.deepEqual(weak.weakened, ["둘째"]);
+});
+
+test("manual and not_applicable stay out of the score and unknown count", () => {
+  const jp = [
+    control("JP-01", "japan", "high", { aws: "fail" }, ["ISMAP 18.1.1"]),
+    control("JP-09", "japan", "medium", { aws: "pass" }, ["ISMAP 12.6.1"]),
+    control("DET-02", "detection", "medium", { aws: "manual" }, [
+      "ISMAP 18.2.3",
+    ]),
+    control("DATA-01", "data", "high", { aws: "not_applicable" }, [
+      "ISMAP 10.1.1",
+    ]),
+  ];
+  const [row] = standardCompliance([{ id: "ISMAP", name: "ISMAP" }], jp, [
+    "aws",
+  ]);
+  assert.deepEqual(
+    {
+      pass: row.envs.aws.pass,
+      fail: row.envs.aws.fail,
+      unknown: row.envs.aws.unknown,
+      total: row.envs.aws.total,
+      score: row.envs.aws.score,
+    },
+    { pass: 1, fail: 1, unknown: 0, total: 2, score: 50 },
+  );
+});
+
+test("new statuses and the japan category have labels", () => {
+  assert.equal(STATUS_LABELS.manual, "수동 확인");
+  assert.equal(STATUS_LABELS.not_applicable, "해당 없음");
+  assert.equal(CATEGORY_LABELS.japan, "일본 기준");
+  assert.equal(statusTone("manual"), "idle");
+  assert.equal(statusTone("not_applicable"), "idle");
+});
+
+test("only coverage standards use the coverage wording", () => {
+  assert.equal(isCoverageStandard({ kind: "coverage" }), true);
+  assert.equal(isCoverageStandard({ kind: "compliance" }), false);
+  assert.equal(isCoverageStandard({}), false);
+  assert.equal(COVERAGE_LABEL, "기술 통제 커버리지");
+  assert.equal(COVERAGE_BAND_LABELS.high, "기술 통제 양호");
 });

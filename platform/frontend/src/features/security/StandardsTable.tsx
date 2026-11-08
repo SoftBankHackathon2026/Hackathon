@@ -1,9 +1,16 @@
 import { Fragment, useState } from "react";
-import type { Control, EnvironmentScore } from "../../api/security";
+import type { Control, EnvironmentScore, Standard } from "../../api/security";
 import { StatusLabel } from "../../components/PageKit";
 import type { Tone } from "../migrations/stages";
 import { CategoryIcon } from "./CategoryIcon";
-import { BAND_LABELS, scoreBand, standardId } from "./posture";
+import {
+  BAND_LABELS,
+  COVERAGE_BAND_LABELS,
+  COVERAGE_LABEL,
+  isCoverageStandard,
+  scoreBand,
+  standardId,
+} from "./posture";
 import { SeverityMeter } from "./SeverityMeter";
 
 const BAND_TONES: Record<string, Tone> = {
@@ -42,9 +49,9 @@ function Counts({ pass, fail }: { pass: number; fail: number }) {
   );
 }
 
-function Posture({ rate }: { rate: number | null }) {
+function Posture({ rate, caption }: { rate: number | null; caption?: string }) {
   return (
-    <span className="posture">
+    <span className="posture" title={caption}>
       <span className="posture-track" aria-hidden="true">
         {rate !== null && (
           <span
@@ -54,6 +61,7 @@ function Posture({ rate }: { rate: number | null }) {
         )}
       </span>
       <b>{rate === null ? "-" : `${rate}%`}</b>
+      {caption && <small className="posture-caption">{caption}</small>}
     </span>
   );
 }
@@ -69,7 +77,7 @@ export function StandardsTable({
   onSelect,
   onControl,
 }: {
-  standards: { id: string; name: string }[];
+  standards: Standard[];
   controls: Control[];
   environments: EnvironmentScore[];
   onSelect: (standardId: string) => void;
@@ -140,8 +148,18 @@ export function StandardsTable({
                       <span>
                         <span className="rule-title">{row.standard.name}</span>
                         <span className="rule-sub">
-                          {row.standard.id}, 통제 {row.members.length}개
+                          {row.standard.id}
+                          {row.standard.version
+                            ? ` (${row.standard.version})`
+                            : ""}
+                          , 통제 {row.members.length}개
                         </span>
+                        {isCoverageStandard(row.standard) &&
+                          row.standard.note && (
+                            <span className="rule-sub std-note">
+                              {row.standard.note}
+                            </span>
+                          )}
                       </span>
                     </span>
                   </td>
@@ -150,13 +168,22 @@ export function StandardsTable({
                     <Counts pass={row.pass} fail={row.fail} />
                   </td>
                   <td>
-                    <Posture rate={row.rate} />
+                    <Posture
+                      rate={row.rate}
+                      caption={
+                        isCoverageStandard(row.standard)
+                          ? COVERAGE_LABEL
+                          : undefined
+                      }
+                    />
                   </td>
                   <td>
                     <span className="std-verdict">
                       {band ? (
                         <StatusLabel tone={BAND_TONES[band]}>
-                          {BAND_LABELS[band]}
+                          {isCoverageStandard(row.standard)
+                            ? COVERAGE_BAND_LABELS[band]
+                            : BAND_LABELS[band]}
                         </StatusLabel>
                       ) : (
                         <StatusLabel tone="idle">점검 결과 부족</StatusLabel>

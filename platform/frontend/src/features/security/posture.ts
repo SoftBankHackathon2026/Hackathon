@@ -14,6 +14,7 @@ export const CATEGORY_ORDER: Category[] = [
   "data",
   "detection",
   "governance",
+  "japan",
 ];
 
 export const CATEGORY_LABELS: Record<Category, string> = {
@@ -23,6 +24,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   data: "데이터",
   detection: "탐지/감사",
   governance: "거버넌스",
+  japan: "일본 기준",
 };
 
 export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
@@ -39,7 +41,15 @@ export const STATUS_LABELS: Record<ControlStatus, string> = {
   fail: "실패",
   unknown: "미확인",
   not_applicable: "해당 없음",
+  manual: "수동 확인",
 };
+
+/** 고객 측 기술 통제만 보는 표준(ISMAP 등)은 "준수율" 대신 이 이름으로 보여 준다. */
+export const COVERAGE_LABEL = "기술 통제 커버리지";
+
+export function isCoverageStandard(standard: { kind?: string | null }) {
+  return standard.kind === "coverage";
+}
 
 export type PostureFilters = {
   severity: Severity | "all";
@@ -149,7 +159,9 @@ export function standardCompliance(
         control: c,
         status: c.results[envId]?.status,
       }));
-      const evaluated = results.filter((r) => r.status !== "not_applicable");
+      const evaluated = results.filter(
+        (r) => r.status !== "not_applicable" && r.status !== "manual",
+      );
       const pass = evaluated.filter((r) => r.status === "pass").length;
       const failed = evaluated.filter((r) => r.status === "fail");
       const unknown = evaluated.length - pass - failed.length;
@@ -251,6 +263,13 @@ export const BAND_LABELS: Record<ScoreBand, string> = {
   high: "기준 충족",
   mid: "보통",
   low: "기준 미달",
+};
+
+/** 커버리지 표준은 "기준 충족"처럼 인증 판정으로 읽히지 않게 따로 부른다. */
+export const COVERAGE_BAND_LABELS: Record<ScoreBand, string> = {
+  high: "기술 통제 양호",
+  mid: "보통",
+  low: "보완 필요",
 };
 
 export function complianceBar(

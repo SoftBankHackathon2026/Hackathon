@@ -17,6 +17,7 @@ const STATUS_DOT = {
   pass: "ok",
   unknown: "idle",
   not_applicable: "none",
+  manual: "none",
 } as const;
 
 /**

@@ -80,6 +80,32 @@ class _HttpEnvironment(BaseSettings):
         return _split_csv(value)
 
 
+class SecuritySettings(BaseSettings):
+    """보안 탭 점검 기준값. ONEPORT_SECURITY_* 환경변수로 바꾼다.
+
+    k8s_min_minor 는 EKS/GKE 표준 지원 일정에 맞춰 운영자가 올려야 한다(2026-11 기준 1.34).
+    k8s_max_node_skew 는 컨트롤플레인과 각 노드 kubelet 의 마이너 버전 차이 허용값이다.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="ONEPORT_SECURITY_", extra="ignore")
+
+    japan_regions: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "ap-northeast-1",
+            "ap-northeast-3",
+            "asia-northeast1",
+            "asia-northeast2",
+        ]
+    )
+    k8s_min_minor: str = Field(default="1.34", pattern=r"^\d+\.\d+$")
+    k8s_max_node_skew: int = Field(default=1, ge=0, le=3)
+
+    @field_validator("japan_regions", mode="before")
+    @classmethod
+    def comma_separated(cls, value: object) -> object:
+        return _split_csv(value)
+
+
 class PlatformEnvironment(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ONEPORT_", extra="ignore")
 

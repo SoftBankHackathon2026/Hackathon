@@ -1,11 +1,14 @@
 from datetime import UTC, datetime
 
+from controlplane.core.config import SecuritySettings
+from controlplane.domain.compliance_mappings import standard_refs
 from controlplane.domain.fleet import EnvironmentSnapshot
 from controlplane.domain.security_controls import (
     CONTROL_TARGETS,
     CONTROL_WHY,
     CONTROLS,
     STANDARDS,
+    SecurityPolicy,
     affected_components,
     evaluate,
 )
@@ -28,7 +31,7 @@ def posture_of(
 ) -> EnvironmentPosture:
     severity = SeverityCounts()
     earned = possible = 0
-    passed = failed = unknown = 0
+    passed = failed = unknown = not_applicable = manual = 0
     for control in CONTROLS:
         status = results[control.id].status
         weight = SEVERITY_WEIGHT[control.severity]
@@ -42,6 +45,10 @@ def posture_of(
             setattr(severity, control.severity, getattr(severity, control.severity) + 1)
         elif status == "unknown":
             unknown += 1
+        elif status == "not_applicable":
+            not_applicable += 1
+        elif status == "manual":
+            manual += 1
     return EnvironmentPosture(
         env_id=snapshot.config.id,
         name=snapshot.config.name,
@@ -49,6 +56,8 @@ def posture_of(
         passed=passed,
         failed=failed,
         unknown=unknown,
+        not_applicable=not_applicable,
+        manual=manual,
         by_severity=severity,
     )
 
@@ -72,9 +81,19 @@ def parity_of(
     )
 
 
+def policy_from_settings(settings: SecuritySettings | None = None) -> SecurityPolicy:
+    settings = settings or SecuritySettings()
+    return SecurityPolicy(
+        japan_regions=frozenset(settings.japan_regions),
+        k8s_min_minor=settings.k8s_min_minor,
+        k8s_max_node_skew=settings.k8s_max_node_skew,
+    )
+
+
 class SecurityService:
-    def __init__(self, source: FleetSource) -> None:
+    def __init__(self, source: FleetSource, policy: SecurityPolicy | None = None) -> None:
         self._source = source
+        self._policy = policy or policy_from_settings()
 
     def _pairs(self, snapshots: list[EnvironmentSnapshot]) -> list[tuple[str, str]]:
         legacy = next(
@@ -85,7 +104,7 @@ class SecurityService:
 
     def get_posture(self) -> SecurityPosture:
         snapshots = self._source.list_environments()
-        results = {s.config.id: evaluate(s) for s in snapshots}
+        results = {s.config.id: evaluate(s, self._policy) for s in snapshots}
         for snapshot in snapshots:
             components = environment_components(snapshot)
             for control_id, result in results[snapshot.config.id].items():
@@ -102,7 +121,7 @@ class SecurityService:
                     title=control.title,
                     category=control.category,
                     severity=control.severity,
-                    standard_refs=list(control.standard_refs),
+                    standard_refs=standard_refs(control.id, control.standard_refs),
                     remediation=control.remediation,
                     why=CONTROL_WHY.get(control.id, ""),
                     scope="resource" if control.id in CONTROL_TARGETS else "environment",

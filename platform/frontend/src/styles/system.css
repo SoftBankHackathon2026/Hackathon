@@ -1025,6 +1025,10 @@ th[aria-sort="descending"] .pk-sort-mark {
   background: var(--surface-subtle);
   color: var(--text-secondary);
 }
+.cat-japan {
+  background: #fbe9ec;
+  color: #b4233c;
+}
 /* 심각도 막대 표식 */
 .sev-meter {
   display: inline-flex;
@@ -1194,6 +1198,20 @@ th[aria-sort="descending"] .pk-sort-mark {
   align-items: center;
   width: 100%;
   min-width: 160px;
+}
+.posture:has(.posture-caption) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.posture-caption {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+  font: var(--type-label);
+}
+.std-note {
+  display: block;
+  max-width: 520px;
+  white-space: normal;
 }
 .posture-track {
   flex: 1;

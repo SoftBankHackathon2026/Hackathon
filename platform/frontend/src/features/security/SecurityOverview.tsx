@@ -12,7 +12,13 @@ import {
   severityTotals,
   topFailing,
 } from "./overview";
-import { CATEGORY_LABELS, SEVERITY_LABELS, standardId } from "./posture";
+import {
+  CATEGORY_LABELS,
+  COVERAGE_LABEL,
+  isCoverageStandard,
+  SEVERITY_LABELS,
+  standardId,
+} from "./posture";
 import { SeverityMeter } from "./SeverityMeter";
 
 /**
@@ -294,7 +300,10 @@ export function SecurityOverview({
             <li key={standard.id}>
               <span className="rule-text">
                 <span className="rule-title">{standard.name}</span>
-                <span className="rule-sub">{standard.id}</span>
+                <span className="rule-sub">
+                  {standard.id}
+                  {isCoverageStandard(standard) ? `, ${COVERAGE_LABEL}` : ""}
+                </span>
               </span>
               <span className="posture">
                 <span className="posture-track" aria-hidden="true">
