@@ -29,6 +29,7 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   let retries = 0;
   const mutations: { action: string; body: any }[] = [];
   let jobRequests = 0;
+  let showRegisteredEnvironment = false;
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -93,6 +94,22 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
             components: [],
             issues: [],
           },
+          ...(showRegisteredEnvironment
+            ? [
+                {
+                  id: `connected-${id}`,
+                  name: source.name,
+                  provider: cloud ? "aws" : "onprem",
+                  kind: cloud ? "eks" : "kubernetes",
+                  registered: true,
+                  project: "시험 프로젝트",
+                  apps: [],
+                  data_services: [],
+                  components: [],
+                  issues: [],
+                },
+              ]
+            : []),
         ],
         migrations: [],
       },
@@ -485,13 +502,20 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
   expect(
     mutations.find((item) => item.action === "register")?.body.target,
   ).not.toHaveProperty("role");
+  showRegisteredEnvironment = true;
   await page.goto("/#environments");
   await expect(
     page.getByRole("button", { name: "아키텍처", exact: true }),
   ).toBeVisible();
+  const filter = page
+    .getByRole("group", { name: "필터" })
+    .getByRole("combobox");
+  await filter.selectOption(`connected-${id}`);
   await expect(
-    page.getByRole("group", { name: "필터" }).getByRole("combobox"),
-  ).toBeVisible();
+    page
+      .getByRole("complementary", { name: "환경 요약" })
+      .getByRole("link", { name: "직접 등록, 시험 프로젝트" }),
+  ).toHaveAttribute("href", `#prepare/${id}`);
   await expect(
     page.getByRole("region", { name: "직접 등록한 환경" }),
   ).toHaveCount(0);

@@ -8,6 +8,7 @@ import type { CardLine } from "../../components/SignalCard.tsx";
 import { formatAgo } from "../../lib/format.ts";
 import { KIND_LABELS as PLATFORM_LABELS } from "../migrations/fleetView.ts";
 import type { Tone } from "../migrations/stages.ts";
+import type { ClusterRailRow } from "./clusterModel.ts";
 
 export const LAYER_ORDER: ComponentLayer[] = [
   "entry",
@@ -153,6 +154,18 @@ export function detailText(detail: string) {
 }
 
 export type RailRow = { label: string; value: string; tone?: Tone };
+
+export function registeredRailRow(
+  env: FleetEnvironment,
+): ClusterRailRow | null {
+  if (!env.registered) return null;
+  return {
+    label: "출처",
+    value: env.project ? `직접 등록, ${env.project}` : "직접 등록",
+    href: `#prepare/${encodeURIComponent(env.id.replace(/^connected-/, ""))}`,
+    title: "등록할 때 수집한 정보예요. 준비 화면에서 연결 상태를 볼 수 있어요.",
+  };
+}
 
 export function envRailRows(
   env: FleetEnvironment,

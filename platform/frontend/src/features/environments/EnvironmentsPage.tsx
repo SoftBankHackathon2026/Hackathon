@@ -12,7 +12,7 @@ import { fleetQueryOptions } from "../migrations/queries";
 import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
 import { clusterRailRows } from "./clusterModel";
-import { envRailRows } from "./model";
+import { envRailRows, registeredRailRow } from "./model";
 
 function useViewportHeight() {
   const [height, setHeight] = useState(() => window.innerHeight);
@@ -74,6 +74,7 @@ export function EnvironmentsPage({
                     title: undefined as string | undefined,
                   })),
                   ...clusterRailRows(env),
+                  ...[registeredRailRow(env)].filter((row) => row !== null),
                 ].map((row) => {
                   const body = row.tone ? (
                     <StatusDot tone={row.tone}>{row.value}</StatusDot>
