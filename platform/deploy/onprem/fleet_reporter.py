@@ -43,6 +43,11 @@ EXIT_CONFIG = 2
 POLICY_DIR = "policy"
 POLICY_EVIDENCE = "CUTOVER_POLICY_EVIDENCE"
 POLICY_SETTINGS = "CUTOVER_POLICY_COLLECTOR_SETTINGS"
+WRITER_DONE = frozenset({"COMPLETED", "ROLLED_BACK", "ABORTED", "NEEDS_RECOVERY"})
+BOT_METRIC = re.compile(
+    r'^traffic_bot_(?:requests_total\{state="(?P<state>\w+)"\}'
+    r'|commit_latency_ms\{quantile="(?P<quantile>0\.95)"\})\s+(?P<value>\S+)$'
+)
 
 
 def log(message: str) -> None:
@@ -106,13 +111,62 @@ def post(url: str, token: str, body: dict) -> int:
     return post_json(url, token, body)[0]
 
 
+def get_text(url: str, token: str | None = None) -> str:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return response.read().decode()
+
+
+def bot_metrics(text: str) -> dict[str, float]:
+    found: dict[str, float] = {}
+    for line in text.splitlines():
+        match = BOT_METRIC.match(line.strip())
+        if match:
+            found[match["state"] or "latency_p95"] = float(match["value"])
+    return found
+
+
+def writer_report(config_path: Path) -> dict | None:
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text()) or {}
+    bot, ingress = config.get("bot") or {}, config.get("ingress") or {}
+    if not bot.get("control_url") or not ingress.get("control_url"):
+        return None
+    metrics = bot_metrics(get_text(bot["control_url"].rstrip("/") + "/metrics"))
+    token = os.environ.get(ingress.get("token_env") or "INGRESS_CONTROL_TOKEN")
+    status = json.loads(get_text(ingress["control_url"].rstrip("/") + "/status", token))
+    names = {ingress_name: name for name, ingress_name in (ingress.get("targets") or {}).items()}
+    return {
+        "target": names.get(status.get("target"), ""),
+        "mode": str(status.get("mode") or ""),
+        "committed": int(metrics.get("committed", 0)),
+        "failed": int(metrics.get("failed", 0)),
+        "pending": int(metrics.get("pending", 0)),
+        "latency_p95_ms": metrics.get("latency_p95"),
+    }
+
+
+def job_writer(state_dir: Path, job_id: str, cutover: dict | None) -> dict | None:
+    config_path = state_dir / "jobs" / f"{job_id}.yaml"
+    if cutover is None or cutover["stage"] in WRITER_DONE or not config_path.exists():
+        return None
+    try:
+        return writer_report(config_path)
+    except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
+        log(f"writer status for {job_id} failed: {exc}")
+        return None
+
+
 def report_job(args: argparse.Namespace, token: str, job_id: str) -> None:
     state_dir = Path(args.state_dir)
     url = f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{job_id}"
-    body = {
-        "cutover": read_cutover(state_dir, job_id),
-        "policy_decisions": read_decisions(state_dir, job_id),
-    }
+    cutover = read_cutover(state_dir, job_id)
+    body = {"cutover": cutover, "policy_decisions": read_decisions(state_dir, job_id)}
+    writer = job_writer(state_dir, job_id, cutover)
+    if writer:
+        body["writer"] = writer
     post(url, token, body)
     for verify in read_verify(Path(args.report_dir or state_dir / "reports"), job_id):
         post(url, token, {"verify": verify})
