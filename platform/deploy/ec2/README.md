@@ -269,7 +269,15 @@ python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <
 python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <도메인> config --tenant <tenant> --gateway <gateway>
 ```
 
-`server.env`, `server/`, `broker/` 는 SSM SecureString 임시 파라미터로 옮기고 바로 지워요. `release/<버전>` 은 인스턴스의 `/opt/oneport/connection/public/<버전>` 에 두어요(0755/0644). 배포본 서명 기한(기본 30일)이 지나거나 중계 인증서(397일)가 끝나기 전에 다시 만들어요.
+`server.env`, `server/`, `broker/` 는 SSM SecureString 임시 파라미터로 옮기고 바로 지워요. `release/<버전>` 은 인스턴스의 `/opt/oneport/connection/public/<버전>` 에 두어요(0755/0644). 배포본 서명은 기본 30일, 중계 서버 인증서는 최대 24시간 동안 유효해요.
+
+중계 서버 인증서가 만료되기 전에 최초 발급 때 사용한 보호 디렉터리에서 갱신해요. 인증기관과 중계 서버 키가 같으므로 기존 단말 배포본으로 새 인증서를 검증할 수 있어요.
+
+```sh
+python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <도메인> --openssl <OpenSSL 3.5 이상> renew-broker-cert
+```
+
+갱신한 `broker.crt` 를 인스턴스의 `/opt/oneport/connection/broker/gateway-chain.pem` 에 root 소유로 교체하고, `/opt/oneport` 에서 `docker compose restart connection-broker` 로 중계 프로그램을 다시 시작해요. 교체 후 8443 포트가 새 인증서를 제공하는지 확인해요.
 
 - 단말은 Ubuntu 24.04(amd64, arm64)만 받아요. 온프렘 노드(22.04)에서는 설치 스크립트가 멈춰요.
 - 중계는 한 번에 단말 하나와 터널을 열어요.
