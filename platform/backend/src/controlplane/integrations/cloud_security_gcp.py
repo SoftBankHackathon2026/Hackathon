@@ -1,4 +1,7 @@
-"""GCP 보안 실측. REST 읽기(GET)만 부른다(필요 역할: platform/docs/SECURITY-CLOUD-PERMISSIONS.md).
+"""GCP 보안 실측. REST 읽기(GET)만 부른다.
+
+필요 권한: cloudsql.instances.get, container.clusters.get, compute.subnetworks.get,
+securitycentermanagement.securityCenterServices.get. 해당 API 가 꺼져 있으면 403 SERVICE_DISABLED.
 
 google-auth 와 httpx 는 기본 의존성이라 GCP 전용 클라이언트 라이브러리를 더하지 않는다.
 """

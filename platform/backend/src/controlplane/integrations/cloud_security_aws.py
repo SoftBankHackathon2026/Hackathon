@@ -1,4 +1,8 @@
-"""AWS 보안 실측. 읽기 전용 API 만 부른다(필요 권한: platform/docs/SECURITY-CLOUD-PERMISSIONS.md).
+"""AWS 보안 실측. 읽기 전용 API 만 부른다.
+
+필요 권한: rds:DescribeDBInstances, rds:DescribeDBParameters, rds:DescribeDBClusters,
+rds:DescribeDBClusterParameters(Aurora 만), guardduty:ListDetectors, guardduty:GetDetector,
+eks:DescribeCluster, ec2:DescribeFlowLogs.
 
 boto3 는 aws 추가 의존성이다. 이 모듈을 import 할 때 boto3 가 없으면 ImportError 가 난다.
 """
