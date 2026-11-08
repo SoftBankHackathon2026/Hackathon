@@ -75,7 +75,6 @@
   ],
   "migrations": [],
   "task_defaults": {
-    "worker_url": "${ONEPORT_ONPREM_WORKER_URL}",
     "connect_url": "${ONEPORT_ONPREM_CONNECT_URL}"
   },
   "sample_seconds": 5

@@ -419,3 +419,97 @@ def test_execute_any_runs_the_tool_with_the_job_policy_env(tmp_path, monkeypatch
     assert str(tmp_path / "policy" / "onprem_to_aws_001.json") in tail
     assert str(tmp_path / "policy" / "onprem_to_aws_001.settings.json") in tail
     assert "other/forward.json" not in tail
+
+
+BOT_METRICS = """# HELP traffic_bot_requests_total requests by state
+traffic_bot_requests_total{state="pending"} 3
+traffic_bot_requests_total{state="accepted_pending"} 1000
+traffic_bot_requests_total{state="committed"} 83621
+traffic_bot_requests_total{state="failed"} 5404
+traffic_bot_attempts_total{kind="read_attempts"} 58634
+traffic_bot_commit_latency_ms{quantile="0.95"} 42.5
+traffic_bot_commit_latency_ms{quantile="0.99"} 90
+traffic_bot_paused 0
+"""
+
+WRITER_CONFIG = """
+bot: {control_url: "http://traffic-bot-control:9091"}
+ingress:
+  control_url: "http://durable-ingress-control:9092/"
+  token_env: INGRESS_CONTROL_TOKEN
+  targets: {onprem_return: onprem, aws: aws_db}
+"""
+
+
+def test_bot_metrics_reads_request_states_and_p95_latency():
+    assert reporter.bot_metrics(BOT_METRICS) == {
+        "pending": 3.0,
+        "accepted_pending": 1000.0,
+        "committed": 83621.0,
+        "failed": 5404.0,
+        "latency_p95": 42.5,
+    }
+
+
+def test_writer_report_names_the_ingress_target_with_the_job_target(tmp_path, monkeypatch):
+    config = tmp_path / "job.yaml"
+    config.write_text(WRITER_CONFIG)
+    calls = []
+
+    def fake_get(url, token=None):
+        calls.append((url, token))
+        if url.endswith("/metrics"):
+            return BOT_METRICS
+        return json.dumps({"target": "aws_db", "mode": "paused", "epoch": "5"})
+
+    monkeypatch.setattr(reporter, "get_text", fake_get)
+    monkeypatch.setenv("INGRESS_CONTROL_TOKEN", "secret")
+    assert reporter.writer_report(config) == {
+        "target": "aws",
+        "mode": "paused",
+        "committed": 83621,
+        "failed": 5404,
+        "pending": 3,
+        "latency_p95_ms": 42.5,
+    }
+    assert calls == [
+        ("http://traffic-bot-control:9091/metrics", None),
+        ("http://durable-ingress-control:9092/status", "secret"),
+    ]
+    config.write_text("bot: {}\n")
+    assert reporter.writer_report(config) is None
+
+
+def test_job_writer_only_reports_jobs_that_are_still_moving(tmp_path, monkeypatch):
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    (jobs / "onprem_to_aws_001.yaml").write_text(WRITER_CONFIG)
+    monkeypatch.setattr(reporter, "writer_report", lambda path: {"target": "aws"})
+    running = {"stage": "SYNC_CONFIRMED"}
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", running) == {"target": "aws"}
+    for stage in ("COMPLETED", "ROLLED_BACK", "ABORTED", "NEEDS_RECOVERY"):
+        assert reporter.job_writer(tmp_path, "onprem_to_aws_001", {"stage": stage}) is None
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", None) is None
+    assert reporter.job_writer(tmp_path, "other_job", running) is None
+
+    def broken(path):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(reporter, "writer_report", broken)
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", running) is None
+
+
+def test_report_job_sends_the_writer_with_the_cutover(tmp_path, monkeypatch):
+    make_state(tmp_path)
+    sent = []
+    monkeypatch.setattr(reporter, "post", lambda url, token, body: sent.append(body) or 202)
+    monkeypatch.setattr(
+        reporter, "job_writer", lambda state, job, cutover: {"stage": cutover["stage"]}
+    )
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", report_dir=None)
+    reporter.report_job(args, "token", "forward_001")
+    assert sent[0]["writer"] == {"stage": "READY"}
+    monkeypatch.setattr(reporter, "job_writer", lambda state, job, cutover: None)
+    sent.clear()
+    reporter.report_job(args, "token", "forward_001")
+    assert "writer" not in sent[0]

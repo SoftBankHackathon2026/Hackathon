@@ -266,10 +266,20 @@ class MigrationEvent(BaseModel):
     detail: str
 
 
+class WriterReport(BaseModel):
+    target: str = Field(default="", max_length=64)
+    mode: str = Field(default="", max_length=32)
+    committed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    pending: int = Field(ge=0)
+    latency_p95_ms: float | None = Field(default=None, ge=0)
+
+
 class MigrationIngest(BaseModel):
     cutover: dict[str, Any] | None = None
     policy_decisions: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     verify: dict[str, Any] | None = None
+    writer: WriterReport | None = None
 
 
 CommandAction = Literal["run", "approve", "abort", "retry", "force_retry"]
