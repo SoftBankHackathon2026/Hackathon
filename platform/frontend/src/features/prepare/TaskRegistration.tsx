@@ -277,6 +277,12 @@ export function TaskRegistration({
           ) : sourceApps.length ? (
             <fieldset className="connection-task-apps">
               <legend>출발 환경에서 옮길 앱</legend>
+              <div className="connection-task-app-summary">
+                <p>{source.name} 환경에서 옮길 앱을 선택하세요.</p>
+                <span aria-live="polite">
+                  전체 {sourceApps.length}개 · 선택 {selected.length}개
+                </span>
+              </div>
               {sourceApps.map((app) => (
                 <label key={app}>
                   <input
@@ -290,7 +296,7 @@ export function TaskRegistration({
                       )
                     }
                   />
-                  {app}
+                  <span>{app}</span>
                 </label>
               ))}
             </fieldset>

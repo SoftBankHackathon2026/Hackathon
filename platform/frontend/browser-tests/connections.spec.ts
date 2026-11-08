@@ -251,7 +251,7 @@ test("revocation retains separate cleanup statuses", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(disconnect).toBeFocused();
-  await expect(sidebar).toContainText("1개 등록");
+  await expect(sidebar).toContainText("직접 연결 1개");
   await disconnect.click();
   await dialog.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(
@@ -259,7 +259,7 @@ test("revocation retains separate cleanup statuses", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
   await expect(sidebar.getByRole("listitem")).toHaveCount(0);
-  await expect(sidebar).toContainText("0개 등록");
+  await expect(sidebar).toContainText("직접 연결 0개");
   await page.reload();
   await expect(sidebar.getByRole("listitem")).toHaveCount(0);
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
@@ -278,7 +278,7 @@ test("sidebar disconnects a pending request without switching away from the sele
     .click();
   await page.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(sidebar.getByRole("listitem")).toHaveCount(1);
-  await expect(sidebar).toContainText("1개 등록");
+  await expect(sidebar).toContainText("직접 연결 1개");
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();

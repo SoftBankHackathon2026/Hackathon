@@ -285,7 +285,8 @@ export function PreparePage({
           <div className="connection-sidebar-heading">
             <h2>연결 환경</h2>
             <span>
-              {listedConnections.filter((s) => s.environmentId).length}개 등록
+              직접 연결{" "}
+              {listedConnections.filter((s) => s.environmentId).length}개
             </span>
           </div>
           <button
@@ -311,9 +312,9 @@ export function PreparePage({
             )}
           {listedConnections.length === 0 ? (
             <p className="connection-empty">
-              진행 중이거나 등록된 연결이 없어요.
+              직접 추가한 연결이 없어요.
               <br />
-              환경정보 수집부터 시작하세요.
+              기존 환경은 작업 등록에서 선택할 수 있어요.
             </p>
           ) : (
             <ul className="connection-environments">
