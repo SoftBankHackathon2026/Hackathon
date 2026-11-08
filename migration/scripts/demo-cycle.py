@@ -69,20 +69,28 @@ class Demo:
         return self.exec('runner', ['python', '-m', 'migration.demo_reset',
             '--cycle', self.args.cycle, '--confirm-reset', self.args.cycle, action])
 
-    def idle_commands(self):
-        fleet = self.api('fleet')
-        for job in fleet['migrations']:
-            # Commands, rather than old checkpoints, show whether a runner is executing now.
-            commands = self.api('migrations/' + job['job_id'] + '/commands')
-            if any(c['status'] in ('pending', 'running') for c in commands):
-                raise RuntimeError('Finish or cancel the outstanding platform command first: ' + job['job_id'])
+    def idle_commands(self, wait=0):
+        deadline = time.monotonic() + wait
+        while True:
+            active = []
+            fleet = self.api('fleet')
+            for job in fleet['migrations']:
+                commands = self.api('migrations/' + job['job_id'] + '/commands')
+                if any(c['status'] in ('pending', 'running') for c in commands):
+                    active.append(job['job_id'])
+            if not active:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Platform commands remain active: ' + ', '.join(active))
+            # During reset the reporter explicitly rejects queued commands.
+            time.sleep(2)
 
     def reset(self):
         if self.args.confirm_reset != self.args.cycle:
             raise ValueError('reset requires --confirm-reset with the exact cycle ID')
         if self.state.get('phase') not in (None, 'resetting'):
             raise RuntimeError('Cycle already prepared/used; choose a NEW cycle ID')
-        self.idle_commands()
+        self.idle_commands(wait=60 if self.state.get('phase') == 'resetting' else 0)
         for role in ('bot', 'source', 'destination'):
             self.control(role, 'status')  # Missing software/credentials fail before stopping anything.
         if self.state.get('phase') != 'resetting':
@@ -95,7 +103,7 @@ class Demo:
             raise RuntimeError('CDC/runner is active; resolve it before resetting demo data')
         self.save(phase='resetting', cycle=self.args.cycle)
         self.database('begin-reset')
-        self.idle_commands()
+        self.idle_commands(wait=60)
         for role in ('bot', 'source', 'destination'):
             self.control(role, 'stop')
         # Reset is deliberately not a rollback: both DBs close, then old demo
@@ -116,7 +124,7 @@ class Demo:
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(2)
-        self.idle_commands()
+        self.idle_commands(wait=60)
         self.database('finish-reset')
         self.save(phase='prepared')
         return {'cycle': self.args.cycle, 'phase': 'prepared', 'source_rows': 800,

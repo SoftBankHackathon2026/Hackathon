@@ -47,7 +47,9 @@ python3 Hackathon/migration/scripts/demo-cycle.py status --cycle demo_01
 
 ## 실패와 복구
 
-초기화 중에는 러너의 영속 gate가 새 플랫폼 명령 수신을 막는다.
+초기화 중에는 러너의 영속 gate가 새 플랫폼 명령 실행을 막는다.
+이때 제출된 명령은 `DEMO_RESET_IN_PROGRESS`로 명시적으로 실패 처리해
+실행 대기열에 남아 초기화 재시도를 막지 않게 한다. 초기화 뒤 다시 제출한다.
 초기화 실패 시 gate를 유지하며, 같은 cycle로 `reset`을 다시 실행한다.
 중간 오류를 무시하고 `start`나 다른 cycle로 넘기지 않는다.
 `start`는 제출 전에 로컬 상태를 기록하므로 응답 유실 때 자동 중복 실행하지 않는다.

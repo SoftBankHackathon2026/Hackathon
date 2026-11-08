@@ -113,21 +113,25 @@ def test_reset_gate_excludes_reporter_and_other_cycles(tmp_path):
         assert allowed
 
 
-def test_reporter_does_not_claim_commands_during_reset(monkeypatch, tmp_path):
+def test_reporter_rejects_queued_commands_without_execution_during_reset(monkeypatch, tmp_path):
     path = Path(__file__).parents[2] / 'platform/deploy/onprem/fleet_reporter.py'
     spec = importlib.util.spec_from_file_location('demo_reporter', path)
     reporter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reporter)
     from types import SimpleNamespace
     monkeypatch.setenv('DEMO_RESET_ENABLED', 'true')
-    called = []
-    monkeypatch.setattr(reporter, 'claim_any_command', lambda *args: called.append('claim'))
+    results = []
+    monkeypatch.setattr(reporter, 'claim_any_command', lambda *args: {'command': {'id': 'c1'}, 'job_id': 'j1'})
+    monkeypatch.setattr(reporter, 'post_result', lambda *args: results.append(args[3]))
+    monkeypatch.setattr(reporter, 'read_cutover', lambda *args: None)
+    monkeypatch.setattr(reporter, '_execute_any', lambda *args: pytest.fail('must not execute'))
     resetter.gate(tmp_path / 'demo-cycles', 'demo_1')
-    assert reporter.execute_any(SimpleNamespace(state_dir=str(tmp_path)), 'test') is False
-    assert not called
+    assert reporter.execute_any(SimpleNamespace(state_dir=str(tmp_path)), 'test') is True
+    assert results[0]['exit_code'] == 2
+    assert 'DEMO_RESET_IN_PROGRESS' in results[0]['log_tail']
     resetter.gate(tmp_path / 'demo-cycles', 'demo_1', finish=True)
-    assert reporter.execute_any(SimpleNamespace(state_dir=str(tmp_path)), 'test') is False
-    assert called == ['claim']
+    monkeypatch.setattr(reporter, '_execute_any', lambda *args: True)
+    assert reporter.execute_any(SimpleNamespace(state_dir=str(tmp_path)), 'test') is True
 
 
 def test_cli_reset_failure_keeps_gate_and_retries_same_cycle(monkeypatch, tmp_path):
@@ -137,7 +141,7 @@ def test_cli_reset_failure_keeps_gate_and_retries_same_cycle(monkeypatch, tmp_pa
     args = SimpleNamespace(cycle='demo_1', state_dir=str(tmp_path), confirm_reset='demo_1')
     demo = module.Demo(args)
     calls = []
-    monkeypatch.setattr(demo, 'idle_commands', lambda: None)
+    monkeypatch.setattr(demo, 'idle_commands', lambda **kw: None)
     monkeypatch.setattr(demo, 'database', lambda action: calls.append(action) or {'connectors': [], 'databases': {}})
     def control(role, action):
         calls.append((role, action))

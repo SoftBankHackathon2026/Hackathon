@@ -96,7 +96,7 @@ def command_lease(state_dir: Path):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            yield False
+            yield None
             return
         yield not (root / "reset-in-progress").exists()
 

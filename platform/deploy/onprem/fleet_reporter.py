@@ -281,11 +281,31 @@ def post_result(
             time.sleep(2)
 
 
+def reject_during_demo_reset(args: argparse.Namespace, token: str, *, all_jobs: bool) -> bool:
+    """Fail queued commands visibly while reset owns the durable gate; never run them."""
+    claimed = claim_any_command(args, token) if all_jobs else claim_command(args, token)
+    if claimed is None:
+        return False
+    command = claimed["command"] if all_jobs else claimed
+    job_id = claimed["job_id"] if all_jobs else args.job_id
+    state = read_cutover(Path(args.state_dir), job_id)
+    post_result(args, token, command["id"], {
+        "exit_code": EXIT_CONFIG,
+        "stage": state["stage"] if state else None,
+        "log_tail": "DEMO_RESET_IN_PROGRESS: 초기화가 끝난 뒤 새 명령을 실행하세요.",
+    }, job_id)
+    return True
+
+
 def execute_once(args: argparse.Namespace, token: str) -> bool:
     if os.environ.get("DEMO_RESET_ENABLED") == "true":
         from migration.demo_reset import command_lease
         with command_lease(Path(args.state_dir)) as allowed:
-            return _execute_once(args, token) if allowed else False
+            if allowed is None:
+                return False
+            if not allowed:
+                return reject_during_demo_reset(args, token, all_jobs=False)
+            return _execute_once(args, token)
     return _execute_once(args, token)
 
 
@@ -403,7 +423,11 @@ def execute_any(args: argparse.Namespace, token: str) -> bool:
     if os.environ.get("DEMO_RESET_ENABLED") == "true":
         from migration.demo_reset import command_lease
         with command_lease(Path(args.state_dir)) as allowed:
-            return _execute_any(args, token) if allowed else False
+            if allowed is None:
+                return False
+            if not allowed:
+                return reject_during_demo_reset(args, token, all_jobs=True)
+            return _execute_any(args, token)
     return _execute_any(args, token)
 
 
