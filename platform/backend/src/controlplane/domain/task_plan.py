@@ -148,7 +148,7 @@ TOOLS: dict[StepId, dict[Route, str]] = {
     },
     StepId.TRAFFIC_SWITCH: {
         **{pair: "migration.cutover · durable-ingress" for pair in ONPREM_CLOUD},
-        **{pair: "migration.cloud" for pair in CLOUD_PAIRS},
+        **{pair: "migration.cloud · crosscloud 어댑터 · durable-ingress" for pair in CLOUD_PAIRS},
     },
     StepId.VERIFY: {
         **{pair: "migration.verify" for pair in ONPREM_CLOUD},
