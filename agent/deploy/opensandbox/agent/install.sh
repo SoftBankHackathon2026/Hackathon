@@ -36,6 +36,10 @@ chmod 0640 /etc/oneport-agent/agent.yaml /etc/oneport-agent/forward-*.env
 install -m 0644 "$here/oneport-forward@.service" /etc/systemd/system/oneport-forward@.service
 install -m 0644 "$here/oneport-agent.service" /etc/systemd/system/oneport-agent.service
 install -m 0755 "$here/oneport-agent" /usr/local/bin/oneport-agent
+install -m 0755 "$here/oneport-forward-check" /usr/local/bin/oneport-forward-check
+install -m 0644 "$here/oneport-forward-check.service" /etc/systemd/system/oneport-forward-check.service
+install -m 0644 "$here/oneport-forward-check.timer" /etc/systemd/system/oneport-forward-check.timer
+install -m 0644 "$here/forwards" /etc/oneport-agent/forwards
 systemctl daemon-reload
 
 missing=()
@@ -49,4 +53,5 @@ if ((${#missing[@]})); then
 fi
 while read -r service _; do systemctl enable --now "oneport-forward@$service" >/dev/null; done <"$here/forwards"
 systemctl enable --now oneport-agent >/dev/null
+systemctl enable --now oneport-forward-check.timer >/dev/null
 systemctl --no-pager --lines=0 status oneport-agent | head -3

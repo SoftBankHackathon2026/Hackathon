@@ -114,9 +114,83 @@ fn remove(p: &Policy) -> Result<()> {
         }
     }
     nft(p, false, 0)?;
-    let _ = fs::remove_file(STATE);
-    Ok(())
+    match fs::remove_file(STATE) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
+fn remove_expired_client_binding(p: &Policy, s: &State, now: u64) -> Result<()> {
+    if p.role != "client" || s.key_expires_at_ms > now {
+        return Err("another connection still owns the interface".into());
+    }
+    remove_owned(p, s)
+}
+fn remove_owned(p: &Policy, s: &State) -> Result<()> {
+    if Path::new("/sys/class/net").join(&p.interface).exists() {
+        let peers = cmd("/usr/bin/wg", &["show", &p.interface, "peers"], None)?;
+        if !std::str::from_utf8(&peers)?
+            .split_whitespace()
+            .eq(std::iter::once(s.public_key.as_str()))
+        {
+            return Err("binding does not own the current WireGuard peer".into());
+        }
+    }
+    remove(p)
+}
+
+fn client_lease_expired(p: &Policy, s: &State) -> Result<bool> {
+    if s.key_expires_at_ms <= migration_connector::now_ms() {
+        return Ok(true);
+    }
+    let table = format!("migration_{}", p.interface);
+    let output = cmd(
+        "/usr/sbin/nft",
+        &["-j", "list", "set", "inet", &table, "lease"],
+        None,
+    )?;
+    let data: serde_json::Value = serde_json::from_slice(&output)?;
+    let set = data["nftables"]
+        .as_array()
+        .and_then(|items| {
+            items.iter().filter_map(|item| item.get("set")).find(|set| {
+                set["family"] == "inet" && set["table"] == table && set["name"] == "lease"
+            })
+        })
+        .ok_or("lease set unconfirmed")?;
+    // nft omits elem when the set is empty. Unknown shapes cannot prove expiry.
+    match set.get("elem") {
+        None => Ok(true),
+        Some(elements) => elements
+            .as_array()
+            .map(Vec::is_empty)
+            .ok_or_else(|| "lease elements unconfirmed".into()),
+    }
+}
+
+fn prepare_client(p: &Policy, r: &Request) -> Result<bool> {
+    if p.role != "client" {
+        return Err("client recovery requires a client policy".into());
+    }
+    match fs::symlink_metadata(STATE) {
+        Ok(_) => {
+            let s = state()?;
+            let same_binding = s.connection_id == r.connection_id && s.epoch == r.epoch;
+            if !same_binding && !client_lease_expired(p, &s)? {
+                return Ok(false);
+            }
+            remove_owned(p, &s)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if Path::new("/sys/class/net").join(&p.interface).exists() {
+                return Err("unowned interface exists".into());
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(true)
+}
+
 fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
     p.validate()?;
     if r.connection_id.len() < 16
@@ -129,6 +203,7 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
         return Err("bad connection identifier".into());
     }
     match r.operation.as_str() {
+        "prepare-client" => Ok(serde_json::json!({"ready": prepare_client(p, r)?})),
         "check" => {
             let status = fs::read_to_string("/proc/self/status")?;
             let cap = status
@@ -162,10 +237,14 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             let peer = key(&r.public_key)?;
             let psk = key(&r.psk)?;
             if let Ok(s) = state() {
-                if s.connection_id != r.connection_id || r.epoch <= s.epoch {
-                    return Err("old epoch or other connection".into());
+                if s.connection_id != r.connection_id {
+                    remove_expired_client_binding(p, &s, now)?;
+                } else {
+                    if r.epoch <= s.epoch {
+                        return Err("old epoch".into());
+                    }
+                    remove(p)?;
                 }
-                remove(p)?;
             } else if Path::new(STATE).exists() {
                 return Err("invalid existing state".into());
             } else if cmd("/usr/sbin/ip", &["link", "show", "dev", &p.interface], None).is_ok() {
@@ -239,8 +318,9 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             result?;
             Ok(serde_json::json!({"configured":true}))
         }
-        "refresh" | "status" | "remove" => {
-            if r.operation == "remove" && !Path::new(STATE).exists() {
+        "refresh" | "status" | "remove" | "remove-exact" => {
+            let removing = matches!(r.operation.as_str(), "remove" | "remove-exact");
+            if removing && !Path::new(STATE).exists() {
                 if Path::new("/sys/class/net").join(&p.interface).exists() {
                     return Err("unowned interface exists".into());
                 }
@@ -249,10 +329,18 @@ fn execute(p: &Policy, r: &Request) -> Result<serde_json::Value> {
             }
             let s = state()?;
             if s.connection_id != r.connection_id || s.epoch != r.epoch {
+                if r.operation == "remove" && s.connection_id != r.connection_id {
+                    remove_expired_client_binding(p, &s, migration_connector::now_ms())?;
+                    return Ok(serde_json::json!({"removed":true}));
+                }
                 return Err("state mismatch".into());
             }
-            if r.operation == "remove" {
-                remove(p)?;
+            if removing {
+                if r.operation == "remove-exact" {
+                    remove_owned(p, &s)?;
+                } else {
+                    remove(p)?;
+                }
                 return Ok(serde_json::json!({"removed":true}));
             }
             if s.key_expires_at_ms <= migration_connector::now_ms() {

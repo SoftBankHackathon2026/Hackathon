@@ -6,11 +6,13 @@ import {
 import {
   changeAgentSettings,
   decideAgentRun,
+  deleteAgentRuns,
   getAgentRun,
   getAgentStatus,
   listAgentRuns,
   rerunAgent,
   type AgentDecision,
+  type AgentRunDeletion,
   type AgentSettingsChange,
 } from "../../api/agent";
 
@@ -63,5 +65,17 @@ export function useRerunAgent(agentId: string) {
   return useMutation({
     mutationFn: () => rerunAgent(agentId),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["agent"] }),
+  });
+}
+
+/** 결과 처리는 훅 단계에서 한다. 지운 실행의 패널이 먼저 닫혀도 결과 문장을 놓치지 않게. */
+export function useDeleteAgentRuns(onDone: (result: AgentRunDeletion) => void) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runIds: string[]) => deleteAgentRuns(runIds),
+    onSuccess: onDone,
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["agent"] });
+    },
   });
 }

@@ -1,3 +1,4 @@
+import type { FleetEnvironment } from "../../api/migrations.ts";
 import type {
   ConnectionSnapshot,
   ConnectionTarget,
@@ -17,7 +18,7 @@ export const PROVIDERS = [
     icon: "cloud",
   },
 ] as const;
-export const STEPS = ["환경정보 수집", "환경등록"];
+export const STEPS = ["환경정보 수집", "목록에 저장"];
 export const TUNNEL_CHECKS = [
   "상대 신원 확인",
   "양자내성 하이브리드 키 설정",
@@ -30,7 +31,6 @@ export function emptyTarget(organization = ""): ConnectionTarget {
     project: "",
     name: "",
     kind: "kubernetes",
-    role: "source",
     region: "",
   };
 }
@@ -39,7 +39,6 @@ export function targetValid(target: ConnectionTarget) {
     target.organization.trim() &&
     target.project.trim() &&
     target.name.trim() &&
-    (target.role === "source" || target.role === "target") &&
     (target.kind === "kubernetes" || target.region.trim()),
   );
 }
@@ -76,7 +75,7 @@ export function connectionStatus(s: ConnectionSnapshot): {
       label:
         s.cleanup?.server && s.cleanup.gateway && s.cleanup.local
           ? "연결 해제됨"
-          : "권한 철회됨 · 정리 확인 중",
+          : "권한 철회됨, 정리 확인 중",
       tone: "idle",
     };
   if (s.device === "REJECTED") return { label: "단말 확인 종료", tone: "idle" };
@@ -101,7 +100,7 @@ export function connectionStatus(s: ConnectionSnapshot): {
   if (s.device === "PENDING_APPROVAL")
     return { label: "단말 확인 필요", tone: "running" };
   if (s.collection === "COLLECTED")
-    return { label: "환경등록 필요", tone: "running" };
+    return { label: "연결 완료 · 저장 필요", tone: "ok" };
   if (s.registration === "ISSUED")
     return { label: "명령 실행 대기", tone: "running" };
   if (s.collectionPending)
@@ -154,4 +153,33 @@ export function formatTime(value: number | undefined) {
         hour12: false,
       }).format(value)
     : "미확인";
+}
+
+const FLEET_PROVIDERS: Record<FleetEnvironment["provider"], string> = {
+  onprem: "온프레미스",
+  aws: "AWS",
+  gcp: "GCP",
+};
+
+export type ExistingEnvironment = {
+  id: string;
+  name: string;
+  detail: string;
+  label: string;
+  tone: "ok" | "idle";
+};
+
+/** 플랫폼에 처음부터 등록된 환경. 직접 연결로 등록한 환경은 연결 목록에 따로 나온다. */
+export function existingEnvironments(
+  environments: readonly FleetEnvironment[] | undefined,
+): ExistingEnvironment[] {
+  return (environments ?? [])
+    .filter((env) => !env.registered)
+    .map((env) => ({
+      id: env.id,
+      name: env.name,
+      detail: FLEET_PROVIDERS[env.provider] ?? env.provider,
+      label: env.connected ? "연결됨" : "상태 정보 없음",
+      tone: env.connected ? "ok" : "idle",
+    }));
 }

@@ -9,7 +9,7 @@
 # 만들면 개인 키가 state 에 남는다.
 
 locals {
-  secret_ids = toset([for ref in values(var.secret_env) : ref.secret])
+  secret_ids = toset(concat([for ref in values(var.secret_env) : ref.secret], var.readable_secrets))
 }
 
 resource "google_service_account" "run" {

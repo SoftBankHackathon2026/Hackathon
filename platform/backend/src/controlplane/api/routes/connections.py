@@ -138,8 +138,11 @@ async def create_connection(request: Request, container: Container = Depends(get
     implementation = service(container)
     identity = actor(request, container)
     body = await document(request)
-    fields(body, ("publicKey", "operationId"))
-    return await invoke(implementation.create, identity, body["publicKey"], body["operationId"])
+    fields(body, ("publicKey", "operationId"), ("provider",))
+    args = [identity, body["publicKey"], body["operationId"]]
+    if "provider" in body:
+        args.append(body["provider"])
+    return await invoke(implementation.create, *args)
 
 
 @router.get(PUBLIC + "/{request_id}")
@@ -199,13 +202,14 @@ async def browser_action(
         "approve": ("candidateDigest", "code"),
         "reject": (),
         "collect": ("discoveredId",),
+        "rediscover": (),
         "register": ("collectedId", "inventoryDigest", "target"),
         "reconnect": (),
         "revoke": (),
     }
     if action not in requirements:
         raise InvalidRequest("지원하지 않는 연결 작업입니다.")
-    fields(body, requirements[action])
+    fields(body, requirements[action], ("replaceId",) if action == "approve" else ())
     return await invoke(implementation.browser, request_id, identity, action, body)
 
 

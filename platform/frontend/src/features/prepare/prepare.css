@@ -88,9 +88,6 @@
   border-color: var(--accent);
   color: var(--text-knockout);
 }
-.connection-phases small {
-  font-size: var(--fs-tag);
-}
 /* 왼쪽 연결 환경, 오른쪽 작업: 흰 카드 두 장(디자인 시스템 표면) */
 .connection-layout {
   display: grid;
@@ -105,6 +102,8 @@
 }
 .connection-sidebar-heading {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
@@ -168,6 +167,9 @@
 }
 .connection-environments li:hover {
   background: var(--surface-subtle);
+}
+.connection-environments li.is-static:hover {
+  background: transparent;
 }
 .connection-environments li:has([aria-current]) {
   background: var(--accent-soft);
@@ -309,46 +311,49 @@
   padding: 0;
   margin-bottom: 12px;
 }
+.connection-page .connection-provider {
+  margin: 0 0 24px;
+}
 .connection-provider > div {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 .connection-provider label {
   display: flex;
   align-items: center;
-  gap: 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  padding: 16px 12px;
-  cursor: pointer;
-  font-size: var(--fs-sm);
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
   margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
+  cursor: pointer;
 }
-.connection-provider label.selected {
+.connection-provider label:has(input:checked) {
   border-color: var(--accent);
-  background: var(--surface);
+  font-weight: 650;
 }
-.connection-provider label:hover {
+.connection-provider label:has(input:enabled):hover {
   background: var(--surface-subtle);
+}
+.connection-provider label:has(input:disabled) {
+  color: var(--text-secondary);
+  cursor: default;
 }
 .connection-provider input {
   flex: none;
+  margin: 0;
+  accent-color: var(--accent);
 }
-.connection-provider strong {
-  display: block;
-  font-size: var(--fs-sm);
-  font-weight: 600;
+.connection-provider label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .connection-page small {
   color: var(--text-secondary);
-}
-.connection-provider small {
-  display: block;
-  font-size: var(--fs-tag);
-  font-weight: 400;
-  margin-top: 4px;
-  line-height: 1.6;
 }
 .connection-page .connection-fields {
   display: grid;
@@ -709,10 +714,6 @@
 .connection-next {
   margin: 24px 0;
 }
-.connection-next p {
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-}
 .connection-preview-tools {
   border: 1px dashed var(--border-strong);
   padding: 16px;
@@ -762,16 +763,6 @@
   .connection-main {
     padding-left: 24px;
   }
-  .connection-provider > div {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  .connection-provider label {
-    padding: 12px;
-  }
-  .connection-provider small {
-    margin-top: 0;
-  }
 }
 @media (max-width: 760px) {
   .connection-layout {
@@ -790,12 +781,12 @@
     margin: 12px 0 0;
   }
   .connection-environments {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
     gap: 8px;
-    overflow-x: auto;
   }
   .connection-environments li {
-    min-width: 170px;
+    min-width: 0;
   }
   .connection-main {
     padding: 20px;
@@ -819,9 +810,6 @@
   .connection-title h2 {
     font-size: var(--fs-xl);
   }
-  .connection-provider label {
-    gap: 12px;
-  }
   .connection-facts > div {
     grid-template-columns: 105px minmax(0, 1fr);
     gap: 12px;
@@ -838,15 +826,233 @@
     margin: 0 0 4px;
   }
   .connection-page .connection-phases {
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
   }
-  .connection-phases small {
-    display: none;
+  .connection-phases li {
+    gap: 6px;
+    font-size: var(--fs-xs);
+    white-space: nowrap;
   }
   .connection-history li {
     gap: 12px;
   }
   .connection-check-list .status {
     line-height: 1.6;
+  }
+}
+
+.connection-page .connection-discovery-warning {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+  color: var(--warning-contrast);
+  overflow-wrap: anywhere;
+}
+.connection-discovery-warning ul {
+  margin: 4px 0;
+  padding-inline-start: 20px;
+}
+.connection-discovery-warning p {
+  margin: 6px 0 0;
+}
+.connection-task-form .connection-fields {
+  margin-block: 16px;
+}
+.connection-page .connection-task-apps {
+  display: grid;
+  gap: 8px;
+  margin-block: 16px;
+}
+.connection-task-app-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.connection-task-app-summary p {
+  min-width: 0;
+  margin: 0;
+}
+.connection-task-app-summary > span {
+  flex: none;
+}
+.connection-page .connection-task-apps label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.connection-task-apps label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.connection-page .connection-task-apps input[type="checkbox"] {
+  margin: 0;
+}
+.connection-task-apps label:hover {
+  background: var(--surface-subtle);
+}
+.connection-task-apps label:has(input:checked) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.connection-task-apps label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.prepare-panel {
+  min-width: 0;
+  view-transition-name: prepare-panel;
+}
+
+.prepare-panel-enter {
+  animation: prepare-panel-in 250ms ease both;
+  transform-origin: top center;
+}
+
+.prepare-state-enter {
+  animation: prepare-fade-in 160ms ease both;
+}
+
+@keyframes prepare-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes prepare-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes prepare-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+:root:active-view-transition::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-old(root) {
+  display: none;
+}
+
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-group(prepare-panel) {
+  animation: none;
+}
+
+::view-transition-old(prepare-panel),
+::view-transition-new(prepare-panel) {
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(prepare-panel) {
+  animation: prepare-fade-out 250ms ease both;
+}
+
+::view-transition-new(prepare-panel) {
+  animation: prepare-panel-in 250ms ease both;
+  transform-origin: top center;
+}
+
+:root:active-view-transition .prepare-panel-enter {
+  animation: none;
+}
+
+.connection-phases li,
+.connection-phases li > span,
+.connection-sidebar button,
+.connection-progress li {
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.connection-page .connection-add[aria-current] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.connection-page .connection-return {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.connection-task-review {
+  margin: 16px 0 0;
+  padding-inline-start: 24px;
+  overflow-wrap: anywhere;
+}
+
+.connection-task-form > .connection-actions {
+  margin-top: 24px;
+}
+
+@supports (transition-behavior: allow-discrete) {
+  .prepare-reveal {
+    transition:
+      opacity 160ms ease,
+      display 160ms allow-discrete;
+  }
+
+  .prepare-reveal[hidden] {
+    opacity: 0;
+    display: none;
+  }
+
+  @starting-style {
+    .prepare-reveal:not([hidden]) {
+      opacity: 0;
+    }
+  }
+}
+
+@supports (transition-behavior: allow-discrete) {
+  .connection-page .connection-revoke {
+    opacity: 0;
+    transition:
+      opacity 160ms ease,
+      display 160ms allow-discrete,
+      overlay 160ms allow-discrete;
+  }
+
+  .connection-page .connection-revoke[open] {
+    opacity: 1;
+  }
+
+  @starting-style {
+    .connection-page .connection-revoke[open] {
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prepare-panel-enter,
+  ::view-transition-new(prepare-panel) {
+    animation-name: prepare-fade-in;
   }
 }

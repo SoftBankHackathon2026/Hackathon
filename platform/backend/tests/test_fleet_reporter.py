@@ -290,6 +290,81 @@ def test_job_config_rejects_targets_the_runner_does_not_know(tmp_path):
         reporter.job_config(str(base), unknown, tmp_path / "jobs")
 
 
+FULL_CONFIG = (
+    BASE_CONFIG
+    + """
+full_migration: {destination_target: aws_eks}
+platform_data_targets: {onprem: onprem_return, aws: aws}
+platform_apps: [sample-app, hackathon/Deployment/sample-app, hackathon/Rollout/sample-app]
+"""
+)
+
+
+@pytest.mark.parametrize("source", ["onprem", "onprem_return"])
+@pytest.mark.parametrize(
+    "app", ["sample-app", "hackathon/Deployment/sample-app", "hackathon/Rollout/sample-app"]
+)
+def test_full_job_config_resolves_only_explicit_platform_aliases(tmp_path, source, app):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(FULL_CONFIG)
+    claimed = {**CLAIMED, "data_source": source, "apps": [app]}
+    path = reporter.job_config(str(base), claimed, tmp_path / "jobs")
+    config = yaml.safe_load(path.read_text())
+    assert (config["job"]["source"], config["job"]["target"]) == ("onprem_return", "aws")
+    assert config["full_migration"] == {"destination_target": "aws_eks"}
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"data_source": "aws"},
+        {"data_target": "onprem_return"},
+        {"source_env": "connected-7"},
+        {
+            "source_env": "aws",
+            "target_env": "onprem",
+            "data_source": "aws",
+            "data_target": "onprem_return",
+        },
+        {"apps": []},
+        {"apps": ["other-app"]},
+        {"apps": ["sample-app", "other-app"]},
+        {"apps": ["sample-app", "sample-app"]},
+        {"apps": ["other-namespace/Deployment/sample-app"]},
+    ],
+)
+def test_full_job_config_rejects_wrong_database_direction_or_apps(tmp_path, override):
+    base = tmp_path / "config.yaml"
+    base.write_text(FULL_CONFIG)
+    claimed = {**CLAIMED, "apps": ["sample-app"], **override}
+    with pytest.raises(ValueError, match="full migration"):
+        reporter.job_config(str(base), claimed, tmp_path / "jobs")
+    assert not (tmp_path / "jobs").exists()
+
+
+@pytest.mark.parametrize("remove", ["platform_data_targets", "platform_apps"])
+def test_full_job_config_requires_explicit_platform_contract(tmp_path, remove):
+    import yaml
+
+    config = yaml.safe_load(FULL_CONFIG)
+    del config[remove]
+    base = tmp_path / "config.yaml"
+    base.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="full migration"):
+        reporter.job_config(str(base), {**CLAIMED, "apps": ["sample-app"]}, tmp_path / "jobs")
+
+
+def test_db_only_job_config_preserves_platform_target_without_full_remapping(tmp_path):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    path = reporter.job_config(str(base), {**CLAIMED, "data_source": "onprem"}, tmp_path / "jobs")
+    assert yaml.safe_load(path.read_text())["job"]["source"] == "onprem"
+
+
 def test_execute_any_runs_the_claimed_task_with_its_own_config(tmp_path, monkeypatch):
     base = tmp_path / "config.yaml"
     base.write_text(BASE_CONFIG)
@@ -350,6 +425,170 @@ def test_main_needs_exactly_one_of_job_id_or_all_jobs(monkeypatch):
         reporter.main(["--platform-url", "http://p"])
     with pytest.raises(SystemExit):
         reporter.main(["--job-id", "a", "--all-jobs", "--platform-url", "http://p"])
+
+
+COLLECTORS = {"aws": {"identifier": "db", "region": "r", "app_url": "http://app"}}
+
+
+def test_policy_env_gives_each_job_its_own_evidence_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTOVER_POLICY_EVIDENCE", "/var/lib/worker/other/forward.json")
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTOR_SETTINGS", "/var/lib/worker/other/settings.json")
+    monkeypatch.delenv("CUTOVER_POLICY_COLLECTORS", raising=False)
+    env = reporter.policy_env(CLAIMED, tmp_path)
+    assert env["CUTOVER_POLICY_EVIDENCE"] == str(tmp_path / "policy" / "onprem_to_aws_001.json")
+    assert "CUTOVER_POLICY_COLLECTOR_SETTINGS" not in env
+    assert env["PATH"] == reporter.os.environ["PATH"]
+
+
+def test_policy_env_writes_collector_settings_for_the_job_target(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    env = reporter.policy_env(CLAIMED, tmp_path)
+    settings = Path(env["CUTOVER_POLICY_COLLECTOR_SETTINGS"])
+    assert settings == tmp_path / "policy" / "onprem_to_aws_001.settings.json"
+    assert json.loads(settings.read_text()) == COLLECTORS["aws"]
+    assert oct(settings.stat().st_mode & 0o777) == "0o600"
+
+
+def test_policy_env_leaves_out_settings_for_targets_without_a_collector(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTOR_SETTINGS", "/var/lib/worker/other/settings.json")
+    env = reporter.policy_env({**CLAIMED, "data_target": "onprem_return"}, tmp_path)
+    assert "CUTOVER_POLICY_COLLECTOR_SETTINGS" not in env
+    assert env["CUTOVER_POLICY_EVIDENCE"].endswith("onprem_to_aws_001.json")
+
+
+def test_policy_env_rejects_collectors_that_are_not_keyed_by_target(tmp_path, monkeypatch):
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text("[]")
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    with pytest.raises(TypeError):
+        reporter.policy_env(CLAIMED, tmp_path)
+
+
+def test_execute_any_runs_the_tool_with_the_job_policy_env(tmp_path, monkeypatch):
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    collectors = tmp_path / "collectors.json"
+    collectors.write_text(json.dumps(COLLECTORS))
+    script = (
+        "import os; print(os.environ['CUTOVER_POLICY_EVIDENCE']);"
+        " print(os.environ['CUTOVER_POLICY_COLLECTOR_SETTINGS'])"
+    )
+    monkeypatch.setenv("ONEPORT_CUTOVER_ARGV", f"{sys.executable} -c {shlex.quote(script)}")
+    monkeypatch.setenv("MIGRATION_CONFIG", str(base))
+    monkeypatch.setenv("CUTOVER_POLICY_COLLECTORS", str(collectors))
+    monkeypatch.setenv("CUTOVER_POLICY_EVIDENCE", "/var/lib/worker/other/forward.json")
+    posted = []
+    monkeypatch.setattr(reporter, "claim_any_command", lambda args, token: CLAIMED)
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append(body) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: None)
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    tail = posted[-1]["log_tail"]
+    assert posted[-1]["exit_code"] == 0
+    assert str(tmp_path / "policy" / "onprem_to_aws_001.json") in tail
+    assert str(tmp_path / "policy" / "onprem_to_aws_001.settings.json") in tail
+    assert "other/forward.json" not in tail
+
+
+BOT_METRICS = """# HELP traffic_bot_requests_total requests by state
+traffic_bot_requests_total{state="pending"} 3
+traffic_bot_requests_total{state="accepted_pending"} 1000
+traffic_bot_requests_total{state="committed"} 83621
+traffic_bot_requests_total{state="failed"} 5404
+traffic_bot_attempts_total{kind="read_attempts"} 58634
+traffic_bot_commit_latency_ms{quantile="0.95"} 42.5
+traffic_bot_commit_latency_ms{quantile="0.99"} 90
+traffic_bot_paused 0
+"""
+
+WRITER_CONFIG = """
+bot: {control_url: "http://traffic-bot-control:9091"}
+ingress:
+  control_url: "http://durable-ingress-control:9092/"
+  token_env: INGRESS_CONTROL_TOKEN
+  targets: {onprem_return: onprem, aws: aws_db}
+"""
+
+
+def test_bot_metrics_reads_request_states_and_p95_latency():
+    assert reporter.bot_metrics(BOT_METRICS) == {
+        "pending": 3.0,
+        "accepted_pending": 1000.0,
+        "committed": 83621.0,
+        "failed": 5404.0,
+        "latency_p95": 42.5,
+    }
+
+
+def test_writer_report_names_the_ingress_target_with_the_job_target(tmp_path, monkeypatch):
+    config = tmp_path / "job.yaml"
+    config.write_text(WRITER_CONFIG)
+    calls = []
+
+    def fake_get(url, token=None):
+        calls.append((url, token))
+        if url.endswith("/metrics"):
+            return BOT_METRICS
+        return json.dumps({"target": "aws_db", "mode": "paused", "epoch": "5"})
+
+    monkeypatch.setattr(reporter, "get_text", fake_get)
+    monkeypatch.setenv("INGRESS_CONTROL_TOKEN", "secret")
+    assert reporter.writer_report(config) == {
+        "target": "aws",
+        "mode": "paused",
+        "committed": 83621,
+        "failed": 5404,
+        "pending": 3,
+        "latency_p95_ms": 42.5,
+    }
+    assert calls == [
+        ("http://traffic-bot-control:9091/metrics", None),
+        ("http://durable-ingress-control:9092/status", "secret"),
+    ]
+    config.write_text("bot: {}\n")
+    assert reporter.writer_report(config) is None
+
+
+def test_job_writer_only_reports_jobs_that_are_still_moving(tmp_path, monkeypatch):
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    (jobs / "onprem_to_aws_001.yaml").write_text(WRITER_CONFIG)
+    monkeypatch.setattr(reporter, "writer_report", lambda path: {"target": "aws"})
+    running = {"stage": "SYNC_CONFIRMED"}
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", running) == {"target": "aws"}
+    for stage in ("COMPLETED", "ROLLED_BACK", "ABORTED", "NEEDS_RECOVERY"):
+        assert reporter.job_writer(tmp_path, "onprem_to_aws_001", {"stage": stage}) is None
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", None) is None
+    assert reporter.job_writer(tmp_path, "other_job", running) is None
+
+    def broken(path):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(reporter, "writer_report", broken)
+    assert reporter.job_writer(tmp_path, "onprem_to_aws_001", running) is None
+
+
+def test_report_job_sends_the_writer_with_the_cutover(tmp_path, monkeypatch):
+    make_state(tmp_path)
+    sent = []
+    monkeypatch.setattr(reporter, "post", lambda url, token, body: sent.append(body) or 202)
+    monkeypatch.setattr(
+        reporter, "job_writer", lambda state, job, cutover: {"stage": cutover["stage"]}
+    )
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", report_dir=None)
+    reporter.report_job(args, "token", "forward_001")
+    assert sent[0]["writer"] == {"stage": "READY"}
+    monkeypatch.setattr(reporter, "job_writer", lambda state, job, cutover: None)
+    sent.clear()
+    reporter.report_job(args, "token", "forward_001")
+    assert "writer" not in sent[0]
 
 
 CLOUD_BASE = """
@@ -542,3 +781,53 @@ def test_execute_any_runs_cloud_tasks_with_migration_cloud(tmp_path, monkeypatch
     assert body["exit_code"] == 3
     assert f"--state-dir {tmp_path / 'cloud'} run" in body["log_tail"]
     assert entered == [tmp_path / "jobs" / "aws_to_gcp_001.cloud.yaml"]
+
+
+def approve_setup(tmp_path, monkeypatch, status_exit):
+    base = tmp_path / "cloud.yaml"
+    base.write_text(CLOUD_BASE)
+    calls = tmp_path / "calls.txt"
+    tool = (
+        "import sys; open(sys.argv[1], 'a').write(sys.argv[2] + ' ' + ' '.join(sys.argv[3:]) + '\\n');"
+        " sys.exit(int(sys.argv[2] == 'status') * {code})"
+    ).format(code=status_exit)
+    quoted = shlex.quote(tool)
+    monkeypatch.setenv("ONEPORT_CLOUD_ARGV", f"{sys.executable} -c {quoted} {calls} cloud")
+    monkeypatch.setenv(
+        "ONEPORT_INGRESS_STATUS_ARGV", f"{sys.executable} -c {quoted} {calls} status"
+    )
+    monkeypatch.setenv("MIGRATION_CLOUD_CONFIG", str(base))
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_ENV", "/etc/ingress.env")
+    monkeypatch.setenv("CROSSCLOUD_INGRESS_CONTROL_URL", "http://ingress:9092")
+
+    @reporter.contextmanager
+    def fake_adapter(config):
+        yield
+
+    posted = []
+    claim = {**CLOUD_CLAIM, "command": {"id": "cmd_a", "action": "approve", "approval_id": "ok-1"}}
+    monkeypatch.setattr(reporter, "adapter_running", fake_adapter)
+    monkeypatch.setattr(reporter, "claim_any_command", lambda args, token: claim)
+    monkeypatch.setattr(
+        reporter, "post_json", lambda url, token, body: posted.append(body) or (200, body)
+    )
+    monkeypatch.setattr(reporter, "report_job", lambda args, token, job: None)
+    args = Namespace(state_dir=str(tmp_path), platform_url="http://p", interval=5)
+    assert reporter.execute_any(args, "token") is True
+    return calls.read_text().splitlines(), posted[-1]
+
+
+def test_cloud_approve_checks_the_ingress_queue_first(tmp_path, monkeypatch):
+    calls, result = approve_setup(tmp_path, monkeypatch, 0)
+    assert [line.split()[0] for line in calls] == ["status", "cloud"]
+    assert f"--state-dir {tmp_path / 'cloud'}" in calls[0]
+    assert "--ingress-control-url http://ingress:9092" in calls[0]
+    assert calls[1].endswith("run --approve ok-1")
+    assert result["exit_code"] == 0
+
+
+def test_cloud_approve_stops_when_the_ingress_queue_is_not_ready(tmp_path, monkeypatch):
+    calls, result = approve_setup(tmp_path, monkeypatch, 4)
+    assert [line.split()[0] for line in calls] == ["status"]
+    assert result["exit_code"] == 4
+    assert "ingress-status" in result["log_tail"]

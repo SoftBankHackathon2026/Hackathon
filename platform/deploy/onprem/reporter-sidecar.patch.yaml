@@ -1,3 +1,5 @@
+# 폐기된 예제: db-insert-worker는 제거됐다. 이 패치를 적용하지 않는다.
+# 현재 보고기는 gitops apps/live-db-cutover/runner.yaml에 포함된다.
 # gitops apps/db-insert-worker/deployment.yaml 에 붙이는 strategic merge patch.
 # 워커 PVC(/var/lib/worker)의 cutover·policy SQLite 와 verify 보고서를 읽어 플랫폼으로 5초마다 보낸다.
 # 보고기는 표준 라이브러리만 쓰므로 공식 python 이미지에 스크립트(ConfigMap)만 얹는다.

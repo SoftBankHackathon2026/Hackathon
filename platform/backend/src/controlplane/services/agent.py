@@ -6,6 +6,7 @@ from controlplane.core.errors import OperationNotFound, RequestConflict
 from controlplane.repositories.agent import DECISION_PENDING, RERUN_PENDING, AgentJournal
 from controlplane.schemas.accounts import Identity
 from controlplane.schemas.agent import (
+    ACTIVE_STATES,
     RERUN_STATES,
     WAITING_APPROVAL,
     AgentCommand,
@@ -19,12 +20,15 @@ from controlplane.schemas.agent import (
     Decision,
     DecisionAccepted,
     PendingApproval,
+    RunDeletion,
+    RunDeletionResult,
     RunDetail,
     RunList,
     RunListItem,
     RunReport,
     RunSummary,
     SettingsChange,
+    SkippedRun,
     StoredRun,
 )
 
@@ -34,6 +38,8 @@ AGENT_NOT_FOUND = "신호를 보낸 적 없는 에이전트예요."
 COMMAND_NOT_FOUND = "해당 에이전트 명령이 없어요."
 NOT_WAITING = "승인을 기다리는 실행이 아니어서 결정할 수 없어요."
 SCREEN_REQUESTER = "운영 화면"
+RUN_ACTIVE = "진행 중인 실행"
+RUN_MISSING = "없는 실행"
 ONLINE_FACTOR = 3
 ONLINE_MIN_SECONDS = 90
 
@@ -62,7 +68,11 @@ def is_online(received_at: datetime, interval_seconds: int, now: datetime) -> bo
     return now - received_at <= timedelta(seconds=window)
 
 
-def _item(run: StoredRun) -> RunListItem:
+def deletable(run: StoredRun, permitted: bool) -> bool:
+    return permitted and run.state not in ACTIVE_STATES
+
+
+def _item(run: StoredRun, permitted: bool) -> RunListItem:
     return RunListItem(
         run_id=run.run_id,
         agent_id=run.agent_id,
@@ -71,6 +81,7 @@ def _item(run: StoredRun) -> RunListItem:
         created_at=run.created_at,
         updated_at=run.updated_at,
         summary=summarize(run.detail),
+        can_delete=deletable(run, permitted),
     )
 
 
@@ -142,8 +153,23 @@ class AgentService:
         if not self._journal.ack_command(command_id, result, self._now()):
             raise OperationNotFound(COMMAND_NOT_FOUND)
 
-    def runs(self, limit: int) -> RunList:
-        return RunList(runs=[_item(run) for run in self._journal.runs(limit)])
+    def runs(self, limit: int, permitted: bool) -> RunList:
+        return RunList(
+            runs=[_item(run, permitted) for run in self._journal.runs(limit)],
+            can_delete=permitted,
+        )
+
+    def delete(self, deletion: RunDeletion, identity: Identity | None) -> RunDeletionResult:
+        requested_by = identity.email if identity else SCREEN_REQUESTER
+        hidden, kept = self._journal.hide_runs(deletion.run_ids, requested_by, self._now())
+        return RunDeletionResult(
+            deleted=[run_id for run_id in deletion.run_ids if run_id in hidden],
+            skipped=[
+                SkippedRun(run_id=run_id, reason=RUN_ACTIVE if run_id in kept else RUN_MISSING)
+                for run_id in deletion.run_ids
+                if run_id not in hidden
+            ],
+        )
 
     def _run(self, run_id: str) -> StoredRun:
         run = self._journal.run(run_id)
@@ -155,7 +181,7 @@ class AgentService:
         run = self._run(run_id)
         pending = self._journal.pending(run_id)
         return RunDetail(
-            **_item(run).model_dump(),
+            **_item(run, permitted).model_dump(),
             detail=run.detail,
             events=run.events,
             pending_approval=PendingApproval(
@@ -175,12 +201,13 @@ class AgentService:
     def decide(
         self, run_id: str, decision: Decision, identity: Identity | None
     ) -> DecisionAccepted:
+        return self.decide_as(run_id, decision, identity.email if identity else SCREEN_REQUESTER)
+
+    def decide_as(self, run_id: str, decision: Decision, requested_by: str) -> DecisionAccepted:
         run = self._run(run_id)
         if run.state != WAITING_APPROVAL:
             raise RequestConflict(NOT_WAITING)
         if self._journal.pending(run_id) is not None:
             raise RequestConflict(DECISION_PENDING)
-        ticket = self._journal.decide(
-            run_id, decision, identity.email if identity else SCREEN_REQUESTER, self._now()
-        )
+        ticket = self._journal.decide(run_id, decision, requested_by, self._now())
         return DecisionAccepted(id=ticket.id, decision=ticket.decision)

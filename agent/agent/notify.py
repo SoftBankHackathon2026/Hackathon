@@ -8,18 +8,18 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
 log = logging.getLogger("agent.notify")
 SLACK_URL = "https://slack.com/api/chat.postMessage"
 
 
 class Notifier(Protocol):
-    def send(self, text: str) -> None: ...
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None: ...
 
 
 class StdoutNotifier:
-    def send(self, text: str) -> None:
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
         print(text, file=sys.stdout, flush=True)
 
 
@@ -30,8 +30,10 @@ class SlackNotifier:
     def __repr__(self) -> str:
         return f"SlackNotifier(channel={self.channel!r})"
 
-    def send(self, text: str) -> None:
-        payload = {"channel": self.channel, "text": text}
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        payload: dict[str, Any] = {"channel": self.channel, "text": text}
+        if blocks:
+            payload["blocks"] = blocks
         if self.thread_ts:
             payload["thread_ts"] = self.thread_ts
         body = json.dumps(payload).encode("utf-8")
@@ -66,8 +68,10 @@ class SlackWebhookNotifier:
     def __repr__(self) -> str:
         return "SlackWebhookNotifier()"
 
-    def send(self, text: str) -> None:
-        payload = {"text": text}
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        payload: dict[str, Any] = {"text": text}
+        if blocks:
+            payload["blocks"] = blocks
         if self.thread_ts:
             payload["thread_ts"] = self.thread_ts
         body = json.dumps(payload).encode("utf-8")
@@ -92,9 +96,9 @@ class CompositeNotifier:
     def __init__(self, *notifiers: Notifier) -> None:
         self.notifiers = notifiers
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
         for notifier in self.notifiers:
-            notifier.send(text)
+            notifier.send(text, blocks)
 
 
 def build_notifier(channel: str | None, env: Mapping[str, str] | None = None, thread_ts: str | None = None) -> Notifier:

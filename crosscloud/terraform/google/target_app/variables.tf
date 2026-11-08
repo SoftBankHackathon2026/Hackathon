@@ -19,6 +19,15 @@ variable "env" {
   default     = {}
 }
 
+variable "readable_secrets" {
+  description = <<-EOT
+    secret_env 밖에서 실행 신원에 읽기 권한만 줄 비밀 ID. 나중 리비전(전환 때
+    대상 프로필로 재배포)이 읽을 비밀을 첫 apply 때 미리 연다.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "secret_env" {
   description = <<-EOT
     Secret Manager 참조 env. 키는 env 이름, secret 은 같은 프로젝트의 비밀 ID

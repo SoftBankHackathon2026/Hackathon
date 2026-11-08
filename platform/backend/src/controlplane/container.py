@@ -62,6 +62,7 @@ from controlplane.services.monitoring import MonitoringService
 from controlplane.services.pod_logs import PodLogService, read_cluster_log, simulated_log
 from controlplane.services.runs import DemoRunService
 from controlplane.services.security import SecurityService
+from controlplane.services.slack_approval import SlackApproval, slack_approval_from_environment
 from controlplane.services.traffic import TrafficRoutes, routes_from_environment
 
 if TYPE_CHECKING:
@@ -97,6 +98,7 @@ class Container:
     agent: AgentService | None = None
     traffic: TrafficRoutes | None = None
     pod_logs: PodLogService | None = None
+    slack_approval: SlackApproval | None = None
 
     @property
     def execution_configured(self) -> bool:
@@ -217,6 +219,7 @@ def build_container(
         security=SecurityService(source),
         ingest=IngestService(fleet_config, FleetJournal(store)) if store else None,
         ingest_token=ingest_token_from_environment(),
+        slack_approval=slack_approval_from_environment(),
         costs=CostService(
             fleet_config,
             load_cost_config(),

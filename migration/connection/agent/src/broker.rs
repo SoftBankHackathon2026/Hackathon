@@ -105,6 +105,26 @@ impl Broker {
         }
         Ok(())
     }
+    fn remove_replaced(&self, previous: &network::Replacement) -> Result<()> {
+        let request = previous.removal().ok_or("replacement binding missing")?;
+        let removed = network::helper(&self.config.helper_path, &request);
+        api::post(
+            &format!(
+                "{}/{}/tunnel",
+                self.config.runtime_api_url, previous.request_id
+            ),
+            &json!({
+                "state": if removed.is_ok() { "REVOKED" } else { "REVOKE_BLOCKED" },
+                "epoch": request.epoch,
+                "connection_id": request.connection_id
+            }),
+            Some(&self.token),
+        )?;
+        removed?;
+        *self.current.lock().map_err(|_| "state lock")? = None;
+        Ok(())
+    }
+
     fn ready_health(&self) -> Result<()> {
         api::post(
             &format!("{}/health", self.config.runtime_api_url),
@@ -147,11 +167,20 @@ impl Broker {
             self.auth_failure(source);
             return Err("first peer mismatch".into());
         }
+        let replacement: Option<network::Replacement> =
+            serde_json::from_value(auth["replacement"].clone())?;
         let existing = self.current.lock().map_err(|_| "state lock")?.clone();
-        if let Some(s) = existing {
-            if s.request_id != bind.request_id {
+        if let Some(s) = &existing {
+            if s.request_id != bind.request_id
+                && replacement
+                    .as_ref()
+                    .is_none_or(|old| old.request_id != s.request_id)
+            {
                 return Err("gateway already assigned".into());
             }
+        }
+        if let Some(previous) = &replacement {
+            self.remove_replaced(previous)?;
         }
         let (private, wg_public) = crypto::wg_key()?;
         let binding = Binding {
@@ -261,9 +290,10 @@ impl Broker {
                     if !valid
                         || network::helper(&self.config.helper_path, &req("refresh", &s)).is_err()
                     {
-                        let _ = self.remove(&s);
-                        if let Ok(mut g) = self.current.lock() {
-                            *g = None;
+                        if self.remove(&s).is_ok() {
+                            if let Ok(mut g) = self.current.lock() {
+                                *g = None;
+                            }
                         }
                     }
                 }

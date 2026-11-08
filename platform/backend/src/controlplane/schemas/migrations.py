@@ -113,7 +113,7 @@ class ClusterView(BaseModel):
 class EnvironmentView(BaseModel):
     id: str
     name: str
-    kind: Literal["k3s", "eks", "gke"]
+    kind: Literal["k3s", "eks", "gke", "kubernetes"]
     provider: Literal["onprem", "aws", "gcp"]
     region: str
     role: Literal["legacy", "target"]
@@ -125,6 +125,8 @@ class EnvironmentView(BaseModel):
     boundary: list[str] = Field(default_factory=list)
     issues: list[EnvironmentIssue] = Field(default_factory=list)
     cluster: ClusterView | None = None
+    registered: bool = False
+    project: str | None = None
 
 
 class WriteCounts(BaseModel):
@@ -157,6 +159,7 @@ class MigrationSummary(BaseModel):
     writes: WriteCounts
     downtime: DowntimeEvidence
     verify_mismatch: int | None = None
+    removable: bool = False
 
 
 class Fleet(BaseModel):
@@ -266,10 +269,20 @@ class MigrationEvent(BaseModel):
     detail: str
 
 
+class WriterReport(BaseModel):
+    target: str = Field(default="", max_length=64)
+    mode: str = Field(default="", max_length=32)
+    committed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    pending: int = Field(ge=0)
+    latency_p95_ms: float | None = Field(default=None, ge=0)
+
+
 class MigrationIngest(BaseModel):
     cutover: dict[str, Any] | None = None
     policy_decisions: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     verify: dict[str, Any] | None = None
+    writer: WriterReport | None = None
 
 
 CommandAction = Literal["run", "approve", "abort", "retry", "force_retry"]
@@ -341,6 +354,7 @@ class PlanRoute(BaseModel):
 
 class TaskPlan(BaseModel):
     job_id: str
+    removable: bool = False
     route: PlanRoute
     phases: list[PlanPhaseView]
 
@@ -369,6 +383,7 @@ class ClaimedCommand(BaseModel):
     data_target: str
     source_provider: str | None = None
     target_provider: str | None = None
+    apps: list[str] = Field(default_factory=list)
 
 
 class PodLogLine(BaseModel):

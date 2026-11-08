@@ -177,18 +177,19 @@ const mi = (v: string) =>
 export function AppSelectStep({
   sourceName,
   namespace,
+  picked,
+  onPick,
 }: {
   sourceName: string;
   namespace: string;
+  picked: string[];
+  onPick: (apps: string[]) => void;
 }) {
-  const [picked, setPicked] = useState<Set<string>>(
-    () => new Set(["sample-app"]),
-  );
   const [focus, setFocus] = useState<string>("sample-app");
   const [dbMode, setDbMode] = useState<DbMode>("cdc");
   const [showInfra, setShowInfra] = useState(false);
 
-  const chosen = INVENTORY.filter((w) => picked.has(w.name));
+  const chosen = INVENTORY.filter((w) => picked.includes(w.name));
   const detail = INVENTORY.find((w) => w.name === focus) ?? INVENTORY[0];
   const sum = useMemo(() => {
     const cpu = chosen.reduce((s, w) => s + milli(w.cpu) * w.replicas, 0);
@@ -203,12 +204,11 @@ export function AppSelectStep({
   }, [chosen]);
 
   function toggle(name: string) {
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
+    onPick(
+      picked.includes(name)
+        ? picked.filter((app) => app !== name)
+        : [...picked, name],
+    );
     setFocus(name);
   }
 
@@ -268,7 +268,7 @@ export function AppSelectStep({
                       </td>
                     </tr>
                     {items.map((w) => {
-                      const on = picked.has(w.name);
+                      const on = picked.includes(w.name);
                       const locked = w.verdict === "infra";
                       return (
                         <tr
@@ -372,7 +372,7 @@ export function AppSelectStep({
             <dd>{detail.reason}</dd>
           </dl>
 
-          {picked.has(detail.name) && detail.follows && (
+          {picked.includes(detail.name) && detail.follows && (
             <div className="appsel-follow">
               <h3>같이 옮겨지는 것</h3>
               <ul>

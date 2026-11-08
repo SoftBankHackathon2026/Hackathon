@@ -9,7 +9,11 @@
 #   SAMPLE_APP_IMAGE       팀 sample-app 이미지 그대로. 제어 바인드·토큰을
 #                          env 로 받는 커밋(4ecee72) 이후 빌드여야 한다.
 #   INGRESS_CONTROL_TOKEN  제어 API Bearer 토큰.
-# ingress.env 는 crosscloud render-handoff 가 만든다.
+#   INGRESS_ENV_FILE       render-handoff 가 쓴 ingress.env 경로(선택, 절대
+#                          경로). 없으면 ./out/ingress.env.
+#
+# 트래픽 봇은 profile bot 으로만 뜬다(`--profile bot up -d traffic-bot`).
+# 접수 큐 8080 으로만 보낸다. 대상 앱이 토큰을 쓰지 않아(open) 토큰이 없다.
 name: ccx-${SESSION:?세션 이름}-ingress
 services:
   redis:
@@ -23,7 +27,7 @@ services:
   durable-ingress:
     image: ${SAMPLE_APP_IMAGE:?팀 sample-app 이미지 태그}
     command: [node, src/durable-ingress/server.js]
-    env_file: [./out/ingress.env]
+    env_file: ["${INGRESS_ENV_FILE:-./out/ingress.env}"]
     environment:
       INGRESS_CONTROL_TOKEN: ${INGRESS_CONTROL_TOKEN:?제어 토큰}
     ports:
@@ -32,8 +36,26 @@ services:
     depends_on: [redis]
     labels:
       com.ghost.crosscloud.session: ${SESSION}
+  traffic-bot:
+    image: ${SAMPLE_APP_IMAGE:?팀 sample-app 이미지 태그}
+    profiles: [bot]
+    command: [node, packages/traffic-bot/bin/traffic-bot.js]
+    environment:
+      BOT_BASE_URL: http://durable-ingress:8080
+      # 이미지의 node 사용자 홈(볼륨 첫 마운트 때 소유권이 따라온다).
+      BOT_LEDGER_DIR: /home/node/ledger
+      BOT_RUN_ID: ccx_${SESSION}_bot
+      BOT_PHASE: ccx_live
+      BOT_RATE: "1"
+    volumes: [bot-ledger:/home/node]
+    depends_on: [durable-ingress]
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
 volumes:
   redis-data:
+    labels:
+      com.ghost.crosscloud.session: ${SESSION}
+  bot-ledger:
     labels:
       com.ghost.crosscloud.session: ${SESSION}
 networks:

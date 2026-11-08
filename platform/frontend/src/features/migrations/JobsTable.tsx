@@ -14,6 +14,7 @@ import { DIRECTION_LABELS, envShortName } from "./fleetView";
 import { PhaseChevrons } from "./PhaseChevrons";
 import { statusTone, STATUS_LABELS } from "./stages";
 import { failedWrites } from "./summary";
+import { confirmDeleteTask, useDeleteTask } from "./useDeleteTask";
 
 /** 작업 표: 열을 눌러 정렬, 행(또는 이름)을 누르면 작업 상세 화면. */
 export function JobsTable({
@@ -46,82 +47,120 @@ export function JobsTable({
   const provider = (envId: string) =>
     fleet.environments.find((e) => e.id === envId)?.provider;
   return (
-    <table className="pk-table sticky">
-      <thead>
-        <tr>
-          {th("job", "작업")}
-          {th("status", "상태")}
-          <th>경로</th>
-          {th("stage", "단계")}
-          {th("source", "원본 쓰기", "num")}
-          {th("ratio", "대상 반영", "num")}
-          {th("failed", "실패", "num")}
-          {th("pause", "쓰기 중단", "num")}
-          {th("updated", "갱신", "num")}
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((m) => {
-          const failed = failedWrites(m);
-          return (
-            <tr
-              key={m.job_id}
-              className="clickable"
-              tabIndex={0}
-              onClick={() => onOpen(m.job_id)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onOpen(m.job_id);
-                }
-              }}
-            >
-              <td>
-                <a
-                  className="strong-link"
-                  href={migrationHash(m.job_id)}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {m.job_id}
-                </a>{" "}
-                <span className="sub">{DIRECTION_LABELS[m.direction]}</span>
-              </td>
-              <td>
-                <StatusLabel tone={statusTone(m.status)}>
-                  {STATUS_LABELS[m.status]}
-                </StatusLabel>
-              </td>
-              <td>
-                <span className="pk-path">
-                  <ProviderLogo provider={provider(m.source_env)} />
-                  {envShortName(fleet.environments, m.source_env)}
-                  <span className="sub">→</span>
-                  <ProviderLogo provider={provider(m.target_env)} />
-                  {envShortName(fleet.environments, m.target_env)}
-                </span>
-              </td>
-              <td>
-                <PhaseChevrons job={m} />
-              </td>
-              <td className="num">{formatCount(m.writes.committed_source)}</td>
-              <td className="num">
-                <RatioCell
-                  part={m.writes.committed_target}
-                  whole={m.writes.committed_source}
-                />
-              </td>
-              <td className={`num${failed > 0 ? " text-bad" : ""}`}>
-                {formatCount(failed)}
-              </td>
-              <td className="num">
-                {formatSeconds(m.downtime.write_pause_seconds)}
-              </td>
-              <td className="num sub">{formatAgo(m.updated_at)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div
+      className="table-wrap"
+      tabIndex={0}
+      role="region"
+      aria-label="이전 작업 목록"
+    >
+      <table className="pk-table sticky">
+        <thead>
+          <tr>
+            {th("job", "작업")}
+            {th("status", "상태")}
+            <th>경로</th>
+            {th("stage", "단계")}
+            {th("source", "원본 쓰기", "num")}
+            {th("ratio", "대상 반영", "num")}
+            {th("failed", "실패", "num")}
+            {th("pause", "쓰기 중단", "num")}
+            {th("updated", "갱신", "num")}
+            <th>
+              <span className="sr-only">관리</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((m) => {
+            const failed = failedWrites(m);
+            return (
+              <tr
+                key={m.job_id}
+                className="clickable"
+                tabIndex={0}
+                onClick={() => onOpen(m.job_id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpen(m.job_id);
+                  }
+                }}
+              >
+                <td>
+                  <a
+                    className="strong-link"
+                    href={migrationHash(m.job_id)}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {m.job_id}
+                  </a>{" "}
+                  <span className="sub">{DIRECTION_LABELS[m.direction]}</span>
+                </td>
+                <td>
+                  <StatusLabel tone={statusTone(m.status)}>
+                    {STATUS_LABELS[m.status]}
+                  </StatusLabel>
+                </td>
+                <td>
+                  <span className="pk-path">
+                    <ProviderLogo provider={provider(m.source_env)} />
+                    {envShortName(fleet.environments, m.source_env)}
+                    <span className="sub">→</span>
+                    <ProviderLogo provider={provider(m.target_env)} />
+                    {envShortName(fleet.environments, m.target_env)}
+                  </span>
+                </td>
+                <td>
+                  <PhaseChevrons job={m} />
+                </td>
+                <td className="num">
+                  {formatCount(m.writes.committed_source)}
+                </td>
+                <td className="num">
+                  <RatioCell
+                    part={m.writes.committed_target}
+                    whole={m.writes.committed_source}
+                  />
+                </td>
+                <td className={`num${failed > 0 ? " text-bad" : ""}`}>
+                  {formatCount(failed)}
+                </td>
+                <td className="num">
+                  {formatSeconds(m.downtime.write_pause_seconds)}
+                </td>
+                <td className="num sub">{formatAgo(m.updated_at)}</td>
+                <td className="job-actions">
+                  {m.removable && <DeleteRowButton jobId={m.job_id} />}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DeleteRowButton({ jobId }: { jobId: string }) {
+  const remove = useDeleteTask(jobId);
+  return (
+    <button
+      type="button"
+      className="secondary"
+      disabled={remove.isPending}
+      title={
+        remove.isError
+          ? "작업을 지우지 못했어요. 다시 시도해 주세요."
+          : undefined
+      }
+      onClick={(event) => {
+        event.stopPropagation();
+        if (confirmDeleteTask(jobId)) remove.mutate();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {remove.isPending ? "지우는 중…" : remove.isError ? "다시 삭제" : "삭제"}
+    </button>
   );
 }
 

@@ -1,12 +1,12 @@
 # 실제 환경의 앱 선택
 
-실제 연결에서 환경 등록 후 앱 선택으로 진행한다. 고정 시연 목록은 preview에서만 사용한다.
+작업 등록에서 출발·도착 환경을 지정한 뒤 출발 환경의 앱을 선택한다. 연결로 수집한 환경은 목록에 저장해야 출발·도착 후보로 표시된다. 고정 시연 목록은 미리보기에서만 사용한다.
 
 ## 데이터 경로
 
 서명된 environment.inspect 작업 → 선택한 kubeconfig context의 읽기 전용 수집 → inventory report의 workloads → 서버 검증/소유자 접근제어 → ConnectionSnapshot.workloads → LiveAppSelect.
 
-Deployment, StatefulSet, DaemonSet을 수집하며 Argo Rollout은 별도로 조회한다. 네임스페이스/종류/이름/복제수/이미지와 직접 참조 Secret·ConfigMap·PVC 이름만 전송한다. Secret/ConfigMap 객체를 조회하지 않고 env 값·명령·주석은 전송하지 않는다. projected volume, claim template 및 외부 DB 의존성 분석은 이 목록의 범위 밖이다. 목록은 이전 가능 판정이 아니며 선택은 화면 안에서만 유지된다. 실행/사전점검/선택 저장은 아직 연결하지 않았다.
+Deployment, StatefulSet, DaemonSet을 수집하며 Argo Rollout은 별도로 조회한다. 네임스페이스/종류/이름/복제수/이미지와 직접 참조 Secret·ConfigMap·PVC 이름만 전송한다. Secret/ConfigMap 객체를 조회하지 않고 env 값·명령·주석은 전송하지 않는다. projected volume, claim template 및 외부 DB 의존성 분석은 이 목록의 범위 밖이다. 목록은 이전 가능 판정이 아니며 선택은 화면 안에서만 유지된다. 선택을 확정하면 마이그레이션 작업이 등록되고 작업 상세가 열린다.
 
 등록 후 재수집은 동일 target_id에만 허용한다. 재수집 동안 이전 워크로드 목록을 비우며 revoked 또는 다른 epoch 자료를 표시하지 않는다. 수집 결과 변경 시 선택을 초기화한다. 구버전 보고서도 허용하지만 시연값으로 대신 채우지 않고 도구 업데이트/재수집을 안내한다. 권한 부족과 실제 빈 목록을 구분한다.
 

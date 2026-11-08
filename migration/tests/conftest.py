@@ -24,9 +24,12 @@ RAW_CONFIG = {
     },
     "job": {"job_id": "forward_001", "source": "onprem", "target": "aws"},
     "kafka": {"connect_url": "http://connect:8083"},
-    "worker": {"url": "http://worker:8080"},
+    "bot": {"control_url": "http://bot:9091", "request_endpoint": "http://ingress/api/requests"},
+    "ingress": {"control_url": "http://ingress:9092", "targets": {"onprem": "onprem", "aws": "aws_db"},
+                "app_checks": {"onprem": {"url": "http://app", "environment": "onprem", "database": "migration_demo"},
+                               "aws": {"url": "http://app-aws", "environment": "aws", "database": "migration_demo"}}},
     "cutover": {"poll_interval_seconds": 0, "stage_timeout_seconds": 5, "offset_stable_seconds": 0,
-                "min_live_rows_after_snapshot": 3, "min_rows_after_switch": 2},
+                "min_live_rows_after_snapshot": 100, "min_rows_after_switch": 100},
 }
 
 

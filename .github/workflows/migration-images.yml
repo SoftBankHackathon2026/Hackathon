@@ -40,6 +40,20 @@ env:
   IMAGE_NAMESPACE: softbankhackathon2026
 
 jobs:
+  test-cutover:
+    name: pytest cutover and full-service handoff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cutover regressions (no production infrastructure)
+        working-directory: migration
+        run: |
+          pip install -q ".[dev,policy-runtime]"
+          python -m pytest tests/test_cutover*.py tests/test_return_cutover.py tests/test_config.py tests/test_ingress_client.py tests/test_full_migration.py
+
   # 에이전트 테스트. opa 가 있으므로 실제 Rego 로 remediation 흐름까지 돈다. codex 는 가짜 스크립트로 대체한다.
   test-agent:
     name: pytest agent
@@ -64,7 +78,7 @@ jobs:
   build:
     name: build ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: [test-agent]
+    needs: [test-agent, test-cutover]
     strategy:
       fail-fast: false
       matrix:

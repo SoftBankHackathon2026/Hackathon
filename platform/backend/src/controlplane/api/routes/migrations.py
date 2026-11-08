@@ -1,8 +1,11 @@
+import re
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
 
 from controlplane.api.deps import (
+    ContainerDep,
     CutoverCommandsDep,
     CutoverOperatorIdentity,
     DataMappingsDep,
@@ -15,7 +18,8 @@ from controlplane.api.deps import (
     TasksDep,
     ViewerIdentity,
 )
-from controlplane.core.errors import OperationNotFound
+from controlplane.core.config import AuthMode
+from controlplane.core.errors import InvalidRequest, OperationNotFound
 from controlplane.schemas.data_mapping import DataMapping, DataMappingUpdate
 from controlplane.schemas.migrations import (
     ClaimedCommand,
@@ -33,14 +37,32 @@ from controlplane.schemas.migrations import (
     TaskPlan,
 )
 from controlplane.schemas.security import SecurityPosture
+from controlplane.services.cutover_commands import CutoverCommandService
 from controlplane.services.data_mapping import DataMappingService
+from controlplane.services.migrations import MigrationService
+from controlplane.services.registered_environments import registered_environments
 
 router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
 
 @router.get("/fleet")
-def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
-    return service.get_fleet()
+def fleet(
+    service: FleetDep,
+    migrations: MigrationsDep,
+    tasks: TasksDep,
+    commands: CutoverCommandsDep,
+    identity: ViewerIdentity,
+    container: ContainerDep,
+) -> Fleet:
+    view = service.get_fleet()
+    started = _started(migrations, commands)
+    for summary in view.migrations:
+        summary.removable = tasks.removable(summary.job_id, started)
+    known = {env.id for env in view.environments}
+    for env in registered_environments(container.connections, container.auth_mode, identity):
+        if env.id not in known:
+            view.environments.append(env)
+    return view
 
 
 @router.get("/fleet/environments/{env_id}/components/{component_id}/pods/{pod}/logs")
@@ -68,16 +90,55 @@ def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> 
 
 @router.post("/migrations", status_code=201)
 def create_migration(
-    body: MigrationCreate, tasks: TasksDep, identity: CutoverOperatorIdentity
+    body: MigrationCreate,
+    tasks: TasksDep,
+    identity: CutoverOperatorIdentity,
+    container: ContainerDep,
 ) -> MigrationCreated:
-    return tasks.create(body, identity.email if identity else None)
+    providers = {}
+    for side, env_id in (("source", body.source_env), ("target", body.target_env)):
+        if not re.fullmatch(r"connected-[A-Za-z0-9_-]{22}", env_id):
+            continue
+        connection = container.connections
+        if connection is None or (identity is None and container.auth_mode != AuthMode.DEMO):
+            raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
+        team = identity.team if identity else connection.runtime_tenant_id
+        provider = connection.registered_provider(env_id, team)
+        if provider is None:
+            raise InvalidRequest("등록한 환경을 확인할 수 없어요.")
+        providers[f"{side}_provider"] = provider
+    return tasks.create(body.model_copy(update=providers), identity.email if identity else None)
 
 
 @router.get("/migrations/{job_id}/plan")
 def plan(
-    job_id: str, service: MigrationsDep, mappings: DataMappingsDep, identity: ViewerIdentity
+    job_id: str,
+    service: MigrationsDep,
+    mappings: DataMappingsDep,
+    tasks: TasksDep,
+    commands: CutoverCommandsDep,
+    identity: ViewerIdentity,
 ) -> TaskPlan:
-    return service.get_plan(job_id, _mapping_status(mappings, job_id))
+    started = _started(service, commands)
+    return service.get_plan(
+        job_id, _mapping_status(mappings, job_id), tasks.removable(job_id, started)
+    )
+
+
+@router.delete("/migrations/{job_id}", status_code=204)
+def delete_migration(
+    job_id: str,
+    tasks: TasksDep,
+    service: MigrationsDep,
+    commands: CutoverCommandsDep,
+    identity: CutoverOperatorIdentity,
+) -> Response:
+    tasks.remove(job_id, _started(service, commands))
+    return Response(status_code=204)
+
+
+def _started(service: MigrationService, commands: CutoverCommandService) -> Callable[[str], bool]:
+    return lambda job_id: service.has_started(job_id) or commands.has_active(job_id)
 
 
 def _mapping_status(mappings: DataMappingService, job_id: str) -> str | None:

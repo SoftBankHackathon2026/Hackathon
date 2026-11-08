@@ -1,0 +1,2799 @@
+{
+  "fleet": {
+    "generated_at": "2026-11-07T13:48:48.221902Z",
+    "source": "simulated",
+    "environments": [
+      {
+        "id": "onprem",
+        "name": "온프렘 k3s (서울)",
+        "kind": "k3s",
+        "provider": "onprem",
+        "region": "seoul-local",
+        "role": "legacy",
+        "connected": true,
+        "observed_at": "2026-11-07T13:48:48.221903Z",
+        "apps": [
+          {
+            "name": "review-service",
+            "namespace": "hackathon",
+            "sync": "Synced",
+            "health": "Healthy",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "sample-app",
+            "namespace": "hackathon",
+            "sync": "Synced",
+            "health": "Healthy",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "migration-policy",
+            "namespace": "hackathon",
+            "sync": "Synced",
+            "health": "Healthy",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "migration-cdc",
+            "namespace": "hackathon",
+            "sync": "Synced",
+            "health": "Healthy",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "db-insert-worker",
+            "namespace": "hackathon",
+            "sync": "Synced",
+            "health": "Healthy",
+            "images": [],
+            "revision": null
+          }
+        ],
+        "data_services": [
+          {
+            "kind": "postgres",
+            "name": "postgres (PostgreSQL 16)",
+            "managed": false
+          },
+          {
+            "kind": "kafka",
+            "name": "kafka (KRaft 3.9.1)",
+            "managed": false
+          },
+          {
+            "kind": "object_storage",
+            "name": "SeaweedFS (S3 호환)",
+            "managed": false
+          },
+          {
+            "kind": "vector_db",
+            "name": "qdrant",
+            "managed": false
+          }
+        ],
+        "components": [
+          {
+            "id": "cloudflared",
+            "name": "Cloudflare Tunnel",
+            "layer": "entry",
+            "kind": "cloudflared",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 2/2",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns edge-system"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "traefik",
+            "name": "Traefik Ingress",
+            "layer": "entry",
+            "kind": "ingress",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": ["cloudflared"],
+            "placement": ["k3s 클러스터", "ns kube-system"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "argocd",
+            "name": "Argo CD",
+            "layer": "platform",
+            "kind": "gitops",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns argocd"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "argo-rollouts",
+            "name": "Argo Rollouts",
+            "layer": "platform",
+            "kind": "rollout",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns argo-rollouts"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "prometheus",
+            "name": "Prometheus·Grafana",
+            "layer": "platform",
+            "kind": "monitoring",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns monitoring"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "review-api",
+            "name": "review-api",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": ["traefik", "postgres", "kafka"],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "review-worker",
+            "name": "review-worker",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": ["kafka", "postgres", "qdrant"],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "sample-app",
+            "name": "sample-app",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "healthy",
+            "detail": "Synced, Healthy",
+            "depends_on": ["traefik"],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "db-insert-worker",
+            "name": "쓰기 워커",
+            "layer": "migration",
+            "kind": "migration",
+            "managed": false,
+            "status": "healthy",
+            "detail": "Synced, Healthy",
+            "depends_on": ["postgres"],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "migration-cdc",
+            "name": "Kafka Connect (Debezium)",
+            "layer": "migration",
+            "kind": "migration",
+            "managed": false,
+            "status": "healthy",
+            "detail": "Synced, Healthy",
+            "depends_on": ["postgres", "kafka"],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "migration-policy",
+            "name": "OPA 정책 서버",
+            "layer": "migration",
+            "kind": "migration",
+            "managed": false,
+            "status": "healthy",
+            "detail": "Synced, Healthy",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "postgres",
+            "name": "PostgreSQL 16",
+            "layer": "data",
+            "kind": "postgres",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "kafka",
+            "name": "Kafka (KRaft)",
+            "layer": "data",
+            "kind": "kafka",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 2/2",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "seaweedfs",
+            "name": "SeaweedFS (S3 호환)",
+            "layer": "data",
+            "kind": "object_storage",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "qdrant",
+            "name": "Qdrant",
+            "layer": "data",
+            "kind": "vector_db",
+            "managed": false,
+            "status": "healthy",
+            "detail": "준비 1/1",
+            "depends_on": [],
+            "placement": ["k3s 클러스터", "ns hackathon"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "tailscale-onprem",
+            "name": "Tailscale 경로",
+            "layer": "link",
+            "kind": "network",
+            "managed": false,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음, AWS VPC 10.0.0.0/16 (RDS·MSK)으로 가는 경로",
+            "depends_on": [],
+            "placement": [],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          }
+        ],
+        "boundary": ["사이트 seoul-local"],
+        "issues": [],
+        "cluster": null
+      },
+      {
+        "id": "aws",
+        "name": "AWS EKS oneaction (서울)",
+        "kind": "eks",
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "role": "target",
+        "connected": true,
+        "observed_at": "2026-11-07T13:48:48.221903Z",
+        "apps": [
+          {
+            "name": "review-service-aws",
+            "namespace": "platform",
+            "sync": "Unknown",
+            "health": "Unknown",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "sample-app-aws",
+            "namespace": "platform",
+            "sync": "Unknown",
+            "health": "Unknown",
+            "images": [],
+            "revision": null
+          }
+        ],
+        "data_services": [
+          {
+            "kind": "postgres",
+            "name": "RDS oneaction-review-db",
+            "managed": true
+          },
+          {
+            "kind": "kafka",
+            "name": "MSK oneaction-review",
+            "managed": true
+          },
+          {
+            "kind": "object_storage",
+            "name": "S3 oneaction-review-docs",
+            "managed": true
+          }
+        ],
+        "components": [
+          {
+            "id": "alb",
+            "name": "ALB oneaction-alb",
+            "layer": "entry",
+            "kind": "load_balancer",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음, 현재 HTTP 80 임시 모드",
+            "depends_on": [],
+            "placement": ["VPC 10.0.0.0/16", "public 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "aws-lbc",
+            "name": "AWS Load Balancer Controller",
+            "layer": "entry",
+            "kind": "ingress",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": ["alb"],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns kube-system"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "argocd",
+            "name": "Argo CD",
+            "layer": "platform",
+            "kind": "gitops",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns argocd"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "eso",
+            "name": "External Secrets Operator",
+            "layer": "platform",
+            "kind": "secrets",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns external-secrets"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "cloudwatch",
+            "name": "CloudWatch 로그/알람",
+            "layer": "platform",
+            "kind": "monitoring",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": [],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "argo-rollouts",
+            "name": "Argo Rollouts",
+            "layer": "platform",
+            "kind": "rollout",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns argo-rollouts"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "prometheus",
+            "name": "Prometheus·Grafana",
+            "layer": "platform",
+            "kind": "monitoring",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns monitoring"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "review-service",
+            "name": "review-service",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "unknown",
+            "detail": "Unknown, Unknown",
+            "depends_on": ["aws-lbc", "rds", "msk"],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns platform"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "sample-app",
+            "name": "sample-app",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "unknown",
+            "detail": "Unknown, Unknown",
+            "depends_on": ["aws-lbc"],
+            "placement": [
+              "VPC 10.0.0.0/16",
+              "EKS 서브넷",
+              "EKS oneaction",
+              "ns sample-app"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "rds",
+            "name": "RDS oneaction-review-db",
+            "layer": "data",
+            "kind": "postgres",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": ["VPC 10.0.0.0/16", "data 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "msk",
+            "name": "MSK oneaction-review",
+            "layer": "data",
+            "kind": "kafka",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": ["VPC 10.0.0.0/16", "data 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "s3",
+            "name": "S3 oneaction-review-docs",
+            "layer": "data",
+            "kind": "object_storage",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": [],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "tailscale-aws",
+            "name": "Tailscale 라우터",
+            "layer": "link",
+            "kind": "network",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음, oneaction-aws-router, 10.0.0.0/16 광고",
+            "depends_on": [],
+            "placement": ["VPC 10.0.0.0/16", "EKS 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          }
+        ],
+        "boundary": ["AWS 계정 t3underline", "리전 ap-northeast-2"],
+        "issues": [
+          {
+            "severity": "warning",
+            "title": "클러스터 구성 상태를 읽지 못했어요",
+            "detail": "플랫폼 읽기 권한이 필요해요. EKS 안에서 실행하면 ServiceAccount RBAC, 밖이면 EKS access entry예요."
+          }
+        ],
+        "cluster": null
+      },
+      {
+        "id": "gcp",
+        "name": "GCP GKE oneaction-dev (서울)",
+        "kind": "gke",
+        "provider": "gcp",
+        "region": "asia-northeast3",
+        "role": "target",
+        "connected": true,
+        "observed_at": "2026-11-07T13:48:48.221903Z",
+        "apps": [
+          {
+            "name": "review-service-gcp",
+            "namespace": "platform",
+            "sync": "Unknown",
+            "health": "Unknown",
+            "images": [],
+            "revision": null
+          },
+          {
+            "name": "sample-app-gcp",
+            "namespace": "platform",
+            "sync": "Unknown",
+            "health": "Unknown",
+            "images": [],
+            "revision": null
+          }
+        ],
+        "data_services": [
+          {
+            "kind": "postgres",
+            "name": "Cloud SQL oneaction-dev-review",
+            "managed": true
+          },
+          {
+            "kind": "kafka",
+            "name": "Managed Kafka oneaction-dev-review",
+            "managed": true
+          },
+          {
+            "kind": "object_storage",
+            "name": "Cloud Storage oneaction-dev-review",
+            "managed": true
+          }
+        ],
+        "components": [
+          {
+            "id": "cloud-lb",
+            "name": "Cloud Load Balancing",
+            "layer": "entry",
+            "kind": "load_balancer",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음, Ingress platform/oneaction-dev-platform, HTTP 80",
+            "depends_on": [],
+            "placement": ["VPC oneaction-dev-vpc"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "argocd",
+            "name": "Argo CD",
+            "layer": "platform",
+            "kind": "gitops",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC oneaction-dev-vpc",
+              "GKE 서브넷",
+              "GKE oneaction-dev",
+              "ns argocd"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "eso",
+            "name": "External Secrets Operator",
+            "layer": "platform",
+            "kind": "secrets",
+            "managed": false,
+            "status": "unknown",
+            "detail": "상태를 읽지 못함",
+            "depends_on": [],
+            "placement": [
+              "VPC oneaction-dev-vpc",
+              "GKE 서브넷",
+              "GKE oneaction-dev",
+              "ns external-secrets"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "cloud-logging",
+            "name": "Cloud Logging/알림",
+            "layer": "platform",
+            "kind": "monitoring",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": [],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "review-service",
+            "name": "review-service",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "unknown",
+            "detail": "Unknown, Unknown",
+            "depends_on": ["cloud-lb", "cloud-sql", "managed-kafka"],
+            "placement": [
+              "VPC oneaction-dev-vpc",
+              "GKE 서브넷",
+              "GKE oneaction-dev",
+              "ns platform"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "sample-app",
+            "name": "sample-app",
+            "layer": "app",
+            "kind": "app",
+            "managed": false,
+            "status": "unknown",
+            "detail": "Unknown, Unknown",
+            "depends_on": ["cloud-lb"],
+            "placement": [
+              "VPC oneaction-dev-vpc",
+              "GKE 서브넷",
+              "GKE oneaction-dev",
+              "ns platform"
+            ],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "cloud-sql",
+            "name": "Cloud SQL oneaction-dev-review",
+            "layer": "data",
+            "kind": "postgres",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": ["VPC oneaction-dev-vpc", "data 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "managed-kafka",
+            "name": "Managed Kafka oneaction-dev-review",
+            "layer": "data",
+            "kind": "kafka",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": ["VPC oneaction-dev-vpc", "data 서브넷"],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          },
+          {
+            "id": "gcs",
+            "name": "Cloud Storage oneaction-dev-review",
+            "layer": "data",
+            "kind": "object_storage",
+            "managed": true,
+            "status": "unknown",
+            "detail": "관리형 서비스 상태는 아직 수집하지 않음",
+            "depends_on": [],
+            "placement": [],
+            "namespace": null,
+            "logs": false,
+            "endpoints": []
+          }
+        ],
+        "boundary": ["GCP 프로젝트 ghost-project", "리전 asia-northeast3"],
+        "issues": [
+          {
+            "severity": "warning",
+            "title": "클러스터 구성 상태를 읽지 못했어요",
+            "detail": "플랫폼 읽기 권한이 필요해요. GKE 에 deploy/reader 를 적용하고 그 토큰 kubeconfig 를 넣어요."
+          }
+        ],
+        "cluster": null
+      }
+    ],
+    "migrations": [
+      {
+        "job_id": "forward_001",
+        "direction": "forward",
+        "source_env": "onprem",
+        "target_env": "aws",
+        "data_source": "onprem",
+        "data_target": "aws",
+        "stage": "COMPLETED",
+        "status": "completed",
+        "stage_index": 9,
+        "stage_count": 10,
+        "updated_at": "2026-11-07T13:17:08.221814Z",
+        "writes": {
+          "committed_source": 2500,
+          "committed_target": 2100,
+          "failed": 0,
+          "rejected": 0,
+          "mismatch": 0
+        },
+        "downtime": {
+          "write_pause_seconds": 30,
+          "failed_requests": 0,
+          "max_latency_seconds": 29.21,
+          "p95_latency_seconds": 0.0184
+        },
+        "verify_mismatch": 0
+      },
+      {
+        "job_id": "return_001",
+        "direction": "return",
+        "source_env": "aws",
+        "target_env": "onprem",
+        "data_source": "aws",
+        "data_target": "onprem_return",
+        "stage": "READY",
+        "status": "waiting_approval",
+        "stage_index": 3,
+        "stage_count": 10,
+        "updated_at": "2026-11-07T13:40:28.221814Z",
+        "writes": {
+          "committed_source": 2100,
+          "committed_target": 0,
+          "failed": 0,
+          "rejected": 0,
+          "mismatch": 0
+        },
+        "downtime": {
+          "write_pause_seconds": 0,
+          "failed_requests": 0,
+          "max_latency_seconds": null,
+          "p95_latency_seconds": 0.0184
+        },
+        "verify_mismatch": null
+      }
+    ]
+  },
+  "security/posture": {
+    "evaluated_at": "2026-11-07T13:48:48.225904Z",
+    "source": "simulated",
+    "standards": [
+      {
+        "id": "CIS-K8S",
+        "name": "CIS Kubernetes Benchmark v1.10"
+      },
+      {
+        "id": "AWS-FSBP",
+        "name": "AWS Foundational Security Best Practices"
+      },
+      {
+        "id": "CIS-GCP",
+        "name": "CIS Google Cloud Platform Foundation Benchmark"
+      },
+      {
+        "id": "NSA-K8S",
+        "name": "NSA/CISA Kubernetes Hardening Guide"
+      },
+      {
+        "id": "ONEPORT",
+        "name": "Oneport 마이그레이션 정책 (OPA)"
+      }
+    ],
+    "environments": [
+      {
+        "env_id": "onprem",
+        "name": "온프렘 k3s (서울)",
+        "score": 57,
+        "passed": 10,
+        "failed": 10,
+        "unknown": 3,
+        "by_severity": {
+          "critical": 0,
+          "high": 5,
+          "medium": 5,
+          "low": 0
+        }
+      },
+      {
+        "env_id": "aws",
+        "name": "AWS EKS oneaction (서울)",
+        "score": 72,
+        "passed": 9,
+        "failed": 4,
+        "unknown": 10,
+        "by_severity": {
+          "critical": 0,
+          "high": 2,
+          "medium": 2,
+          "low": 0
+        }
+      },
+      {
+        "env_id": "gcp",
+        "name": "GCP GKE oneaction-dev (서울)",
+        "score": 72,
+        "passed": 9,
+        "failed": 4,
+        "unknown": 10,
+        "by_severity": {
+          "critical": 0,
+          "high": 2,
+          "medium": 2,
+          "low": 0
+        }
+      }
+    ],
+    "controls": [
+      {
+        "id": "NET-01",
+        "title": "앱 네임스페이스 default-deny NetworkPolicy",
+        "category": "network",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 5.3.2", "NSA-K8S"],
+        "remediation": "앱 네임스페이스에 ingress default-deny 정책을 두고 필요한 흐름만 허용하세요.",
+        "why": "기본 차단 정책이 없으면 같은 클러스터의 다른 파드가 앱과 DB에 자유롭게 접근할 수 있어요. 한 파드가 뚫리면 옆으로 번지기 쉬워요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "hackathon: default-deny 포함 NetworkPolicy 6개",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "NET-02",
+        "title": "DB 비공개 (SEC-01)",
+        "category": "network",
+        "severity": "critical",
+        "standard_refs": ["ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"],
+        "remediation": "DB를 사설 서브넷/ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
+        "why": "DB가 인터넷에 노출되면 비밀번호 대입이나 취약점 공격의 직접 대상이 돼요. 이전 중에는 원본과 대상 DB 모두 사설망에만 있어야 해요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "DB가 사설망에서만 접근 가능",
+            "resources": ["PostgreSQL 16"]
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "DB가 사설망에서만 접근 가능",
+            "resources": ["RDS oneaction-review-db"]
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "DB가 사설망에서만 접근 가능",
+            "resources": ["Cloud SQL oneaction-dev-review"]
+          }
+        }
+      },
+      {
+        "id": "NET-03",
+        "title": "외부 진입점 TLS",
+        "category": "network",
+        "severity": "high",
+        "standard_refs": ["AWS-FSBP ELB.1"],
+        "remediation": "ALB/Cloud Load Balancing/Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
+        "why": "외부 진입점이 평문 HTTP면 로그인 쿠키와 요청 내용이 네트워크에서 그대로 보여요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "외부 진입점이 평문 HTTP",
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+          },
+          "aws": {
+            "status": "fail",
+            "detail": "외부 진입점이 평문 HTTP",
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+          },
+          "gcp": {
+            "status": "fail",
+            "detail": "외부 진입점이 평문 HTTP",
+            "resources": ["Cloud Load Balancing"]
+          }
+        }
+      },
+      {
+        "id": "NET-04",
+        "title": "웹 방화벽(WAF)",
+        "category": "network",
+        "severity": "medium",
+        "standard_refs": ["AWS-FSBP WAF.1"],
+        "remediation": "ALB 앞에 AWS WAF, Cloud Load Balancing 앞에 Cloud Armor(또는 오픈소스 WAF Ingress)를 두세요.",
+        "why": "웹 방화벽이 없으면 SQL 인젝션, 봇 트래픽 같은 흔한 웹 공격을 앞단에서 걸러내지 못해요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "WAF 미적용",
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+          },
+          "aws": {
+            "status": "fail",
+            "detail": "WAF 미적용",
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+          },
+          "gcp": {
+            "status": "fail",
+            "detail": "WAF 미적용",
+            "resources": ["Cloud Load Balancing"]
+          }
+        }
+      },
+      {
+        "id": "WL-01",
+        "title": "컨테이너 비루트 실행",
+        "category": "workload",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 5.2.6", "NSA-K8S"],
+        "remediation": "securityContext.runAsNonRoot=true를 지정하세요.",
+        "why": "컨테이너가 root로 실행되면 컨테이너 탈출 취약점이 곧 노드 권한 탈취로 이어질 수 있어요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "앱 워크로드 4개 모두 runAsNonRoot 적용",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "WL-02",
+        "title": "읽기 전용 루트 파일시스템",
+        "category": "workload",
+        "severity": "medium",
+        "standard_refs": ["NSA-K8S"],
+        "remediation": "readOnlyRootFilesystem=true와 쓰기 볼륨 분리를 적용하세요.",
+        "why": "루트 파일시스템에 쓸 수 있으면 공격자가 실행 파일을 바꾸거나 도구를 심을 수 있어요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "readOnlyRootFilesystem 미적용: kafka-broker, postgres",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "WL-03",
+        "title": "Linux capability 전체 제거",
+        "category": "workload",
+        "severity": "medium",
+        "standard_refs": ["CIS-K8S 5.2.9"],
+        "remediation": "capabilities.drop: [ALL]을 지정하세요.",
+        "why": "남아 있는 Linux capability는 권한 상승에 쓰일 수 있어요. 앱에 필요한 것만 남겨야 해요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "앱 워크로드 4개 모두 drop ALL 적용",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "WL-04",
+        "title": "privileged 컨테이너 금지",
+        "category": "workload",
+        "severity": "critical",
+        "standard_refs": ["CIS-K8S 5.2.2"],
+        "remediation": "privileged=false를 강제하세요.",
+        "why": "privileged 컨테이너는 노드의 모든 장치와 커널 기능에 접근할 수 있어 사실상 노드 root와 같아요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "privileged 컨테이너 없음",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "WL-05",
+        "title": "이미지 digest 고정",
+        "category": "workload",
+        "severity": "medium",
+        "standard_refs": ["NSA-K8S"],
+        "remediation": "태그 대신 @sha256 digest로 이미지를 고정하세요.",
+        "why": "태그로만 지정한 이미지는 같은 이름으로 다른 내용이 올라오면 그대로 배포돼요. digest로 고정해야 검증한 이미지만 실행돼요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "digest 미고정 이미지 4/4개",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "WL-06",
+        "title": "Pod Security Admission 적용",
+        "category": "workload",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 5.2.1"],
+        "remediation": "네임스페이스에 pod-security.kubernetes.io/enforce=restricted 라벨을 붙이세요.",
+        "why": "Pod Security Admission이 없으면 위의 컨테이너 규칙을 지키지 않은 파드도 그대로 생성돼요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "hackathon: Pod Security Admission enforce 라벨 없음",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      },
+      {
+        "id": "ID-01",
+        "title": "와일드카드 RBAC 금지",
+        "category": "identity",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 5.1.3"],
+        "remediation": "verbs/resources에 *를 쓰는 Role을 필요한 권한으로 줄이세요.",
+        "why": "* 권한을 가진 계정이 유출되면 네임스페이스 안의 모든 리소스(Secret 포함)를 읽고 바꿀 수 있어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "와일드카드 권한 바인딩: hackathon/argocd-hackathon-deployer, hackathon/hackathon-full-access",
+            "resources": []
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": []
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "ID-02",
+        "title": "Argo CD admin/익명 접근 차단",
+        "category": "identity",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 5.1.1"],
+        "remediation": "admin.enabled=false, users.anonymous.enabled=false로 두세요.",
+        "why": "Argo CD의 admin이나 익명 접근이 열려 있으면 배포 설정을 바꿔 클러스터 전체에 원하는 것을 배포할 수 있어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "Argo CD admin/익명 접근 비활성",
+            "resources": []
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "Argo CD 설정을 읽지 못했어요.",
+            "resources": []
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "Argo CD 설정을 읽지 못했어요.",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "ID-03",
+        "title": "워크로드 ID 연동 (정적 키 미사용)",
+        "category": "identity",
+        "severity": "high",
+        "standard_refs": ["AWS-FSBP IAM.6"],
+        "remediation": "EKS Pod Identity/GKE Workload Identity 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
+        "why": "정적 토큰과 키는 유출돼도 알아채기 어렵고 교체도 수동이에요. 워크로드 ID는 짧게 쓰고 버리는 자격증명을 써요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "정적 토큰/키로 권한 부여",
+            "resources": []
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "워크로드 ID로 클라우드 권한 위임",
+            "resources": []
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "워크로드 ID로 클라우드 권한 위임",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "DATA-01",
+        "title": "DB 전송 구간 TLS 강제",
+        "category": "data",
+        "severity": "high",
+        "standard_refs": ["ONEPORT", "CIS-GCP 6.4"],
+        "remediation": "rds.force_ssl=1, Cloud SQL ssl_mode=ENCRYPTED_ONLY 또는 pg_hba hostssl만 허용하세요.",
+        "why": "DB 연결이 평문이면 이전 중 오가는 데이터와 계정 정보가 네트워크에서 보여요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "DB가 TLS 연결만 허용",
+            "resources": ["PostgreSQL 16"]
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "DB가 TLS 연결만 허용",
+            "resources": ["RDS oneaction-review-db"]
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "DB가 TLS 연결만 허용",
+            "resources": ["Cloud SQL oneaction-dev-review"]
+          }
+        }
+      },
+      {
+        "id": "DATA-02",
+        "title": "DB 저장 데이터 암호화",
+        "category": "data",
+        "severity": "high",
+        "standard_refs": ["AWS-FSBP RDS.3"],
+        "remediation": "스토리지 암호화를 켜세요.",
+        "why": "디스크가 암호화되지 않으면 스냅샷이나 디스크가 유출될 때 데이터가 그대로 읽혀요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "unknown",
+            "detail": "인프라 설정에서 확인할 수 없어요.",
+            "resources": ["PostgreSQL 16"]
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "DB 스토리지 암호화",
+            "resources": ["RDS oneaction-review-db"]
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "DB 스토리지 암호화",
+            "resources": ["Cloud SQL oneaction-dev-review"]
+          }
+        }
+      },
+      {
+        "id": "DATA-03",
+        "title": "DB 백업",
+        "category": "data",
+        "severity": "medium",
+        "standard_refs": ["AWS-FSBP RDS.11", "CIS-GCP 6.7"],
+        "remediation": "자동 백업 또는 주기 덤프를 구성하세요.",
+        "why": "백업이 없으면 이전 중 실수나 장애로 데이터가 깨졌을 때 되돌릴 지점이 없어요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "DB 백업 구성됨",
+            "resources": ["PostgreSQL 16"]
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "DB 백업 구성됨",
+            "resources": ["RDS oneaction-review-db"]
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "DB 백업 구성됨",
+            "resources": ["Cloud SQL oneaction-dev-review"]
+          }
+        }
+      },
+      {
+        "id": "DATA-04",
+        "title": "외부 비밀 저장소 동기화",
+        "category": "data",
+        "severity": "medium",
+        "standard_refs": ["NSA-K8S"],
+        "remediation": "External Secrets Operator로 Secrets Manager/Secret Manager/Vault에서 동기화하세요.",
+        "why": "비밀값을 스크립트로 직접 만들면 교체 이력과 접근 기록이 남지 않아요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "Secret을 스크립트로 직접 생성 (외부 비밀 저장소 미사용)",
+            "resources": []
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "ExternalSecret 1개로 비밀값 동기화",
+            "resources": []
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "ExternalSecret 1개로 비밀값 동기화",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "DET-01",
+        "title": "위협 탐지",
+        "category": "detection",
+        "severity": "high",
+        "standard_refs": ["AWS-FSBP GuardDuty.1"],
+        "remediation": "AWS는 GuardDuty, GCP는 Security Command Center 위협 탐지, 온프렘은 Falco 같은 런타임 탐지를 켜세요.",
+        "why": "위협 탐지가 없으면 비정상 API 호출, 크립토마이닝, 유출 시도 같은 공격이 진행돼도 알 수 없어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "위협 탐지 없음",
+            "resources": []
+          },
+          "aws": {
+            "status": "fail",
+            "detail": "위협 탐지 없음",
+            "resources": []
+          },
+          "gcp": {
+            "status": "fail",
+            "detail": "위협 탐지 없음",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "DET-02",
+        "title": "보안 상태 집계 서비스",
+        "category": "detection",
+        "severity": "medium",
+        "standard_refs": ["AWS-FSBP SecurityHub.1"],
+        "remediation": "Security Hub, Security Command Center 또는 동등한 posture 집계를 켜세요.",
+        "why": "보안 상태를 모아 보는 곳이 없으면 보안 설정이 언제 바뀌었는지 계속 추적할 수 없어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "fail",
+            "detail": "posture 집계 없음",
+            "resources": []
+          },
+          "aws": {
+            "status": "fail",
+            "detail": "posture 집계 없음",
+            "resources": []
+          },
+          "gcp": {
+            "status": "fail",
+            "detail": "posture 집계 없음",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "DET-03",
+        "title": "클러스터 감사 로그",
+        "category": "detection",
+        "severity": "high",
+        "standard_refs": ["CIS-K8S 3.2.1", "AWS-FSBP EKS.8", "CIS-GCP 2.1"],
+        "remediation": "API server audit 로그를 켜고 보관하세요.",
+        "why": "감사 로그가 없으면 누가 언제 무엇을 바꿨는지 사고 뒤에 확인할 수 없어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "unknown",
+            "detail": "인프라 설정에서 확인할 수 없어요.",
+            "resources": []
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "감사 로그 수집",
+            "resources": []
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "감사 로그 수집",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "DET-04",
+        "title": "네트워크 흐름 로그",
+        "category": "detection",
+        "severity": "low",
+        "standard_refs": ["AWS-FSBP EC2.6", "CIS-GCP 3.8"],
+        "remediation": "VPC Flow Logs(AWS/GCP) 또는 CNI 흐름 로그를 켜세요.",
+        "why": "흐름 로그가 없으면 차단된 접근 시도나 예상하지 못한 통신을 사후에 확인할 수 없어요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "unknown",
+            "detail": "인프라 설정에서 확인할 수 없어요.",
+            "resources": []
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "흐름 로그 수집",
+            "resources": []
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "흐름 로그 수집",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "GOV-01",
+        "title": "마이그레이션 정책 게이트 (OPA)",
+        "category": "governance",
+        "severity": "high",
+        "standard_refs": ["ONEPORT SEC-02", "ONEPORT OPS-01"],
+        "remediation": "단계별 OPA 판정이 allow일 때만 진행하세요.",
+        "why": "정책 게이트 없이 전환하면 DB 노출이나 미동기화 같은 조건을 사람이 놓쳐도 그대로 진행돼요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "OPA 게이트가 단계 진행을 판정",
+            "resources": []
+          },
+          "aws": {
+            "status": "pass",
+            "detail": "OPA 게이트가 단계 진행을 판정",
+            "resources": []
+          },
+          "gcp": {
+            "status": "pass",
+            "detail": "OPA 게이트가 단계 진행을 판정",
+            "resources": []
+          }
+        }
+      },
+      {
+        "id": "GOV-02",
+        "title": "네임스페이스 자원 상한",
+        "category": "governance",
+        "severity": "low",
+        "standard_refs": ["NSA-K8S"],
+        "remediation": "ResourceQuota/LimitRange로 자원 상한을 두세요.",
+        "why": "자원 상한이 없으면 한 앱의 폭주가 같은 클러스터의 다른 앱까지 멈추게 할 수 있어요.",
+        "scope": "resource",
+        "results": {
+          "onprem": {
+            "status": "pass",
+            "detail": "hackathon: ResourceQuota 적용",
+            "resources": ["review-api", "review-worker", "sample-app"]
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "근거를 수집하지 못했어요.",
+            "resources": ["review-service", "sample-app"]
+          }
+        }
+      }
+    ],
+    "parity": {
+      "source_env": "onprem",
+      "target_env": "aws",
+      "regressions": [],
+      "improvements": ["ID-03", "DATA-04"]
+    },
+    "parities": [
+      {
+        "source_env": "onprem",
+        "target_env": "aws",
+        "regressions": [],
+        "improvements": ["ID-03", "DATA-04"]
+      },
+      {
+        "source_env": "onprem",
+        "target_env": "gcp",
+        "regressions": [],
+        "improvements": ["ID-03", "DATA-04"]
+      }
+    ]
+  },
+  "migrations/forward_001": {
+    "summary": {
+      "job_id": "forward_001",
+      "direction": "forward",
+      "source_env": "onprem",
+      "target_env": "aws",
+      "data_source": "onprem",
+      "data_target": "aws",
+      "stage": "COMPLETED",
+      "status": "completed",
+      "stage_index": 9,
+      "stage_count": 10,
+      "updated_at": "2026-11-07T13:17:08.221814Z",
+      "writes": {
+        "committed_source": 2500,
+        "committed_target": 2100,
+        "failed": 0,
+        "rejected": 0,
+        "mismatch": 0
+      },
+      "downtime": {
+        "write_pause_seconds": 30,
+        "failed_requests": 0,
+        "max_latency_seconds": 29.21,
+        "p95_latency_seconds": 0.0184
+      },
+      "verify_mismatch": 0
+    },
+    "stages": [
+      {
+        "name": "PRECHECK",
+        "title": "사전 점검",
+        "description": "양쪽 테이블/권한/wal_level/CDC 계정/워커 대상 확인",
+        "status": "done",
+        "started_at": "2026-11-07T12:48:48.221814Z",
+        "finished_at": "2026-11-07T12:49:48.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "wal_level": "logical",
+          "source_app_insert": true,
+          "target_app_insert": false
+        }
+      },
+      {
+        "name": "COPYING",
+        "title": "초기 복사",
+        "description": "publication/slot 준비, Source/Sink 커넥터 등록, seed 복사",
+        "status": "done",
+        "started_at": "2026-11-07T12:49:48.221814Z",
+        "finished_at": "2026-11-07T12:58:48.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "source_seed": 1000,
+          "target_seed": 1000
+        }
+      },
+      {
+        "name": "CATCHING_UP",
+        "title": "변경분 추적",
+        "description": "스냅샷 이후 실시간 쓰기가 대상에 반영되는지 확인",
+        "status": "done",
+        "started_at": "2026-11-07T12:58:48.221814Z",
+        "finished_at": "2026-11-07T13:03:48.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "live_rows_after_snapshot": 100,
+          "latest_rows_on_target": 10
+        }
+      },
+      {
+        "name": "READY",
+        "title": "전환 승인 대기",
+        "description": "되돌리기 어려운 쓰기 차단 전에 사람이 승인",
+        "status": "done",
+        "started_at": "2026-11-07T13:03:48.221814Z",
+        "finished_at": "2026-11-07T13:13:48.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "id": "approve-forward-001"
+        }
+      },
+      {
+        "name": "FENCING",
+        "title": "원본 쓰기 차단",
+        "description": "워커 일시정지/drain, 원본 INSERT 회수, 시험 INSERT 거절 확인",
+        "status": "done",
+        "started_at": "2026-11-07T13:13:48.221814Z",
+        "finished_at": "2026-11-07T13:13:54.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "rejected": true,
+          "sessions_terminated": 1
+        }
+      },
+      {
+        "name": "DRAINING",
+        "title": "최종 반영",
+        "description": "마지막 요청이 대상에 도착하고 sink offset이 멈출 때까지 대기",
+        "status": "done",
+        "started_at": "2026-11-07T13:13:54.221814Z",
+        "finished_at": "2026-11-07T13:14:06.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "offset_stable_seconds": 10,
+          "last_request_on_target": true
+        }
+      },
+      {
+        "name": "SYNC_CONFIRMED",
+        "title": "동기화 확정",
+        "description": "verify(pre) 통과, 커넥터 증거 저장 후 CDC 종료",
+        "status": "done",
+        "started_at": "2026-11-07T13:14:06.221814Z",
+        "finished_at": "2026-11-07T13:14:14.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "passed": true
+        }
+      },
+      {
+        "name": "SWITCHING",
+        "title": "쓰기 전환",
+        "description": "대상 INSERT 허용, 워커 대상 변경 후 재개",
+        "status": "done",
+        "started_at": "2026-11-07T13:14:14.221814Z",
+        "finished_at": "2026-11-07T13:14:17.221814Z",
+        "point_of_no_return": true,
+        "evidence": {
+          "target": "aws",
+          "phase": "aws_live",
+          "database": "migration_demo"
+        }
+      },
+      {
+        "name": "VERIFYING",
+        "title": "전환 후 검증",
+        "description": "대상 신규 커밋, 원본 차단 유지, verify(post) 통과",
+        "status": "done",
+        "started_at": "2026-11-07T13:14:17.221814Z",
+        "finished_at": "2026-11-07T13:17:08.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "rows_after_switch": 100,
+          "source_still_fenced": true
+        }
+      },
+      {
+        "name": "COMPLETED",
+        "title": "완료",
+        "description": "승인 ID/마지막 요청/offset/검증 결과 보관",
+        "status": "done",
+        "started_at": "2026-11-07T13:17:08.221814Z",
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {
+          "passed": true,
+          "source_slot_dropped": true
+        }
+      }
+    ],
+    "gates": [
+      {
+        "decision_id": "forward_001-plan-1794055698",
+        "stage": "plan",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T12:48:18.221814Z"
+      },
+      {
+        "decision_id": "forward_001-pre_start-1794055778",
+        "stage": "pre_start",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T12:49:38.221814Z"
+      },
+      {
+        "decision_id": "forward_001-pre_cutover-1794057208",
+        "stage": "pre_cutover",
+        "outcome": "hold",
+        "reason_codes": ["EVIDENCE-STALE"],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T13:13:28.221814Z"
+      },
+      {
+        "decision_id": "forward_001-pre_cutover-1794057223",
+        "stage": "pre_cutover",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T13:13:43.221814Z"
+      },
+      {
+        "decision_id": "forward_001-final_verify-1794057423",
+        "stage": "final_verify",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T13:17:03.221814Z"
+      }
+    ],
+    "verify": {
+      "pre": {
+        "passed": true,
+        "counts": {
+          "B_minus_T": 0,
+          "T_minus_B": 0,
+          "field_mismatch": 0,
+          "S_minus_T": 0
+        },
+        "source_count": 2500,
+        "target_count": 2500,
+        "committed_count": 2500
+      },
+      "post": {
+        "passed": true,
+        "counts": {
+          "B_minus_T": 0,
+          "T_minus_B": 0,
+          "field_mismatch": 0,
+          "S_minus_T": 0
+        },
+        "source_count": 2500,
+        "target_count": 2695,
+        "committed_count": 2695
+      }
+    },
+    "connectors": [],
+    "worker": {
+      "state": "RUNNING",
+      "target": "aws",
+      "phase": "aws_live",
+      "queue_length": 0,
+      "rate_per_second": 1,
+      "latency": {
+        "p50": 0.0101,
+        "p95": 0.0184,
+        "max": 29.21
+      },
+      "committed_by_target": {
+        "onprem": 2500,
+        "aws": 2100
+      }
+    }
+  },
+  "migrations/forward_001/series": {
+    "job_id": "forward_001",
+    "step_seconds": 10,
+    "points": [
+      {
+        "at": "2026-11-07T12:48:48.229371Z",
+        "committed_source": 1000,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.018,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": "PRECHECK"
+      },
+      {
+        "at": "2026-11-07T12:48:58.229371Z",
+        "committed_source": 1010,
+        "committed_target": 0,
+        "write_rate_source": 1,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0191,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": "PRECHECK"
+      },
+      {
+        "at": "2026-11-07T12:49:08.229371Z",
+        "committed_source": 1020,
+        "committed_target": 0,
+        "write_rate_source": 1,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0201,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": "PRECHECK"
+      },
+      {
+        "at": "2026-11-07T12:49:18.229371Z",
+        "committed_source": 1030,
+        "committed_target": 0,
+        "write_rate_source": 1,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0209,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": "PRECHECK"
+      },
+      {
+        "at": "2026-11-07T12:49:28.229371Z",
+        "committed_source": 1040,
+        "committed_target": 0,
+        "write_rate_source": 1,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0215,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": "PRECHECK"
+      }
+    ]
+  },
+  "migrations/forward_001/plan": {
+    "job_id": "forward_001",
+    "route": {
+      "source_env": "onprem",
+      "target_env": "aws",
+      "source_provider": "onprem",
+      "target_provider": "aws",
+      "label": "온프렘 → AWS"
+    },
+    "phases": [
+      {
+        "id": "environment",
+        "title": "환경 마이그레이션",
+        "status": "running",
+        "steps": [
+          {
+            "id": "connect",
+            "title": "환경 연결",
+            "description": "원본과 대상 클러스터를 플랫폼이 읽을 수 있는지 확인",
+            "tool": "migration.connection",
+            "status": "done",
+            "runnable": true
+          },
+          {
+            "id": "data_mapping",
+            "title": "데이터 자원 매핑",
+            "description": "원본 DB·Kafka·버킷을 대상 자원과 짝지어 확정",
+            "tool": "플랫폼 데이터 매핑",
+            "status": "pending",
+            "runnable": true
+          },
+          {
+            "id": "infra_check",
+            "title": "대상 기반 점검",
+            "description": "대상의 레지스트리·비밀 저장소·인증·감사로그 기반 확인",
+            "tool": null,
+            "status": "unsupported",
+            "runnable": false
+          }
+        ]
+      },
+      {
+        "id": "application",
+        "title": "앱 마이그레이션",
+        "status": "done",
+        "steps": [
+          {
+            "id": "images",
+            "title": "이미지 이관",
+            "description": "원본 레지스트리 이미지를 대상 레지스트리로 복사·검증",
+            "tool": null,
+            "status": "unsupported",
+            "runnable": false
+          },
+          {
+            "id": "secrets",
+            "title": "비밀값 이관",
+            "description": "원본 비밀값을 대상 비밀 저장소로 옮기고 DB 계정 교체",
+            "tool": null,
+            "status": "unsupported",
+            "runnable": false
+          },
+          {
+            "id": "identity",
+            "title": "계정·권한 이관",
+            "description": "원본 사용자·그룹·권한을 대상 인증·권한 체계로 구성",
+            "tool": null,
+            "status": "unsupported",
+            "runnable": false
+          },
+          {
+            "id": "data_sync",
+            "title": "데이터 동기화",
+            "description": "사전 점검, 초기 복사, 변경분 추적 뒤 전환 승인 대기",
+            "tool": "migration.cutover",
+            "status": "done",
+            "runnable": true
+          },
+          {
+            "id": "traffic_switch",
+            "title": "트래픽 전환",
+            "description": "원본 쓰기 차단, 최종 반영, 대상으로 쓰기 전환",
+            "tool": "migration.cutover · durable-ingress",
+            "status": "done",
+            "runnable": true
+          },
+          {
+            "id": "verify",
+            "title": "검증",
+            "description": "전환 후 원본·대상 데이터와 앱 상태 확인",
+            "tool": "migration.verify",
+            "status": "done",
+            "runnable": true
+          }
+        ]
+      }
+    ]
+  },
+  "migrations/return_001": {
+    "summary": {
+      "job_id": "return_001",
+      "direction": "return",
+      "source_env": "aws",
+      "target_env": "onprem",
+      "data_source": "aws",
+      "data_target": "onprem_return",
+      "stage": "READY",
+      "status": "waiting_approval",
+      "stage_index": 3,
+      "stage_count": 10,
+      "updated_at": "2026-11-07T13:40:28.221814Z",
+      "writes": {
+        "committed_source": 2100,
+        "committed_target": 0,
+        "failed": 0,
+        "rejected": 0,
+        "mismatch": 0
+      },
+      "downtime": {
+        "write_pause_seconds": 0,
+        "failed_requests": 0,
+        "max_latency_seconds": null,
+        "p95_latency_seconds": 0.0184
+      },
+      "verify_mismatch": null
+    },
+    "stages": [
+      {
+        "name": "PRECHECK",
+        "title": "사전 점검",
+        "description": "양쪽 테이블/권한/wal_level/CDC 계정/워커 대상 확인",
+        "status": "done",
+        "started_at": "2026-11-07T13:28:48.221814Z",
+        "finished_at": "2026-11-07T13:29:28.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "wal_level": "logical",
+          "source_app_insert": true,
+          "target_app_insert": false
+        }
+      },
+      {
+        "name": "COPYING",
+        "title": "초기 복사",
+        "description": "publication/slot 준비, Source/Sink 커넥터 등록, seed 복사",
+        "status": "done",
+        "started_at": "2026-11-07T13:29:28.221814Z",
+        "finished_at": "2026-11-07T13:37:08.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "source_seed": 1000,
+          "target_seed": 1000
+        }
+      },
+      {
+        "name": "CATCHING_UP",
+        "title": "변경분 추적",
+        "description": "스냅샷 이후 실시간 쓰기가 대상에 반영되는지 확인",
+        "status": "done",
+        "started_at": "2026-11-07T13:37:08.221814Z",
+        "finished_at": "2026-11-07T13:40:28.221814Z",
+        "point_of_no_return": false,
+        "evidence": {
+          "live_rows_after_snapshot": 100,
+          "latest_rows_on_target": 10
+        }
+      },
+      {
+        "name": "READY",
+        "title": "전환 승인 대기",
+        "description": "되돌리기 어려운 쓰기 차단 전에 사람이 승인",
+        "status": "current",
+        "started_at": "2026-11-07T13:40:28.221814Z",
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      },
+      {
+        "name": "FENCING",
+        "title": "원본 쓰기 차단",
+        "description": "워커 일시정지/drain, 원본 INSERT 회수, 시험 INSERT 거절 확인",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      },
+      {
+        "name": "DRAINING",
+        "title": "최종 반영",
+        "description": "마지막 요청이 대상에 도착하고 sink offset이 멈출 때까지 대기",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      },
+      {
+        "name": "SYNC_CONFIRMED",
+        "title": "동기화 확정",
+        "description": "verify(pre) 통과, 커넥터 증거 저장 후 CDC 종료",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      },
+      {
+        "name": "SWITCHING",
+        "title": "쓰기 전환",
+        "description": "대상 INSERT 허용, 워커 대상 변경 후 재개",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": true,
+        "evidence": {}
+      },
+      {
+        "name": "VERIFYING",
+        "title": "전환 후 검증",
+        "description": "대상 신규 커밋, 원본 차단 유지, verify(post) 통과",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      },
+      {
+        "name": "COMPLETED",
+        "title": "완료",
+        "description": "승인 ID/마지막 요청/offset/검증 결과 보관",
+        "status": "pending",
+        "started_at": null,
+        "finished_at": null,
+        "point_of_no_return": false,
+        "evidence": {}
+      }
+    ],
+    "gates": [
+      {
+        "decision_id": "return_001-plan-1794058098",
+        "stage": "plan",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T13:28:18.221814Z"
+      },
+      {
+        "decision_id": "return_001-pre_start-1794058178",
+        "stage": "pre_start",
+        "outcome": "allow",
+        "reason_codes": [],
+        "policy_version": "migration-policy-v1",
+        "evaluated_at": "2026-11-07T13:29:38.221814Z"
+      }
+    ],
+    "verify": {
+      "pre": null,
+      "post": null
+    },
+    "connectors": [
+      {
+        "name": "return_001-source",
+        "role": "source",
+        "state": "RUNNING",
+        "tasks_running": 1,
+        "tasks_total": 1
+      },
+      {
+        "name": "return_001-sink",
+        "role": "sink",
+        "state": "RUNNING",
+        "tasks_running": 1,
+        "tasks_total": 1
+      }
+    ],
+    "worker": {
+      "state": "RUNNING",
+      "target": "aws",
+      "phase": "aws_live",
+      "queue_length": 0,
+      "rate_per_second": 1,
+      "latency": {
+        "p50": 0.0101,
+        "p95": 0.0184,
+        "max": 29.21
+      },
+      "committed_by_target": {
+        "onprem": 2500,
+        "aws": 2100
+      }
+    }
+  },
+  "migrations/return_001/series": {
+    "job_id": "return_001",
+    "step_seconds": 10,
+    "points": [
+      {
+        "at": "2026-11-07T12:48:48.234369Z",
+        "committed_source": 0,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.018,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": null
+      },
+      {
+        "at": "2026-11-07T12:48:58.234369Z",
+        "committed_source": 0,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0191,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": null
+      },
+      {
+        "at": "2026-11-07T12:49:08.234369Z",
+        "committed_source": 0,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0201,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": null
+      },
+      {
+        "at": "2026-11-07T12:49:18.234369Z",
+        "committed_source": 0,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0209,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": null
+      },
+      {
+        "at": "2026-11-07T12:49:28.234369Z",
+        "committed_source": 0,
+        "committed_target": 0,
+        "write_rate_source": 0,
+        "write_rate_target": 0,
+        "queue_length": 29,
+        "latency_p95": 0.0215,
+        "latency_max": 0.042,
+        "failed_total": 0,
+        "worker_state": "RUNNING",
+        "stage": null
+      }
+    ]
+  },
+  "migrations/return_001/plan": {
+    "job_id": "return_001",
+    "route": {
+      "source_env": "aws",
+      "target_env": "onprem",
+      "source_provider": "aws",
+      "target_provider": "onprem",
+      "label": "AWS → 온프렘"
+    },
+    "phases": [
+      {
+        "id": "environment",
+        "title": "환경 마이그레이션",
+        "status": "running",
+        "steps": [
+          {
+            "id": "connect",
+            "title": "환경 연결",
+            "description": "원본과 대상 클러스터를 플랫폼이 읽을 수 있는지 확인",
+            "tool": "migration.connection",
+            "status": "done",
+            "runnable": true
+          },
+          {
+            "id": "data_mapping",
+            "title": "데이터 자원 매핑",
+            "description": "원본 DB·Kafka·버킷을 대상 자원과 짝지어 확정",
+            "tool": "플랫폼 데이터 매핑",
+            "status": "pending",
+            "runnable": true
+          },
+          {
+            "id": "infra_check",
+            "title": "대상 기반 점검",
+            "description": "대상의 레지스트리·비밀 저장소·인증·감사로그 기반 확인",
+            "tool": "migration.harbor_infra · openbao_infra · keycloak_infra · wazuh_infra",
+            "status": "pending",
+            "runnable": false
+          }
+        ]
+      },
+      {
+        "id": "application",
+        "title": "앱 마이그레이션",
+        "status": "waiting",
+        "steps": [
+          {
+            "id": "images",
+            "title": "이미지 이관",
+            "description": "원본 레지스트리 이미지를 대상 레지스트리로 복사·검증",
+            "tool": "migration.image_migration",
+            "status": "pending",
+            "runnable": false
+          },
+          {
+            "id": "secrets",
+            "title": "비밀값 이관",
+            "description": "원본 비밀값을 대상 비밀 저장소로 옮기고 DB 계정 교체",
+            "tool": "migration.secrets",
+            "status": "pending",
+            "runnable": false
+          },
+          {
+            "id": "identity",
+            "title": "계정·권한 이관",
+            "description": "원본 사용자·그룹·권한을 대상 인증·권한 체계로 구성",
+            "tool": "migration.identity",
+            "status": "pending",
+            "runnable": false
+          },
+          {
+            "id": "data_sync",
+            "title": "데이터 동기화",
+            "description": "사전 점검, 초기 복사, 변경분 추적 뒤 전환 승인 대기",
+            "tool": "migration.cutover",
+            "status": "waiting",
+            "runnable": true
+          },
+          {
+            "id": "traffic_switch",
+            "title": "트래픽 전환",
+            "description": "원본 쓰기 차단, 최종 반영, 대상으로 쓰기 전환",
+            "tool": "migration.cutover · durable-ingress",
+            "status": "pending",
+            "runnable": true
+          },
+          {
+            "id": "verify",
+            "title": "검증",
+            "description": "전환 후 원본·대상 데이터와 앱 상태 확인",
+            "tool": "migration.verify",
+            "status": "pending",
+            "runnable": true
+          }
+        ]
+      }
+    ]
+  },
+  "access": {
+    "auth_mode": "login",
+    "execution_configured": false,
+    "user": {
+      "email": "layout@example.com",
+      "team": "레이아웃 시험",
+      "role": "owner"
+    }
+  },
+  "access-pin": {
+    "required": false,
+    "unlocked": true
+  },
+  "team": {
+    "team": "레이아웃 시험",
+    "members": [
+      {
+        "email": "layout@example.com",
+        "role": "owner",
+        "created_at": "2026-11-07T13:59:56.717Z"
+      },
+      {
+        "email": "a-very-long-team-member-address-for-layout@example.com",
+        "role": "viewer",
+        "created_at": "2026-11-07T13:59:56.717Z"
+      }
+    ]
+  },
+  "connections/capabilities": {
+    "available": true
+  },
+  "connections": [
+    {
+      "id": "aaaaaaaaaaaaaaaaaaaaaa",
+      "revision": 1,
+      "organization": "레이아웃 시험",
+      "serverNow": 1794059996717,
+      "observedAt": 1794059996717,
+      "registeredAt": 1794059996717,
+      "registrationExpiresAt": 1794060056717,
+      "registration": "CONSUMED",
+      "device": "APPROVED",
+      "tunnel": "READY",
+      "collection": "COLLECTED",
+      "discovered": [],
+      "collected": [
+        {
+          "id": "source",
+          "kind": "kubernetes",
+          "name": "k3s-local",
+          "identity": "local-cluster",
+          "region": "seoul",
+          "facts": []
+        }
+      ],
+      "events": [],
+      "permissions": {
+        "approveDevice": true,
+        "registerEnvironment": true,
+        "revoke": true
+      },
+      "attemptsLeft": 3,
+      "tunnelChecks": 1,
+      "epoch": 1,
+      "environmentId": "env-0",
+      "target": {
+        "name": "k3s-local",
+        "organization": "레이아웃 시험",
+        "project": "시연 프로젝트",
+        "kind": "kubernetes",
+        "role": "source",
+        "region": "seoul"
+      },
+      "selectedEnvironmentId": "source"
+    },
+    {
+      "id": "bbbbbbbbbbbbbbbbbbbbbb",
+      "revision": 1,
+      "organization": "레이아웃 시험",
+      "serverNow": 1794059996717,
+      "observedAt": 1794059996717,
+      "registeredAt": 1794059996717,
+      "registrationExpiresAt": 1794060056717,
+      "registration": "CONSUMED",
+      "device": "APPROVED",
+      "tunnel": "READY",
+      "collection": "COLLECTED",
+      "discovered": [],
+      "collected": [
+        {
+          "id": "source",
+          "kind": "kubernetes",
+          "name": "k3s-local",
+          "identity": "local-cluster",
+          "region": "seoul",
+          "facts": []
+        }
+      ],
+      "events": [],
+      "permissions": {
+        "approveDevice": true,
+        "registerEnvironment": true,
+        "revoke": true
+      },
+      "attemptsLeft": 3,
+      "tunnelChecks": 1,
+      "epoch": 1,
+      "environmentId": "env-1",
+      "target": {
+        "name": "production-inventory-migration-environment-with-a-very-long-name",
+        "organization": "레이아웃 시험",
+        "project": "production-inventory-migration-environment-with-a-very-long-name",
+        "kind": "kubernetes",
+        "role": "target",
+        "region": "seoul"
+      },
+      "selectedEnvironmentId": "source"
+    }
+  ],
+  "agent/status": {
+    "can_command": true,
+    "agents": [
+      {
+        "agent_id": "agent-production-inventory-migration-environment-with-a-very-long-name",
+        "version": "1.0",
+        "auto_apply": false,
+        "interval_seconds": 60,
+        "observed_at": "2026-11-07T13:59:56.717Z",
+        "received_at": "2026-11-07T13:59:56.717Z",
+        "online": true,
+        "config": {},
+        "pending_commands": []
+      }
+    ]
+  },
+  "agent/runs": {
+    "runs": [
+      {
+        "run_id": "run-layout",
+        "agent_id": "agent-production-inventory-migration-environment-with-a-very-long-name",
+        "job_id": "forward_001",
+        "state": "WAITING_APPROVAL",
+        "created_at": "2026-11-07T13:59:56.717Z",
+        "updated_at": "2026-11-07T13:59:56.717Z",
+        "summary": {
+          "reason_codes": ["SOURCE_WRITE_NOT_FENCED"],
+          "changes": [
+            {
+              "key": "WORKER_TARGET",
+              "value": "aws"
+            }
+          ],
+          "diagnosis": "시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. "
+        }
+      }
+    ]
+  },
+  "agent/runs/run-layout": {
+    "run_id": "run-layout",
+    "agent_id": "agent-production-inventory-migration-environment-with-a-very-long-name",
+    "job_id": "forward_001",
+    "state": "WAITING_APPROVAL",
+    "created_at": "2026-11-07T13:59:56.717Z",
+    "updated_at": "2026-11-07T13:59:56.717Z",
+    "summary": {
+      "reason_codes": ["SOURCE_WRITE_NOT_FENCED"],
+      "changes": [
+        {
+          "key": "WORKER_TARGET",
+          "value": "aws"
+        }
+      ],
+      "diagnosis": "시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. 시험을 위한 긴 조사 결과입니다. "
+    },
+    "detail": {},
+    "events": [
+      {
+        "at": "2026-11-07T13:59:56.717Z",
+        "state": "CHECKING",
+        "message": "production-inventory-migration-environment-with-a-very-long-name"
+      }
+    ],
+    "pending_approval": null,
+    "can_decide": false,
+    "can_rerun": false
+  },
+  "costs": {
+    "generated_at": "2026-11-07T13:59:56.717Z",
+    "environments": [
+      {
+        "env_id": "onprem",
+        "name": "온프렘 k3s (서울)",
+        "provider": "onprem",
+        "currency": "USD",
+        "observed_at": "2026-11-07T13:59:56.717Z",
+        "current": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "cloud_equivalent": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "prices": null,
+        "sources": ["fixture"],
+        "gaps": []
+      },
+      {
+        "env_id": "aws",
+        "name": "AWS EKS oneaction (서울)",
+        "provider": "aws",
+        "currency": "USD",
+        "observed_at": "2026-11-07T13:59:56.717Z",
+        "current": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "cloud_equivalent": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "prices": null,
+        "sources": ["fixture"],
+        "gaps": []
+      },
+      {
+        "env_id": "gcp",
+        "name": "GCP GKE oneaction-dev (서울)",
+        "provider": "gcp",
+        "currency": "USD",
+        "observed_at": "2026-11-07T13:59:56.717Z",
+        "current": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "cloud_equivalent": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "prices": null,
+        "sources": ["fixture"],
+        "gaps": []
+      }
+    ],
+    "migrations": [
+      {
+        "job_id": "forward_001",
+        "source_env": "onprem",
+        "target_env": "aws",
+        "currency": "USD",
+        "source_monthly": 110,
+        "target_monthly_now": 110,
+        "target_monthly_after": 220,
+        "added": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "source_released": 110,
+        "monthly_change": 0,
+        "capacity": {
+          "need_vcpu": 2,
+          "need_memory_gib": 4,
+          "free_vcpu": 4,
+          "free_memory_gib": 8
+        },
+        "capacity_fits": true,
+        "changes": [
+          {
+            "change": "replaced",
+            "category": "compute",
+            "source": "production-inventory-migration-environment-with-a-very-long-name",
+            "target": "production-inventory-migration-environment-with-a-very-long-name",
+            "before": 110,
+            "after": 110,
+            "delta": 0,
+            "note": "시험용"
+          }
+        ],
+        "one_time": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "dual_run_days": 14,
+        "dual_run_cost": 50,
+        "assumptions": ["가상 데이터"],
+        "gaps": []
+      },
+      {
+        "job_id": "return_001",
+        "source_env": "aws",
+        "target_env": "onprem",
+        "currency": "USD",
+        "source_monthly": 110,
+        "target_monthly_now": 110,
+        "target_monthly_after": 220,
+        "added": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "source_released": 110,
+        "monthly_change": 0,
+        "capacity": {
+          "need_vcpu": 2,
+          "need_memory_gib": 4,
+          "free_vcpu": 4,
+          "free_memory_gib": 8
+        },
+        "capacity_fits": true,
+        "changes": [
+          {
+            "change": "replaced",
+            "category": "compute",
+            "source": "production-inventory-migration-environment-with-a-very-long-name",
+            "target": "production-inventory-migration-environment-with-a-very-long-name",
+            "before": 110,
+            "after": 110,
+            "delta": 0,
+            "note": "시험용"
+          }
+        ],
+        "one_time": {
+          "label": "예시 월 비용",
+          "monthly": 110,
+          "lines": [
+            {
+              "category": "compute",
+              "item": "production-inventory-migration-environment-with-a-very-long-name",
+              "quantity": 2,
+              "unit": "instance-month",
+              "unit_price": 55,
+              "monthly": 110,
+              "basis": "list_price",
+              "note": "레이아웃 검증용 예시 금액"
+            }
+          ],
+          "unpriced": 0
+        },
+        "dual_run_days": 14,
+        "dual_run_cost": 50,
+        "assumptions": ["가상 데이터"],
+        "gaps": []
+      }
+    ]
+  },
+  "migrations/forward_001/events": [],
+  "migrations/forward_001/commands": [],
+  "migrations/return_001/events": [],
+  "migrations/return_001/commands": []
+}

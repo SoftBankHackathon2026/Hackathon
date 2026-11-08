@@ -54,7 +54,7 @@ job:
   source: onprem
   target: aws
   table: public.migration_demo
-  # 전환 후 워커가 새 요청에 붙이는 phase
+  # legacy loadgen/검증 CLI용 phase. HTTP 봇 요청의 불변 필드는 변경하지 않는다
   live_phase_before: onprem_live
   live_phase_after: aws_live
 
@@ -66,21 +66,26 @@ kafka:
   # secrets_file 은 FileConfigProvider 를 쓰는 환경을 위한 선택값이며 기본 템플릿은 쓰지 않는다.
   secrets_file: /opt/kafka/secrets/migration.properties
 
-worker:
-  url: http://db-insert-worker:8080   # gitops apps/db-insert-worker 의 Service 이름
-  state_dir: /var/lib/worker
+bot:
+  control_url: http://traffic-bot-control:9091
+  token_env: BOT_CONTROL_TOKEN
+  request_endpoint: http://durable-ingress.hackathon.svc.cluster.local/api/requests
+  timeout_seconds: 15
 
 cutover:
   state_dir: /var/lib/worker
+  # 데이터 예산은 항상 총 1,000건이다(옵션 아님): seed 800 + 복제 중 봇 요청 100 + 전환 후 봇 요청 100.
+  # 아래 두 값은 100 으로 고정이며 다른 값은 설정 오류다. 끝나면 원본 900건·대상 1,000건이어야 성공한다.
   min_live_rows_after_snapshot: 100
   min_rows_after_switch: 100
   offset_stable_seconds: 10
   poll_interval_seconds: 5
+  # 기준점(COPYING 시작 때 원본 max(created_at)) 이전 집합을 CATCHING_UP 에서 한 번 확정하는 방식.
+  # digest: 서버측 버킷 해시(행 전송 없음, 기본), rows: 행 전체 읽기. 전환 구간(DRAINING 이후)은 행을 읽지 않고 건수만 센다.
+  snapshot_compare: digest
   stage_timeout_seconds: 1800
 
-# 접수 서비스(durable-ingress) 자동 제어. 이 절이 없으면 cutover 는 큐를 건드리지 않고 운영자가 수동으로
-# port-forward 9092 로 /pause → /target → /resume 한다. 있으면 FENCING 에서 큐 pause(settled 확인) 뒤 원본을
-# 닫고, SWITCHING 에서 대상 GRANT → 워커 전환 → 대상 앱 readiness(app_checks) → 큐 /target → /resume 한다.
+# 러너에 필수: 실제 앱 환경·DB 이름과 일치하도록 app_checks를 설정한다.
 ingress:
   control_url: http://durable-ingress-control:9092   # gitops apps/durable-ingress 의 제어 Service
   token_env: INGRESS_CONTROL_TOKEN                   # 제어 API Bearer 토큰 환경변수 (선택, 값은 Secret)
@@ -89,10 +94,14 @@ ingress:
     onprem: onprem
     aws: aws_db
   app_checks:         # 큐를 이 대상으로 돌리기 전에 확인할 앱 (/readyz ok, /api/info 일치, writes_paused=false)
+    onprem:
+      url: http://sample-app
+      database: migration_demo
+      environment: onprem
     aws:
       url: http://sample-app-rds
       database: migration_demo
-      # environment: aws          # /api/info 의 environment 를 검사하려면 지정
+      environment: local  # 실제 /api/info 값과 일치시킨다
       # token_env: AWS_REQUEST_API_TOKEN   # HTTPS 대상이 Bearer 를 요구할 때
 
 # 공개 도메인 전환. 이 절이 없으면 공용 도메인은 운영자가 옮긴다. 있으면 SWITCHING 에서 대상 쓰기·접수 큐를 연 뒤

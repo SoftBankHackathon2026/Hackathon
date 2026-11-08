@@ -4,32 +4,34 @@
 
 ## 실행
 
-플랫폼에서 복사한 초기 설치 명령을 Ubuntu 24.04의 일반 사용자 터미널에서 실행합니다. 웹 승인과 관리자 설치 동의를 마치면 운영체제의 서비스 관리자(systemd)가 같은 일반 사용자로 \`migration-connector.service\`를 실행합니다. 양방향 터널 확인이 끝나면 초기 명령이 셸을 반환합니다. 처음 시작은 최대 90초 동안 기다립니다.
+플랫폼에서 복사한 초기 설치 명령을 Ubuntu 24.04의 일반 사용자 터미널에서 실행합니다. 웹 승인과 관리자 설치 동의를 마치면 운영체제의 서비스 관리자(systemd)가 같은 일반 사용자로 `migration-connector.service`를 실행합니다. 양방향 터널이 확인되면 초기 명령이 셸을 반환하고, 서비스가 환경 후보를 계속 탐색합니다. 처음 시작은 최대 90초 동안 기다립니다.
 
-\`\`\`sh
+```sh
 systemctl status migration-connector
 sudo systemctl start migration-connector
 sudo systemctl stop migration-connector
 journalctl -u migration-connector
-\`\`\`
+```
 
 서비스는 부팅 시 시작하고 비정상 종료 후 재시작합니다. 관리자가 중지한 서비스는 단말에서 다시 시작해야 합니다. 서버가 단말 승인을 철회하면 작업 요청과 새 터널을 차단합니다. 단말은 철회를 확인한 뒤 관리 인터페이스와 인증 상태를 정리합니다. 정리 보고가 서버에 도착하지 않으면 웹에서 단말 정리가 확인될 때까지 대기 상태가 표시됩니다.
 
-전경 실행을 이미 종료한 단말이나 서비스 배포를 갱신할 단말은 **기존 등록과 동일한 사용자**로 새 서명 배포의 초기 스크립트를 실행하고 \`--resume REQUEST_ID\`를 전달합니다. 공개 요청 식별자와 기존 인증키를 사용합니다. 기존 인증 상태가 없거나 승인이 철회되면 새 등록이 필요합니다.
+웹에서 교체를 승인한 연결이 이 단말의 서비스에서 실행 중이면 새 설치가 해당 서비스만 중지하고 새 요청을 시작합니다.
 
-\`\`\`sh
+전경 실행을 이미 종료한 단말이나 서비스 배포를 갱신할 단말은 **기존 등록과 동일한 사용자**로 새 서명 배포의 초기 스크립트를 실행하고 `--resume REQUEST_ID`를 전달합니다. 공개 요청 식별자와 기존 인증키를 사용합니다. 기존 인증 상태가 없거나 승인이 철회되면 새 등록이 필요합니다.
+
+```sh
 curl -qfsS --proto '=https' https://APPROVED_RELEASE_HOST/RELEASE/bootstrap.sh | bash -s -- --resume REQUEST_ID
-\`\`\`
+```
 
-기존 전경 프로그램이 실행 중이라면 먼저 종료한 뒤 전환합니다. 같은 요청의 동시 실행은 파일 잠금으로 차단합니다. 전경 실행이 필요한 격리 시험은 초기 스크립트에 \`--foreground\`를 지정하거나 검증된 묶음에서 아래 명령을 사용합니다.
+직접 실행하는 단말 래퍼의 `run` 명령도 서비스 시작과 터널 확인 후 종료합니다. 전경 시험 실행은 중단 신호를 받으면 자기 터널을 정리합니다. 강제 종료로 남은 단말 터널은 새 연결 시작 때 기존 통신 허용 시간이 끝났고 저장된 상대가 실제 인터페이스와 일치하는 경우 정리합니다. 살아 있는 다른 연결을 즉시 교체하려면 웹에서 해당 연결의 교체를 승인합니다. 같은 요청의 동시 실행은 파일 잠금으로 차단합니다. 전경 실행이 필요한 격리 시험은 초기 스크립트에 `--foreground`를 지정하거나 검증된 묶음에서 아래 명령을 사용합니다.
 
-\`\`\`sh
+```sh
 /path/to/verified-bundle/migration-connector resume /path/to/verified-bundle/connector.json REQUEST_ID
 /path/to/verified-bundle/migration-connector prepare-host /path/to/verified-bundle
 /usr/local/libexec/migration-key-broker /etc/migration-connector/broker.json
-\`\`\`
+```
 
-요청별 상태는 \`$HOME/.local/state/migration-connector/REQUEST_ID\`의 사용자 전용 파일에 저장합니다. 서비스는 설치 시 설정한 사용자 홈과 Kubernetes 접속 설정 파일 경로를 사용합니다. 서비스가 참조하는 검증 묶음을 유지하고 배포 목록이 만료되기 전에 같은 요청으로 갱신합니다. 웹의 재접속 요청은 전원이 켜져 있고 연결 프로그램이 실행 중인 단말의 응답을 기다립니다.
+요청별 상태는 `$HOME/.local/state/migration-connector/REQUEST_ID`의 사용자 전용 파일에 저장합니다. 서비스는 설치 시 설정한 사용자 홈과 Kubernetes 접속 설정 파일 경로를 사용합니다. 서비스가 참조하는 검증 묶음을 유지하고 배포 목록이 만료되기 전에 같은 요청으로 갱신합니다. 웹의 재접속 요청은 전원이 켜져 있고 연결 프로그램이 실행 중인 단말의 응답을 기다립니다.
 
 ## 서명된 단말 설정
 
@@ -79,7 +81,7 @@ CONNECTOR_USER ALL=(root) NOPASSWD: /usr/local/libexec/migration-net-helper ""
 }
 ```
 
-브로커 정책은 `role: "gateway"` 및 실행 uid를 사용합니다. helper는 표준입력의 고정 JSON 요청으로만 check/configure/status/refresh/remove/reset을 받습니다. 원격 작업은 helper 인수, 주소, 인터페이스, 파일 경로를 정할 수 없습니다. `reset`은 재시작 시 root 소유 관리 상태가 남긴 인터페이스만 제거하며 소유 상태가 없는 인터페이스는 거절합니다.
+브로커 정책은 `role: "gateway"` 및 실행 uid를 사용합니다. helper는 표준입력의 고정 JSON 요청으로 네트워크 준비, 상태 확인, 갱신, 연결 및 정리를 수행합니다. 원격 작업은 helper 인수, 주소, 인터페이스, 파일 경로를 정할 수 없습니다. `reset`은 재시작 시 root 소유 관리 상태가 남긴 인터페이스만 제거하며 소유 상태가 없는 인터페이스는 거절합니다.
 
 방화벽은 고정 peer의 작업 TCP와 양방향 확인 UDP만 허용하고 관리 인터페이스의 나머지 입출력 및 모든 forwarding을 차단합니다. 허용 lease는 최대60초이며 갱신해도 키 절대 만료시각30분을 넘지 않습니다. 프로세스 중단이나 승인 확인 실패 시 lease가 소멸하여 트래픽이 차단됩니다. 인터페이스 제거를 확인하지 못하면 차단 규칙을 남기고 정리 완료로 보고하지 않습니다.
 

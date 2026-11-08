@@ -296,13 +296,29 @@ class Skopeo:
 
     def copy(self, source: str, target: str, source_auth: str, robot: Robot) -> None:
         config = self.config
+        self.transfer(
+            source,
+            target,
+            (config.source_host, source_auth),
+            (config.target_host, encoded_robot(robot)),
+            target_ca=config.ca_ref,
+        )
+
+    def transfer(
+        self,
+        source: str,
+        target: str,
+        source_auth: tuple[str, str],
+        target_auth: tuple[str, str],
+        *,
+        source_ca: Path | None = None,
+        target_ca: Path | None = None,
+    ) -> None:
+        config = self.config
         with tempfile.TemporaryDirectory(prefix="oneport-registry-") as directory:
             root = Path(directory)
             src, dst = root / "source.json", root / "target.json"
-            for file, host, value in (
-                (src, config.source_host, source_auth),
-                (dst, config.target_host, encoded_robot(robot)),
-            ):
+            for file, (host, value) in ((src, source_auth), (dst, target_auth)):
                 with os.fdopen(
                     os.open(file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w"
                 ) as out:
@@ -310,10 +326,15 @@ class Skopeo:
             registries = root / "registries.conf"
             registries.write_text("")
             cert = []
-            if config.ca_ref is not None:
-                cert_file = root / "harbor-ca.crt"
-                cert_file.write_bytes(config.ca_ref.read_bytes())
-                cert = ["--dest-cert-dir", directory]
+            for flag, name, ca in (
+                ("--src-cert-dir", "source-certs", source_ca),
+                ("--dest-cert-dir", "target-certs", target_ca),
+            ):
+                if ca is not None:
+                    cert_dir = root / name
+                    cert_dir.mkdir(mode=0o700)
+                    (cert_dir / "registry-ca.crt").write_bytes(ca.read_bytes())
+                    cert += [flag, str(cert_dir)]
             try:
                 result = subprocess.run(
                     [

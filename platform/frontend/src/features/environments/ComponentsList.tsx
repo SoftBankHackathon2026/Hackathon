@@ -79,114 +79,121 @@ export function ComponentsList({
       {rows.length === 0 ? (
         <p className="pk-empty">맞는 구성 요소가 없어요.</p>
       ) : (
-        <table className="pk-table sticky" data-panel-owner>
-          <thead>
-            <tr>
-              {th("name", "구성 요소")}
-              {th("env", "환경")}
-              {th("layer", "계층")}
-              {th("kind", "종류")}
-              {th("pods", "파드", "num")}
-              <th>배치</th>
-              {th("status", "상태")}
-              <th>접속</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row) => {
-              const c = row.component;
-              const isOpen = key(row) === selected;
-              return (
-                <tr
-                  key={key(row)}
-                  className={`clickable${c.status === "unknown" || c.status === "idle" ? " dim" : ""}${isOpen ? " selected" : ""}`}
-                  tabIndex={0}
-                  aria-selected={isOpen}
-                  onClick={() => toggle(key(row))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      toggle(key(row));
-                    }
-                  }}
-                >
-                  <td className="strong">{c.name}</td>
-                  <td>
-                    <span className="pk-path">
-                      <ProviderLogo provider={row.provider} />
-                      {row.envName}
-                    </span>
-                  </td>
-                  <td>{LAYER_LABELS[c.layer]}</td>
-                  <td>
-                    {kindLabel(c.kind)}
-                    {c.managed && <span className="sub"> 관리형</span>}
-                  </td>
-                  <td className="num">
-                    {(() => {
-                      const p = podSummary(c);
-                      if (!p) return <span className="sub">-</span>;
-                      return (
-                        <>
-                          <span
-                            className={
-                              p.ready < p.total ? "text-bad" : undefined
-                            }
-                          >
-                            {p.ready}/{p.total}
-                          </span>
-                          {p.restarts !== null && p.restarts > 0 && (
-                            <span className="sub text-warn">
-                              {" "}
-                              재시작 {p.restarts}
-                            </span>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </td>
-                  <td
-                    className="sub one-line"
-                    title={row.placement || undefined}
+        <div
+          className="table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label="구성 요소 목록"
+        >
+          <table className="pk-table sticky" data-panel-owner>
+            <thead>
+              <tr>
+                {th("name", "구성 요소")}
+                {th("env", "환경")}
+                {th("layer", "계층")}
+                {th("kind", "종류")}
+                {th("pods", "파드", "num")}
+                <th>배치</th>
+                {th("status", "상태")}
+                <th>접속</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((row) => {
+                const c = row.component;
+                const isOpen = key(row) === selected;
+                return (
+                  <tr
+                    key={key(row)}
+                    className={`clickable${c.status === "unknown" || c.status === "idle" ? " dim" : ""}${isOpen ? " selected" : ""}`}
+                    tabIndex={0}
+                    aria-selected={isOpen}
+                    onClick={() => toggle(key(row))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        toggle(key(row));
+                      }
+                    }}
                   >
-                    {row.placement || "-"}
-                  </td>
-                  <td>
-                    <StatusLabel tone={componentTone(c.status)}>
-                      {COMPONENT_STATUS_LABELS[c.status]}
-                    </StatusLabel>
-                  </td>
-                  <td>
-                    {(() => {
-                      const ep = primaryEndpoint(c);
-                      if (!ep) return <span className="sub">-</span>;
-                      return (
-                        <a
-                          className="ep-open"
-                          href={ep.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={ep.url}
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => event.stopPropagation()}
-                        >
-                          열기
-                          <svg
-                            className="ext-icon"
-                            viewBox="0 0 16 16"
-                            aria-hidden="true"
+                    <td className="strong">{c.name}</td>
+                    <td>
+                      <span className="pk-path">
+                        <ProviderLogo provider={row.provider} />
+                        {row.envName}
+                      </span>
+                    </td>
+                    <td>{LAYER_LABELS[c.layer]}</td>
+                    <td>
+                      {kindLabel(c.kind)}
+                      {c.managed && <span className="sub"> 관리형</span>}
+                    </td>
+                    <td className="num">
+                      {(() => {
+                        const p = podSummary(c);
+                        if (!p) return <span className="sub">-</span>;
+                        return (
+                          <>
+                            <span
+                              className={
+                                p.ready < p.total ? "text-bad" : undefined
+                              }
+                            >
+                              {p.ready}/{p.total}
+                            </span>
+                            {p.restarts !== null && p.restarts > 0 && (
+                              <span className="sub text-warn">
+                                {" "}
+                                재시작 {p.restarts}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
+                    <td
+                      className="sub one-line"
+                      title={row.placement || undefined}
+                    >
+                      {row.placement || "-"}
+                    </td>
+                    <td>
+                      <StatusLabel tone={componentTone(c.status)}>
+                        {COMPONENT_STATUS_LABELS[c.status]}
+                      </StatusLabel>
+                    </td>
+                    <td>
+                      {(() => {
+                        const ep = primaryEndpoint(c);
+                        if (!ep) return <span className="sub">-</span>;
+                        return (
+                          <a
+                            className="ep-open"
+                            href={ep.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={ep.url}
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
                           >
-                            <path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5" />
-                          </svg>
-                        </a>
-                      );
-                    })()}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                            열기
+                            <svg
+                              className="ext-icon"
+                              viewBox="0 0 16 16"
+                              aria-hidden="true"
+                            >
+                              <path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5" />
+                            </svg>
+                          </a>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {current && (
         <ComponentPanel

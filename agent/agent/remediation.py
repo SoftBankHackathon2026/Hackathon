@@ -8,24 +8,27 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Mapping
 
 from migration.policy_client import DecisionStore, Decision, Evaluator, build_check, build_input, digest_of, gate
 from migration.smoke import CHECK_NAME, TARGET_ONLY_MODE
 
 from . import runs as R
+from .hypotheses import build_hypotheses
 from .kv import CasConflict, KvError, KvStore
 from .notify import Notifier
 from .probe import Prober
 from .proposer import ProposalInvalid, Proposer, ProposerError, visible_config
 from .restart import Restarter, RestartError
 from .runs import Run, RunStore
-from .scope import Proposal, check_proposal
+from .scope import Proposal, check_proposal, planned_values
 
 log = logging.getLogger("agent.remediation")
 
 APP01_PREFIX = "APP-01-"
 DECLARED_SOURCE = "agent.declared-config"
+RECOVERED = "RECOVERED"
 TITLES: dict[str, str] = {
     R.RESOLVED: "✅ *복구 완료*",
     R.UNRESOLVED: "⚠️ *적용했지만 재검증 실패*",
@@ -34,13 +37,16 @@ TITLES: dict[str, str] = {
     R.CAS_CONFLICT: "⚠️ *저장소 값이 그사이 바뀜*",
     R.RESTART_FAILED: "❌ *재시작 실패*",
     R.HANDED_OFF: "🙋 *사람 확인 필요*",
+    RECOVERED: "🟢 *다시 정상*",
     R.ERROR: "❌ *오류*",
     R.NOTHING_TO_FIX: "정상",
 }
 QUIET_STATES = frozenset({R.NOTHING_TO_FIX})
+STREAK_STATES = frozenset({R.HANDED_OFF, R.REPEATED})
 
 
 UNVERIFIED_ALERT_AFTER = 3
+SLACK_SECTION_LIMIT = 2900
 
 
 def unverified(decision: Decision) -> bool:
@@ -74,10 +80,12 @@ class Remediator:
         self, deps: Deps, *, job_id: str, plan: Mapping[str, Any],
         declared_evidence: Mapping[str, Mapping[str, Any]], auto_apply: bool, stage: str = "pre_cutover",
         approve_command: str = "python -m agent approve", approve_url: str | None = None,
+        slack_buttons: bool = False,
     ) -> None:
         self.d = deps
         self.approve_command = approve_command
         self.approve_url = approve_url
+        self.slack_buttons = slack_buttons
         self.job_id, self.auto_apply, self.stage = job_id, auto_apply, stage
         self.declared_evidence = declared_evidence
         self.plan = {**plan, "digest": digest_of(dict(plan))}
@@ -163,6 +171,9 @@ class Remediator:
             return
         diagnosis = self._diagnose(snapshot.data)
         run.detail["diagnosis"] = {"ok": diagnosis.ok, "step": diagnosis.step, "detail": diagnosis.detail}
+        run.detail["hypotheses"] = build_hypotheses(
+            diagnosis, visible_config(snapshot.data), planned_values(self.target_db),
+        )
         if diagnosis.ok:
             self._finish(run, R.HANDED_OFF, "지금 설정으로 DB 에 접속된다. 설정 문제가 아닐 수 있어 사람에게 넘긴다")
             return
@@ -176,6 +187,7 @@ class Remediator:
             )
         except (ProposalInvalid, ProposerError) as exc:
             code = "S-SCHEMA" if isinstance(exc, ProposalInvalid) else "CODEX-FAILED"
+            self._record_sandbox(run, with_file=False)
             self._finish(run, R.REJECTED, f"제안을 받지 못했다 ({code}): {exc}", rejections=[code])
             return
 
@@ -183,8 +195,10 @@ class Remediator:
         if rejections:
             codes = [r.code for r in rejections]
             # 거절된 제안은 값을 저장·보고하지 않는다. 허용 키 밖의 값은 비밀값일 수 있다.
+            self._record_sandbox(run, with_file=False)
             self._finish(run, R.REJECTED, "정적 검사 거절: " + "; ".join(r.message for r in rejections), rejections=codes)
             return
+        self._record_sandbox(run, with_file=True)
 
         recorded = proposal.as_dict()
         visible = visible_config(snapshot.data)
@@ -192,9 +206,14 @@ class Remediator:
         run.detail.update(proposal=recorded, expected_version=snapshot.version)
         if not self._probe(run, proposal, snapshot.data):
             return
+        origin = self._open_streak(run)
+        if origin is not None:
+            self._close_streak(origin, run)
         if not self.auto_apply:
             self.d.runs.update(run, R.WAITING_APPROVAL, "승인 대기")
-            self._notify(run, f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}\n*승인*  {self._approve_hint(run.run_id)}")
+            head = f"🟡 *승인 대기*  `{run.run_id}`\n{_describe(proposal, snapshot.data)}"
+            blocks = self._approval_blocks(run.run_id, head, proposal) if self.slack_buttons else None
+            self._notify(run, f"{head}\n*승인*  {self._approve_hint(run.run_id)}", blocks)
             return
         self.d.runs.update(run, R.APPLYING, "자동 적용")
         self._apply(run, proposal, snapshot.version)
@@ -262,21 +281,90 @@ class Remediator:
     # ------------------------------------------------------------------
 
     def _finish(self, run: Run, state: str, message: str, *, alert_after: int = 1, **detail: Any) -> None:
-        previous = [r for r in self.d.runs.recent(alert_after + 1) if r.run_id != run.run_id][:alert_after]
+        origin = self._open_streak(run)
+        if state == R.HANDED_OFF and origin is not None and origin.detail.get("handoff_message") == message:
+            self._repeat(run, origin, message, alert_after)
+            return
+        if origin is not None:
+            self._close_streak(origin, run)
+        if state == R.HANDED_OFF:
+            detail.update(handoff_message=message, repeats=1, alerted=alert_after == 1)
         self.d.runs.update(run, state, message, **detail)
         if state in QUIET_STATES:
             log.info("[%s] %s", run.run_id, message)
             return
-        if state == R.HANDED_OFF:
-            streak = 0
-            for earlier in previous:
-                if earlier.state != state or self._last_message(earlier) != message:
-                    break
-                streak += 1
-            if streak != alert_after - 1:
-                log.info("[%s] 같은 사유 %d번째. 알림은 생략한다: %s", run.run_id, streak + 1, message)
-                return
+        if state == R.HANDED_OFF and alert_after > 1:
+            log.info("[%s] 같은 사유 1번째. %d번 이어지면 알린다: %s", run.run_id, alert_after, message)
+            return
         self._notify(run, f"{TITLES.get(state, state)}  `{run.run_id}`\n{message}")
+
+    def _open_streak(self, run: Run) -> Run | None:
+        """바로 앞 실행이 아직 끝나지 않은 넘김(또는 그 반복)이면 그 첫 실행을 돌려준다."""
+        before = next((r for r in self.d.runs.recent(2) if r.run_id != run.run_id), None)
+        if before is None or before.state not in STREAK_STATES:
+            return None
+        origin = self.d.runs.get(str(before.detail.get("repeat_of"))) if before.state == R.REPEATED else before
+        if origin is None or origin.state != R.HANDED_OFF:
+            return None
+        return origin
+
+    def _repeat(self, run: Run, origin: Run, message: str, alert_after: int) -> None:
+        repeats = int(origin.detail.get("repeats") or 1) + 1
+        self.d.runs.update(run, R.REPEATED, message, repeat_of=origin.run_id, handoff_message=message)
+        self.d.runs.update(origin, R.HANDED_OFF, f"같은 사유로 다시 넘김 ({repeats}번째)", repeats=repeats, last_seen=run.updated_at)
+        if not origin.detail.get("alerted") and repeats >= alert_after:
+            self.d.runs.update(origin, R.HANDED_OFF, f"같은 사유가 {repeats}번 이어져 알림을 보냄", alerted=True)
+            self._notify(origin, f"{TITLES[R.HANDED_OFF]}  `{origin.run_id}`\n{message} (같은 사유 {repeats}번째)")
+            return
+        log.info("[%s] %s 의 같은 사유 %d번째. 기록은 첫 실행에 합친다", run.run_id, origin.run_id, repeats)
+
+    def _close_streak(self, origin: Run, run: Run) -> None:
+        repeats = int(origin.detail.get("repeats") or 1)
+        minutes = _minutes_between(origin.created_at, run.updated_at)
+        note = f"다시 정상이에요. 같은 사유로 {repeats}번 넘겼고 약 {minutes}분 이어졌어요."
+        self.d.runs.update(origin, R.HANDED_OFF, note, closed_at=run.updated_at, closed_by=run.run_id)
+        if origin.detail.get("alerted"):
+            self._notify(origin, f"{TITLES[RECOVERED]}  `{origin.run_id}`\n{note}")
+        else:
+            log.info("[%s] %s", origin.run_id, note)
+
+    def _record_sandbox(self, run: Run, *, with_file: bool) -> None:
+        trace = getattr(self.d.proposer, "last_trace", None)
+        if not isinstance(trace, dict):
+            return
+        run.detail["sandbox"] = trace if with_file else {k: v for k, v in trace.items() if k != "file"}
+
+    def _approval_blocks(self, run_id: str, head: str, proposal: Proposal) -> list[dict[str, Any]]:
+        keys = ", ".join(c.key for c in proposal.changes) or "설정"
+        buttons: list[dict[str, Any]] = [
+            {
+                "type": "button", "action_id": "agent_approve", "value": run_id, "style": "primary",
+                "text": {"type": "plain_text", "text": "승인"},
+                "confirm": {
+                    "title": {"type": "plain_text", "text": "승인할까요?"},
+                    "text": {"type": "plain_text", "text": f"{keys} 값을 설정 저장소에 쓰고 앱을 다시 시작해요."[:300]},
+                    "confirm": {"type": "plain_text", "text": "승인"},
+                    "deny": {"type": "plain_text", "text": "취소"},
+                },
+            },
+            {
+                "type": "button", "action_id": "agent_reject", "value": run_id, "style": "danger",
+                "text": {"type": "plain_text", "text": "거절"},
+            },
+        ]
+        if self.approve_url:
+            buttons.append({
+                "type": "button", "action_id": "agent_open",
+                "url": f"{self.approve_url.rstrip('/')}/#agent/{run_id}",
+                "text": {"type": "plain_text", "text": "플랫폼에서 보기"},
+            })
+        return [
+            {"type": "section", "text": {"type": "mrkdwn", "text": head[:SLACK_SECTION_LIMIT]}},
+            {"type": "actions", "block_id": "agent_decision", "elements": buttons},
+            {"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f"터미널에서는 `{self.approve_command} {run_id}`"},
+            ]},
+        ]
 
     def _approve_hint(self, run_id: str) -> str:
         command = f"`{self.approve_command} {run_id}`"
@@ -284,12 +372,19 @@ class Remediator:
             return command
         return f"<{self.approve_url.rstrip('/')}/#agent/{run_id}|플랫폼에서 승인> 또는 {command}"
 
-    def _last_message(self, run: Run) -> str | None:
-        events = self.d.runs.events(run.run_id)
-        return events[-1]["message"] if events else None
+    def _notify(self, run: Run, text: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        if blocks:
+            self.d.notifier.send(text, blocks)
+        else:
+            self.d.notifier.send(text)
 
-    def _notify(self, run: Run, text: str) -> None:
-        self.d.notifier.send(text)
+
+def _minutes_between(start: str, end: str) -> int:
+    try:
+        seconds = (datetime.fromisoformat(end.replace("Z", "+00:00")) - datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds()
+    except ValueError:
+        return 0
+    return max(1, round(seconds / 60))
 
 
 def _codes(decision: Decision) -> str:

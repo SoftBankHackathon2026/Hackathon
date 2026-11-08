@@ -13,6 +13,7 @@ export const KIND_LABELS: Record<FleetEnvironment["kind"], string> = {
   k3s: "k3s",
   eks: "EKS",
   gke: "GKE",
+  kubernetes: "Kubernetes",
 };
 
 export const DIRECTION_LABELS: Record<MigrationSummary["direction"], string> = {

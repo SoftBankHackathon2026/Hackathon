@@ -53,6 +53,8 @@ services:
       - settings.env
       - path: connection/server.env
         required: false
+      - path: secrets/slack.env
+        required: false
     environment:
       ONEPORT_DATABASE_URL_FILE: /etc/oneport/secrets/database-url
       ONEPORT_INGEST_TOKEN_FILE: /etc/oneport/secrets/ingest-token

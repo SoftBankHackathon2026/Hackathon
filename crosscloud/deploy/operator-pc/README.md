@@ -10,6 +10,8 @@
 | 무엇 | 어디 | compose 프로젝트 |
 |---|---|---|
 | 접수 큐 durable-ingress + Redis | `ingress.compose.yaml` | `ccx-<세션>-ingress` |
+| 트래픽 봇(profile `bot`) | `ingress.compose.yaml` | `ccx-<세션>-ingress` |
+| 귀환 Connect 비밀번호 env | `connect.return.compose.yaml`(겹침) | `ccx-<세션>-connect` |
 | Kafka + Connect(Debezium) | `connect.compose.yaml` | `ccx-<세션>-connect` |
 | 앱 제어 어댑터 | `crosscloud serve-adapter`(호스트 프로세스) | — |
 | 전환 상태 머신 | `python -m migration.cloud`(호스트 프로세스) | — |

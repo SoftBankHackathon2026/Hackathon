@@ -173,7 +173,18 @@ pub fn ensure(bundle: &Path, helper: &Path) -> Result<()> {
     }
     let uid = unsafe { libc::getuid() };
     if check(helper, uid).is_ok() {
-        return Ok(());
+        let manifest = release::verify_bundle(bundle)?;
+        if let Some(artifact) = manifest
+            .artifacts
+            .iter()
+            .find(|a| a.name == "migration-net-helper")
+        {
+            if crypto::digest(&read_regular(helper, 0, MAX_ARTIFACT)?) == artifact.sha384 {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
     }
     if uid == 0 {
         return Err("일반 사용자로 실행한 뒤 설치 단계에서 sudo 승인을 해 주세요.".into());
@@ -317,7 +328,23 @@ fn unit_arg(value: &str) -> Result<String> {
     ))
 }
 
-fn unit(bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str) -> Result<String> {
+// Preserve local CLI configuration selectors across the service boundary.
+// Access keys, tokens and arbitrary environment variables never enter the unit.
+const TOOL_SELECTORS: [&str; 4] = [
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "CLOUDSDK_ACTIVE_CONFIG_NAME",
+    "MIGRATION_KUBECTL",
+];
+
+fn unit(
+    bundle: &Path,
+    uid: u32,
+    request: &str,
+    home: &str,
+    kubeconfig: &str,
+    selectors: &[String],
+) -> Result<String> {
     crate::api::identifier(request)?;
     if uid == 0
         || !bundle.is_absolute()
@@ -340,10 +367,24 @@ fn unit(bundle: &Path, uid: u32, request: &str, home: &str, kubeconfig: &str) ->
     let state = unit_arg(state.to_str().ok_or("invalid state path")?)?;
     let home = unit_arg(&format!("HOME={home}"))?;
     let kubeconfig = unit_arg(&format!("KUBECONFIG={kubeconfig}"))?;
+    let mut cloud = String::new();
+    for (name, value) in TOOL_SELECTORS.iter().zip(selectors) {
+        if !value.is_empty() {
+            if *name == "MIGRATION_KUBECTL" {
+                if !Path::new(value).is_absolute() {
+                    return Err("kubectl 경로는 절대 경로여야 합니다.".into());
+                }
+            } else if value.len() > 128 {
+                return Err("클라우드 명령줄 도구 설정 이름이 너무 깁니다.".into());
+            }
+            cloud.push(' ');
+            cloud.push_str(&unit_arg(&format!("{name}={value}"))?);
+        }
+    }
     Ok(format!("# migration-connector uid={uid} request={request}\n\
 [Unit]\nDescription=On-premises migration tunnel\nStartLimitIntervalSec=10min\nStartLimitBurst=5\nWants=network-online.target\nAfter=network-online.target\n\
 [Service]\nType=notify\nNotifyAccess=main\nUser={uid}\nUMask=0077\n\
-Environment={home} {kubeconfig}\n\
+Environment={home} {kubeconfig}{cloud}\n\
 Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin\n\
 ExecCondition=:/usr/bin/test -f {state}\n\
 ExecStart=:/bin/sh -c {launcher} migration-connector-launch {executable} serve {config} {request}\n\
@@ -352,7 +393,7 @@ TimeoutStartSec=90s\nTimeoutStopSec=25s\nRestart=on-failure\nRestartSec=10s\n\
 [Install]\nWantedBy=multi-user.target\n"))
 }
 
-pub fn start_service(bundle: &Path, request: &str) -> Result<()> {
+pub fn start_service(bundle: &Path, request: &str, replaces: Option<&str>) -> Result<()> {
     if !Path::new("/run/systemd/system").is_dir() {
         return Err("서비스를 시작하려면 systemd로 부팅한 Ubuntu가 필요합니다.".into());
     }
@@ -371,7 +412,22 @@ pub fn start_service(bundle: &Path, request: &str) -> Result<()> {
         .map_err(|_| "invalid kubeconfig path")?,
         None => String::new(),
     };
-    unit(&bundle, uid, request, &home, &kubeconfig)?;
+    let mut selectors = TOOL_SELECTORS.map(|name| std::env::var(name).unwrap_or_default());
+    if selectors[1].is_empty() {
+        selectors[1] = std::env::var("AWS_DEFAULT_REGION").unwrap_or_default();
+    }
+    if let Some(path) = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| cwd.join(dir).join("kubectl"))
+            .find(|tool| fs::metadata(tool).is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0))
+    }) {
+        selectors[3] = path
+            .into_os_string()
+            .into_string()
+            .map_err(|_| "invalid kubectl path")?;
+    }
+    unit(&bundle, uid, request, &home, &kubeconfig, &selectors)?;
+    let selectors = serde_json::to_string(&selectors)?;
     let (_, executable, digest) = signed_installer(&bundle, uid)?;
     let mut tty = OpenOptions::new()
         .read(true)
@@ -398,6 +454,8 @@ pub fn start_service(bundle: &Path, request: &str) -> Result<()> {
             request.as_ref(),
             home.as_ref(),
             kubeconfig.as_ref(),
+            replaces.unwrap_or_default().as_ref(),
+            selectors.as_ref(),
         ],
     )
 }
@@ -411,10 +469,22 @@ pub fn install_service(
     request: &str,
     home: &str,
     kubeconfig: &str,
+    replaces: Option<&str>,
+    selectors: Option<&str>,
 ) -> Result<()> {
+    if let Some(previous) = replaces {
+        crate::api::identifier(previous)?;
+    }
     let uid = uid.parse::<u32>()?;
     installation_account(uid, user)?;
-    let content = unit(bundle, uid, request, home, kubeconfig)?;
+    let selectors = selectors
+        .map(serde_json::from_str::<Vec<String>>)
+        .transpose()?
+        .unwrap_or_default();
+    if selectors.len() > TOOL_SELECTORS.len() {
+        return Err("지원하지 않는 도구 설정입니다.".into());
+    }
+    let content = unit(bundle, uid, request, home, kubeconfig, &selectors)?;
     for path in ["/", "/etc", "/etc/systemd", SERVICE_DIR, "/run"] {
         trusted_directory(Path::new(path))?;
     }
@@ -432,14 +502,18 @@ pub fn install_service(
             .ok_or("기존 서비스가 다른 사용자 또는 관리 설정에 속해 있습니다.")?;
         crate::api::identifier(old_request)?;
         if old_request != request {
-            let status = Command::new(SYSTEMCTL)
-                .args(["show", "--property=ActiveState", "--value", SERVICE])
-                .env_clear()
-                .output()?;
-            if !status.status.success()
-                || !matches!(status.stdout.as_slice(), b"inactive\n" | b"failed\n")
-            {
-                return Err("기존 연결 서비스를 중지한 후 새 연결을 설치해 주세요.".into());
+            if replaces == Some(old_request) {
+                run(SYSTEMCTL, &["stop", SERVICE])?;
+            } else {
+                let status = Command::new(SYSTEMCTL)
+                    .args(["show", "--property=ActiveState", "--value", SERVICE])
+                    .env_clear()
+                    .output()?;
+                if !status.status.success()
+                    || !matches!(status.stdout.as_slice(), b"inactive\n" | b"failed\n")
+                {
+                    return Err("기존 연결 서비스를 중지한 후 새 연결을 설치해 주세요.".into());
+                }
             }
         }
     }
@@ -630,8 +704,11 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
             return Err("기존 관리자 권한 규칙과 충돌합니다.".into());
         }
     }
-    if fs::symlink_metadata("/run/migration-connector-network.json").is_ok() {
-        return Err("활성 연결이 있어 네트워크 보조 프로그램을 교체할 수 없습니다.".into());
+    // A signed helper can be atomically replaced under the network lock while
+    // retaining the existing policy and the current interface.
+    let existing_install = old_policy.is_some() && old_helper.is_some();
+    if !existing_install && fs::symlink_metadata("/run/migration-connector-network.json").is_ok() {
+        return Err("활성 연결의 기존 보조 프로그램과 정책을 확인할 수 없습니다.".into());
     }
     let sudo_stage = stage.0.join("sudoers");
     create(&sudo_stage, sudo_rule.as_bytes(), 0o440)?;
@@ -650,7 +727,7 @@ pub fn install(bundle: &Path, uid: u32, user: &str) -> Result<()> {
     // then recheck the snapshots so an intervening administrator edit is preserved.
     trusted_directory(Path::new("/run"))?;
     let _lock = install_lock("/run/migration-connector-network.lock")?;
-    if fs::symlink_metadata("/run/migration-connector-network.json").is_ok()
+    if (!existing_install && fs::symlink_metadata("/run/migration-connector-network.json").is_ok())
         || existing(Path::new(HELPER))? != old_helper
         || existing(Path::new(POLICY))? != old_policy
         || existing(Path::new(FLOOR))? != old_floor
@@ -741,8 +818,15 @@ mod tests {
             "request_12345678901234",
             "/home/client",
             "/home/client/a config:/home/client/$KUBE",
+            &[
+                "demo-profile".into(),
+                "ap-northeast-2".into(),
+                "demo-config".into(),
+                "/home/client/.local/bin/kubectl".into(),
+            ],
         )
         .unwrap();
+        assert!(content.contains(r#""AWS_PROFILE=demo-profile" "AWS_REGION=ap-northeast-2" "CLOUDSDK_ACTIVE_CONFIG_NAME=demo-config" "MIGRATION_KUBECTL=/home/client/.local/bin/kubectl""#));
         assert!(content.contains("Type=notify\nNotifyAccess=main\nUser=1001\n"));
         assert!(content.contains(
             r#"ExecStart=:/bin/sh -c "exec \"$@\"" migration-connector-launch "/home/client/with spaces/%%u \"quoted\"/migration-connector" serve "#
@@ -753,7 +837,8 @@ mod tests {
             0,
             "request_12345678901234",
             "/root",
-            ""
+            "",
+            &[]
         )
         .is_err());
         assert!(unit(
@@ -761,7 +846,8 @@ mod tests {
             1001,
             "request_12345678901234",
             "/home/client\n[Service]",
-            ""
+            "",
+            &[]
         )
         .is_err());
     }

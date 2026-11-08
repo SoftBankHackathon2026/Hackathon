@@ -111,19 +111,31 @@ fn net_req(op: &str, s: &Local) -> Request {
         key_expires_at_ms: 0,
     }
 }
+struct InventoryQuery<'a> {
+    operation: &'a str,
+    target: Option<&'a str>,
+    provider: &'a str,
+    context: Option<&'a str>,
+}
+
+impl InventoryQuery<'_> {
+    fn cloud(&self) -> bool {
+        matches!(self.provider, "aws" | "gcp")
+    }
+}
+
 fn collect_raw(
     c: &Config,
     base: &Path,
     s: &Local,
-    op: &str,
-    target: Option<&str>,
+    query: &InventoryQuery,
     valid: &std::sync::atomic::AtomicBool,
 ) -> Result<Value> {
-    if !matches!(op, "discover" | "collect") {
+    if !matches!(query.operation, "discover" | "collect") {
         return Err("operation denied".into());
     }
     let mut cmd = Command::new("/usr/bin/python3");
-    cmd.arg(asset(base, &c.collector_archive)?).arg(op).args([
+    cmd.arg(asset(base, &c.collector_archive)?).arg(query.operation).args([
         "--request-id",
         &s.request_id,
         "--device-id",
@@ -131,7 +143,13 @@ fn collect_raw(
         "--epoch",
         &s.epoch.to_string(),
     ]);
-    if let Some(t) = target {
+    if query.cloud() {
+        cmd.args(["--provider", query.provider]);
+        if let Some(context) = query.context {
+            cmd.arg(format!("--cloud-context={context}"));
+        }
+    }
+    if let Some(t) = query.target {
         cmd.args(["--target-id", t]);
     }
     let mut child = cmd
@@ -150,7 +168,7 @@ fn collect_raw(
         if let Some(status) = child.try_wait()? {
             let (result, b) = reader.join().map_err(|_| "collector reader")?;
             result?;
-            if !status.success() || b.len() > 2_097_152 {
+            if (!status.success() && !query.cloud()) || b.len() > 2_097_152 {
                 return Err("environment collection failed".into());
             }
             return Ok(serde_json::from_slice(&b)?);
@@ -170,8 +188,7 @@ fn collect(
     c: &Config,
     base: &Path,
     s: &Local,
-    op: &str,
-    target: Option<&str>,
+    query: &InventoryQuery,
     key: &PKey<Private>,
     api_base: &str,
 ) -> Result<Option<Value>> {
@@ -215,7 +232,7 @@ fn collect(
                 break;
             }
         });
-        let result = collect_raw(c, base, s, op, target, &valid);
+        let result = collect_raw(c, base, s, query, &valid);
         *stop.lock().unwrap() = true;
         wake.notify_all();
         result
@@ -232,6 +249,7 @@ fn establish(
     s: &mut Local,
     key: &PKey<Private>,
     policy: &Policy,
+    replacement: Option<&network::Replacement>,
 ) -> std::result::Result<Binding, &'static str> {
     let stream = (c.broker_host.as_str(), c.broker_port)
         .to_socket_addrs()
@@ -297,9 +315,24 @@ fn establish(
     if commit["type"] != "COMMIT" || commit["epoch"] != binding.epoch {
         return Err("broker-commit");
     }
-    s.epoch = binding.epoch;
-    s.connection_id = Some(binding.connection_id.clone());
-    save(dir, s).map_err(|_| "local-state")?;
+    if let Some(previous) = replacement.filter(|old| old.client.as_deref() != Some("ready")) {
+        let removed = previous.removal().is_none_or(|request| {
+            network::helper(Path::new(&c.helper_path), &request).is_ok()
+                || prepare_tunnel(c, s).unwrap_or(false)
+        });
+        api::device(
+            &c.public_api_url,
+            &s.request_id,
+            &s.candidate_id,
+            key,
+            "replacement-cleanup",
+            json!({"client": if removed { "ready" } else { "blocked" }}),
+        )
+        .map_err(|_| "replacement-cleanup-report")?;
+        if !removed {
+            return Err("replacement-client-cleanup");
+        }
+    }
     let started = migration_connector::now_ms() / 1000;
     let req = Request {
         operation: "configure".into(),
@@ -316,6 +349,9 @@ fn establish(
         key_expires_at_ms: binding.expires_at_ms,
     };
     network::helper(Path::new(&c.helper_path), &req).map_err(|_| "wireguard-configure")?;
+    s.epoch = binding.epoch;
+    s.connection_id = Some(binding.connection_id.clone());
+    save(dir, s).map_err(|_| "local-state")?;
     drop(req);
     drop(psk);
     protocol::send(&mut tls, &json!({"type":"COMMIT","epoch":binding.epoch}))
@@ -343,9 +379,7 @@ fn establish(
     Ok(binding)
 }
 fn cleanup(c: &Config, dir: &Path, s: &Local, key: &PKey<Private>) -> Result<()> {
-    if s.connection_id.is_some() {
-        network::helper(Path::new(&c.helper_path), &net_req("remove", s))?;
-    }
+    remove_tunnel(c, s)?;
     for name in ["device.pem", "state.json"] {
         let path = dir.join(name);
         if path.exists() {
@@ -403,12 +437,21 @@ fn retry_tunnel(stage: &str) {
 
 fn remove_tunnel(c: &Config, state: &Local) -> Result<()> {
     if state.connection_id.is_some() {
-        network::helper(Path::new(&c.helper_path), &net_req("remove", state)).map_err(|error| {
-            eprintln!("TUNNEL_CLEANUP_FAILED stage=wireguard-remove");
-            error
-        })?;
+        network::helper(Path::new(&c.helper_path), &net_req("remove-exact", state)).map_err(
+            |error| {
+                eprintln!("TUNNEL_CLEANUP_FAILED stage=wireguard-remove");
+                error
+            },
+        )?;
     }
     Ok(())
+}
+
+fn prepare_tunnel(c: &Config, state: &Local) -> Result<bool> {
+    let result = network::helper(Path::new(&c.helper_path), &net_req("prepare-client", state))?;
+    result["ready"]
+        .as_bool()
+        .ok_or_else(|| "network preparation unconfirmed".into())
 }
 
 enum SessionExit {
@@ -418,6 +461,44 @@ enum SessionExit {
     Recover(&'static str),
 }
 
+fn relay_discovery(
+    c: &Config,
+    base: &Path,
+    state: &Local,
+    key: &PKey<Private>,
+    api_base: &str,
+    provider: &str,
+    generation: u64,
+) -> Result<bool> {
+    let query = InventoryQuery {
+        operation: "discover",
+        target: None,
+        provider,
+        context: None,
+    };
+    let Some(found) = collect(c, base, state, &query, key, api_base)? else {
+        return Ok(false);
+    };
+    let data = if query.cloud() {
+        if !found["discovered"].is_array() || !found["warnings"].is_array() {
+            json!({
+                "environments": [], "warnings": [{"code": "LOOKUP_FAILED", "scope": ""}],
+                "generation": generation, "epoch": state.epoch,
+            })
+        } else {
+            json!({
+                "environments": found["discovered"], "warnings": found["warnings"],
+                "generation": generation, "epoch": state.epoch,
+            })
+        }
+    } else {
+        json!({"environments": found["discovered"]})
+    };
+    Ok(api::device(
+        api_base, &state.request_id, &state.candidate_id, key, "discovered", data,
+    ).is_ok())
+}
+
 fn serve_tunnel(
     c: &Config,
     base: &Path,
@@ -425,25 +506,38 @@ fn serve_tunnel(
     key: &PKey<Private>,
     policy: &Policy,
     binding: &Binding,
+    notify_service: bool,
 ) -> Result<SessionExit> {
+    if service::stopping() {
+        return Ok(SessionExit::Stopped);
+    }
     let tunnel = SocketAddr::new(policy.peer_address, policy.job_port);
     let api_base = format!("http://{tunnel}/api/v1/connections");
     let request = &state.request_id;
-    let Some(found) = collect(c, base, state, "discover", None, key, &api_base)? else {
-        return Ok(SessionExit::Recover("discovery-lease"));
-    };
-    if api::device(
+    let initial = match api::device(
         &api_base,
         request,
         &state.candidate_id,
         key,
-        "discovered",
-        json!({"environments":found["discovered"]}),
-    )
-    .is_err()
-    {
+        "poll",
+        json!({}),
+    ) {
+        Ok(value) => value,
+        Err(_) => return Ok(SessionExit::Recover("discovery-poll")),
+    };
+    let provider = initial["snapshot"]["provider"]
+        .as_str()
+        .unwrap_or("kubernetes");
+    let mut generation = initial["snapshot"]["discoveryGeneration"]
+        .as_u64()
+        .unwrap_or(0);
+    if notify_service {
+        service::ready()?;
+    }
+    if !relay_discovery(c, base, state, key, &api_base, provider, generation)? {
         return Ok(SessionExit::Recover("discovery-relay"));
     }
+    println!("보안 연결을 확인했습니다. 웹에서 정보를 수집할 대상을 선택하세요.");
     let mut last_lease = None::<std::time::Instant>;
     let mut completed = std::collections::HashSet::new();
     loop {
@@ -483,32 +577,45 @@ fn serve_tunnel(
             Ok(value) => value,
             Err(_) => return Ok(SessionExit::Recover("job-poll")),
         };
+        let current_generation = response["snapshot"]["discoveryGeneration"].as_u64().unwrap_or(0);
+        if current_generation != generation {
+            if !relay_discovery(c, base, state, key, &api_base, provider, current_generation)? {
+                return Ok(SessionExit::Recover("discovery-relay"));
+            }
+            generation = current_generation;
+            continue;
+        }
         if !response["task"].is_null() {
             let task = &response["task"];
             let device = state.device_id.as_deref().ok_or("device missing")?;
             let op = protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
             let job = task["payload"]["job_id"].as_str().ok_or("job id")?;
             if !completed.contains(job) {
-                let Some(result) = collect(
-                    c,
-                    base,
-                    state,
-                    op,
-                    task["payload"]["target_id"].as_str(),
-                    key,
-                    &api_base,
-                )?
-                else {
+                let query = InventoryQuery {
+                    operation: op,
+                    target: task["payload"]["target_id"].as_str(),
+                    provider,
+                    context: task["payload"]["cloud_context"].as_str(),
+                };
+                let Some(result) = collect(c, base, state, &query, key, &api_base)? else {
                     return Ok(SessionExit::Recover("inventory-lease"));
                 };
                 protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
+                let (action, data) = if query.cloud() && result["report"].is_null() {
+                    ("inventory-failed", json!({
+                        "job_id": job,
+                        "reason": result["reason_code"].as_str().unwrap_or("LOOKUP_FAILED"),
+                    }))
+                } else {
+                    ("inventory", json!({"job_id": job, "report": result["report"]}))
+                };
                 if api::device(
                     &api_base,
                     request,
                     &state.candidate_id,
                     key,
-                    "inventory",
-                    json!({"job_id":job,"report":result["report"]}),
+                    action,
+                    data,
                 )
                 .is_err()
                 {
@@ -633,7 +740,7 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
                 &json!({"candidateId":state.candidate_id}),
                 None,
             )?;
-            let payload = json!({"version":1,"request_id":request,"candidate_id":state.candidate_id,"challenge_id":challenge["challenge_id"],"challenge":challenge["challenge"],"device_auth_public_key":crypto::b64(&key.raw_public_key()?),"wireguard_public_key":state.wireguard_public,"audience":"migration-connector-enrollment","expires_at_ms":challenge["expires_at_ms"]});
+            let payload = json!({"version":1,"replacement_version":1,"request_id":request,"candidate_id":state.candidate_id,"challenge_id":challenge["challenge_id"],"challenge":challenge["challenge"],"device_auth_public_key":crypto::b64(&key.raw_public_key()?),"wireguard_public_key":state.wireguard_public,"audience":"migration-connector-enrollment","expires_at_ms":challenge["expires_at_ms"]});
             let enroll_key = crypto::seed_key(&seed)?;
             let body = json!({"payload":payload,"enrollment_signature":crypto::sign(&enroll_key,&protocol::signed_bytes("migration/enrollment/v1",&payload)?)?,"device_signature":crypto::sign(&key,&protocol::signed_bytes("migration/device-possession/v1",&payload)?)?,"metadata":{"hostname":"user-terminal","os":"linux","arch":std::env::consts::ARCH}});
             api::post(
@@ -666,6 +773,7 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
     }
     drop(seed);
     drop(enrollment);
+    let mut replaces = None;
     while mode != RunMode::Service {
         let status = api::device(
             &c.public_api_url,
@@ -676,7 +784,12 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
             json!({}),
         )?;
         match status["snapshot"]["device"].as_str() {
-            Some("APPROVED") => break,
+            Some("APPROVED") => {
+                replaces = status["replacement"]["request_id"]
+                    .as_str()
+                    .map(str::to_owned);
+                break;
+            }
             Some("PENDING_APPROVAL") => {
                 if let Some(code) = status["confirmation_code"].as_str() {
                     println!("웹에서 단말 확인 코드를 입력하세요: {code}");
@@ -697,7 +810,7 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
         let setup = if setup.is_ok() && mode == RunMode::SetupService {
             // systemd's worker takes the same per-request lock as the foreground mode.
             drop(lock);
-            migration_connector::host_install::start_service(base, &request)
+            migration_connector::host_install::start_service(base, &request, replaces.as_deref())
         } else {
             setup
         };
@@ -723,16 +836,17 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
                 eprintln!("서비스 상태는 단말과 웹에서 확인해 주세요. 터널 응답을 아직 확인하지 못했습니다.");
                 return Err("tunnel readiness unconfirmed".into());
             }
-            println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
+            println!("보안 연결이 완료되었습니다. 터널은 백그라운드 서비스에서 유지합니다.");
             return Ok(());
         }
+    }
+    if mode == RunMode::Foreground {
+        service::install_stop_handler()?;
     }
     let policy: Policy = serde_json::from_value(
         network::helper(Path::new(&c.helper_path), &net_req("check", &state))?["policy"].clone(),
     )?;
     policy.validate()?;
-    remove_tunnel(&c, &state)?;
-    let mut ready_notified = false;
     while !service::stopping() {
         // Require fresh approval before opening a new tunnel, including after
         // administrator installation, key rotation, and interrupted recovery.
@@ -749,35 +863,60 @@ fn run(config_path: &Path, resume: Option<&str>, mode: RunMode) -> Result<()> {
             Some("REVOKED" | "REJECTED") => return cleanup(&c, &dir, &state, &key),
             _ => return Err("unexpected device status".into()),
         }
-        let outcome = match establish(&c, base, &dir, &mut state, &key, &policy) {
-            Ok(binding) => {
-                if mode == RunMode::Service && !ready_notified {
-                    if let Err(error) = service::ready() {
-                        remove_tunnel(&c, &state)?;
-                        return Err(error);
-                    }
-                    ready_notified = true;
-                }
-                println!("보안 연결을 확인했습니다. 웹에서 조회할 Kubernetes 문맥을 선택하세요.");
-                serve_tunnel(&c, base, &state, &key, &policy, &binding)
-            }
+        let replacement: Option<network::Replacement> =
+            serde_json::from_value(status["replacement"].clone())?;
+        let exact_replacement = replacement.as_ref().is_some_and(|previous| {
+            previous.client.as_deref() != Some("ready") && previous.removal().is_some()
+        });
+        if !exact_replacement
+            && !prepare_tunnel(&c, &state).map_err(|error| {
+                eprintln!("TUNNEL_CLEANUP_FAILED stage=prepare-existing-tunnel");
+                error
+            })?
+        {
+            retry_tunnel("previous-lease-active");
+            continue;
+        }
+        let previous_epoch = state.epoch;
+        let outcome = match establish(
+            &c,
+            base,
+            &dir,
+            &mut state,
+            &key,
+            &policy,
+            replacement.as_ref(),
+        ) {
+            Ok(binding) => serve_tunnel(
+                &c,
+                base,
+                &state,
+                &key,
+                &policy,
+                &binding,
+                mode == RunMode::Service,
+            ),
             Err(stage) => Ok(SessionExit::Recover(stage)),
         };
+        if matches!(&outcome, Ok(SessionExit::Revoked)) {
+            return cleanup(&c, &dir, &state, &key);
+        }
+        // A failed configure must not remove the previous connection that blocked it.
+        if state.epoch != previous_epoch {
+            remove_tunnel(&c, &state)?;
+        }
         match outcome {
-            Ok(SessionExit::Revoked) => return cleanup(&c, &dir, &state, &key),
-            Ok(SessionExit::Stopped) => break,
-            Ok(SessionExit::Rotate) => remove_tunnel(&c, &state)?,
+            Ok(SessionExit::Stopped | SessionExit::Revoked) => break,
+            Ok(SessionExit::Rotate) => {}
             Ok(SessionExit::Recover(stage)) => {
-                remove_tunnel(&c, &state)?;
-                retry_tunnel(stage);
+                if !service::stopping() {
+                    retry_tunnel(stage);
+                }
             }
-            Err(error) => {
-                remove_tunnel(&c, &state)?;
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         }
     }
-    remove_tunnel(&c, &state)
+    Ok(())
 }
 
 fn shell_arg(path: &Path) -> String {
@@ -787,13 +926,13 @@ fn shell_arg(path: &Path) -> String {
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
-        Some("run" | "enroll") if args.len() == 3 => run(
+        Some("run" | "enroll" | "run-foreground") if args.len() == 3 => run(
             Path::new(&args[2]),
             None,
-            if args[1] == "enroll" {
-                RunMode::SetupService
-            } else {
+            if args[1] == "run-foreground" {
                 RunMode::Foreground
+            } else {
+                RunMode::SetupService
             },
         ),
         Some("resume" | "resume-service" | "serve") if args.len() == 4 => run(
@@ -805,7 +944,7 @@ fn main() {
                 _ => RunMode::Foreground,
             },
         ),
-        Some("install-service") if args.len() == 8 => {
+        Some("install-service") if matches!(args.len(), 8..=10) => {
             migration_connector::host_install::install_service(
                 Path::new(&args[2]),
                 &args[3],
@@ -813,6 +952,10 @@ fn main() {
                 &args[5],
                 &args[6],
                 &args[7],
+                args.get(8)
+                    .map(String::as_str)
+                    .filter(|value| !value.is_empty()),
+                args.get(9).map(String::as_str),
             )
         }
         Some("crypto-vector") if args.len() == 2 => vector(),

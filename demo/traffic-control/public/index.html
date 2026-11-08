@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>트래픽 봇 제어판</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #15171c; --muted: #5d6470; --line: #dde1e7;
+    --run: #127a46; --run-bg: #e2f3e9; --stop: #5f6672; --stop-bg: #eceef1;
+    --warn: #8f5600; --warn-bg: #fff2d8; --bad: #b42318; --accent: #2457d6; --accent-bg: #e8eefc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101216; --panel: #191c22; --text: #e9ebef; --muted: #9ca3ae; --line: #2b3038;
+      --run: #4fd18b; --run-bg: #163224; --stop: #a3a9b3; --stop-bg: #22262d;
+      --warn: #f2b24c; --warn-bg: #382a10; --bad: #ff7b6e; --accent: #7aa2ff; --accent-bg: #1c2740;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR",
+      "Hiragino Sans", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 16px 56px; }
+  .ja { display: block; color: var(--muted); font-size: .82em; font-weight: 400; }
+  header h1 { font-size: 28px; margin: 0; line-height: 1.25; }
+  header p { margin: 10px 0 0; font-size: 17px; }
+  .status-line { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 14px 0 22px;
+    font-size: 14px; color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px;
+    background: var(--stop); vertical-align: middle; }
+  .dot.ok { background: var(--run); } .dot.bad { background: var(--bad); }
+
+  .section-title { font-size: 15px; font-weight: 700; margin: 0 0 10px; color: var(--muted); }
+  .flow { display: grid; grid-template-columns: repeat(7, auto); align-items: stretch;
+    justify-content: start; gap: 8px; margin-bottom: 24px; overflow-x: auto; }
+  .node { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; min-width: 150px; }
+  .node b { display: block; font-size: 16px; }
+  .node small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .node.db { border: 2px solid var(--accent); background: var(--accent-bg); }
+  .node.db .where { font-size: 20px; font-weight: 800; color: var(--accent); margin-top: 4px; }
+  .arrow { align-self: center; color: var(--muted); font-size: 22px; }
+  @media (max-width: 760px) {
+    .flow { grid-template-columns: 1fr; }
+    .arrow { transform: rotate(90deg); justify-self: center; }
+  }
+
+  .banner { border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; background: var(--warn-bg);
+    color: var(--warn); }
+  .banner[hidden] { display: none; }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+  .card-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: start; }
+  .state { font-size: 34px; font-weight: 800; line-height: 1.2; }
+  .state.running { color: var(--run); } .state.stopped { color: var(--stop); }
+  .state.unknown { color: var(--warn); }
+  .state-desc { color: var(--muted); margin-top: 4px; }
+  .buttons { display: flex; gap: 10px; }
+  button { font: inherit; font-weight: 700; border-radius: 10px; padding: 12px 26px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  button.start { background: var(--run); border-color: var(--run); color: #fff; }
+  button.stop { background: var(--stop-bg); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .button-note { font-size: 13px; color: var(--muted); margin-top: 8px; text-align: right; min-height: 20px; }
+
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;
+    margin-top: 20px; }
+  .metric { background: var(--bg); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  @media (max-width: 520px) {
+    .card { padding: 16px; }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .metric .value { font-size: 22px; }
+    .state { font-size: 28px; }
+    .node { min-width: 0; }
+  }
+  .metric .label { font-size: 13px; color: var(--muted); }
+  .metric .value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric .hint { font-size: 12px; color: var(--muted); }
+
+  .explain { margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px; }
+  .explain div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .explain h3 { margin: 0 0 6px; font-size: 15px; }
+  .explain p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  details { margin-top: 26px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; }
+  summary { cursor: pointer; font-weight: 700; color: var(--muted); }
+  .key { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  .key input { flex: 1 1 240px; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>트래픽 봇 제어판<span class="ja">トラフィックボット操作パネル</span></h1>
+    <p>DB 이전 시연에서 <strong>실제 사용자처럼 요청을 보내는 봇</strong>을 켜고 끄는 화면입니다.
+      요청이 지금 어느 DB 에 저장되는지와 저장 속도를 실시간으로 보여 줍니다.
+      <span class="ja">DB移行デモで、実際のユーザーのようにリクエストを送るボットをオン・オフする画面です。
+        いまどのDBに保存されているか、保存の速さをリアルタイムで表示します。</span></p>
+  </header>
+
+  <div class="status-line">
+    <span><span id="agent-dot" class="dot"></span><span id="agent">온프렘 연결 확인 중</span></span>
+    <span id="clock"></span>
+  </div>
+
+  <p class="section-title">요청이 흐르는 길 <span class="ja" style="display:inline">リクエストの流れ</span></p>
+  <div class="flow">
+    <div class="node"><b>트래픽 봇</b><small>사용자 요청을 흉내 냄</small><small>ユーザーを模したボット</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>접수 큐</b><small>요청을 잃지 않게 먼저 보관</small><small>受付キュー</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>샘플 앱</b><small>요청을 받아 DB 에 저장</small><small>サンプルアプリ</small></div>
+    <div class="arrow">→</div>
+    <div class="node db"><b>지금 저장되는 DB</b><small>現在の保存先</small>
+      <div class="where" id="where">확인 중</div><small id="where-note"></small></div>
+  </div>
+
+  <div id="lock" class="banner" hidden>
+    <strong>DB 이전이 진행 중이라 지금은 켜고 끌 수 없습니다.</strong>
+    <span class="ja">移行中のため操作できません。</span>
+    <ul id="lock-reasons"></ul>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <div id="state" class="state unknown">확인 중</div>
+        <div id="state-ja" class="ja"></div>
+        <div id="state-desc" class="state-desc"></div>
+      </div>
+      <div>
+        <div class="buttons">
+          <button id="start" class="start">시작 <span class="ja" style="display:inline;color:inherit">開始</span></button>
+          <button id="stop" class="stop">멈춤 <span class="ja" style="display:inline">停止</span></button>
+        </div>
+        <div id="button-note" class="button-note"></div>
+      </div>
+    </div>
+    <div class="metrics">
+      <div class="metric"><div class="label">실제 저장 속도 · 保存速度</div>
+        <div class="value" id="speed">—</div><div class="hint">최근 10초 동안 저장이 확인된 요청</div></div>
+      <div class="metric"><div class="label">저장 확인 (누적) · 保存確認</div>
+        <div class="value" id="committed">—</div><div class="hint">DB 에 실제로 들어간 것까지 확인한 요청</div></div>
+      <div class="metric"><div class="label">처리 중 · 処理中</div>
+        <div class="value" id="pending">—</div><div class="hint">보냈지만 아직 저장 확인 전</div></div>
+      <div class="metric"><div class="label">실패 (누적) · 失敗</div>
+        <div class="value" id="failed">—</div><div class="hint">재시도해도 저장되지 않은 요청</div></div>
+    </div>
+  </section>
+
+  <div class="explain">
+    <div><h3>멈춤은 무엇을 멈추나요?</h3>
+      <p>새 요청만 멈춥니다. 이미 보낸 요청은 끝까지 저장을 확인합니다. 그래서 멈춰도 잃는 요청이 없습니다.</p></div>
+    <div><h3>왜 끄고 켜나요?</h3>
+      <p>평소에는 꺼 두어 DB 가 쓸데없이 커지지 않게 하고, 시연 때 켜서 이전 중에도 요청이 끊기지 않는지 보여 줍니다.</p></div>
+    <div><h3>안전장치</h3>
+      <p>DB 이전(전환)이 진행 중이면 버튼을 잠급니다. 전환 도구가 요청 흐름을 다루는 동안 사람이 끼어들지 않게 하려는 것입니다.</p></div>
+  </div>
+
+  <details>
+    <summary>운영자 전용 · オペレーター専用</summary>
+    <div class="key">
+      <label for="operator-key">운영자 키</label>
+      <input id="operator-key" type="password" autocomplete="off"
+        placeholder="이 탭에만 저장되고 전송되지 않습니다 (서명에만 사용)">
+      <button id="forget-key">지우기</button>
+    </div>
+    <p class="section-title">최근 명령</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>시각</th><th>명령</th><th>결과</th></tr></thead>
+        <tbody id="commands"><tr><td colspan="3">없음</td></tr></tbody>
+      </table>
+    </div>
+  </details>
+</main>
+<script src="/hmac.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

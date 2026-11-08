@@ -10,7 +10,7 @@ import psycopg
 import pytest
 import yaml
 from conftest import integration_dsn, requires_pg
-from test_cutover import FakeConnect, FakeDb, FakeVerify, FakeWorker, _build
+from test_cutover import FakeConnect, FakeDb, FakeVerify, FakeBot, FakeIngress, _build
 
 from migration import init_db
 from migration.cdc import load_connector_template_pair, template_variables
@@ -25,37 +25,27 @@ SOURCE, TARGET = "aws", "onprem_return"
 SOURCE_CONNECTOR, SINK_CONNECTOR = "return_001-source", "return_001-sink"
 
 
-class ReturnWorker(FakeWorker):
-    """FakeWorker 의 identity 는 정방향 DB 이름 고정이라, 귀환 대상 DB 에 붙은 것으로 바꾼다."""
-
-    def switch_target(self, target, phase=None):
-        super().switch_target(target, phase)
-        self.last_switch = {"identity": {"database": "migration_demo_return"}}
-        return self.status()
-
-
-def _worker(cls=ReturnWorker) -> FakeWorker:
-    worker = cls(SOURCE)
-    worker.phase = "aws_live"
-    worker.known_targets = [SOURCE, TARGET]
-    return worker
+def _bot():
+    return FakeBot()
 
 
 @pytest.fixture
 def return_config() -> Config:
     raw = yaml.safe_load((ROOT / "config.return.example.yaml").read_text(encoding="utf-8"))
     raw["cutover"] = {"poll_interval_seconds": 0, "stage_timeout_seconds": 5, "offset_stable_seconds": 0,
-                      "min_live_rows_after_snapshot": 3, "min_rows_after_switch": 2}
+                      "min_live_rows_after_snapshot": 100, "min_rows_after_switch": 100}
+    raw["bot"] = {"control_url": "http://bot:9091", "request_endpoint": "http://ingress/api/requests"}
+    raw["ingress"] = {"control_url": "http://ingress:9092", "targets": {SOURCE: "aws_db", TARGET: "onprem"}}
     return parse_config(raw)
 
 
 @pytest.fixture
 def fakes() -> dict:
     db = FakeDb()
-    db.rows = {SOURCE: 1060, TARGET: 0}
-    db.seed = {SOURCE: 1000, TARGET: 0}
+    db.rows = {SOURCE: 800, TARGET: 0}   # 1000건 예산
+    db.seed = {SOURCE: 800, TARGET: 0}
     db.app_insert = {SOURCE: True, TARGET: False}
-    return {"worker": _worker(), "connect": FakeConnect(), "db": db, "verify": FakeVerify()}
+    return {"bot": _bot(), "ingress": FakeIngress("aws_db"), "connect": FakeConnect(), "db": db, "verify": FakeVerify()}
 
 
 def _simulate_replication(fakes) -> None:
@@ -68,31 +58,26 @@ def _simulate_replication(fakes) -> None:
             db.seed[TARGET] = db.seed[SOURCE]
             db.rows[TARGET] = db.rows[SOURCE]
             db.target_rows.add("last-1")
-        worker = fakes["worker"]
-        if target == SOURCE and phase is None and worker.state == "RUNNING" and worker.target == SOURCE:
-            db.rows[SOURCE] += 1
         return orig_count(target, phase)
 
     db.count_rows = count_rows
+    def deliver(count):
+        ing = fakes["ingress"]
+        target = SOURCE if ing.target == "aws_db" else TARGET
+        assert ing.mode == "running" and db.app_insert[target]
+        db.rows[target] += count
+    fakes["bot"].on_batch = deliver
 
 
-def _grow_target_commits(fakes) -> None:
-    """전환 후 워커가 온프렘에 커밋하는 것을 흉내: status 조회마다 1건 증가."""
-    worker = fakes["worker"]
-    orig_status = worker.status
-
-    def status():
-        if worker.target == TARGET and worker.state == "RUNNING":
-            worker.committed[TARGET] += 1
-        return orig_status()
-
-    worker.status = status
+def _grow_target_commits(fakes):
+    pass
 
 
 def _run_to_failure(config, state_dir, fakes, match: str) -> Cutover:
     _simulate_replication(fakes)
     _grow_target_commits(fakes)
     cut = _build(config, state_dir, fakes, approve="return-approval")
+    fakes["_cut"] = cut  # 실패 주입 헬퍼가 현재 단계를 볼 수 있게 둔다
     with pytest.raises(CutoverError, match=match):
         cut.run()
     return cut
@@ -153,11 +138,10 @@ def test_real_precheck_accepts_rds_replication_member(state_dir, monkeypatch):
             assert conn.execute("SELECT rolreplication, pg_has_role('migration_cdc', 'rds_replication', 'MEMBER') "
                                 "FROM pg_roles WHERE rolname = 'migration_cdc'").fetchone() == (False, True)
 
-        ports = Ports(worker=_worker(), connect=FakeConnect(), db=PgAdminPort(cfg), verify=FakeVerify())
-        cut = Cutover(cfg, CutoverStore(state_dir), ports, connector_docs={})
-        cut.stage_precheck()
-        assert cut.job.stage == COPYING
-        assert cut.job.checkpoint["precheck"]["source"]["cdc_replication"] is True
+        # 상태 머신 PRECHECK 는 봇·접수큐·1000건 예산(seed 800)까지 요구하므로 여기서는 SQL 판정만 본다.
+        # 게이트 자체는 test_precheck_gate_follows_cdc_replication_result 가 가짜 포트로 확인한다.
+        ports = Ports(bot=_bot(), connect=FakeConnect(), db=PgAdminPort(cfg), verify=FakeVerify())
+        assert ports.db.precheck(SOURCE, is_source=True)["cdc_replication"] is True
 
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("REVOKE rds_replication FROM migration_cdc")
@@ -213,35 +197,46 @@ def test_fence_and_switch_follow_return_direction(return_config, state_dir, fake
     _grow_target_commits(fakes)
     cut = _build(return_config, state_dir, fakes, approve="return-approval")
     assert cut.run() == COMPLETED
-    worker, db = fakes["worker"], fakes["db"]
+    bot, db = fakes["bot"], fakes["db"]
     assert db.calls == ["prepare", f"revoke:{SOURCE}", f"grant:{TARGET}", f"drop_slot:{SOURCE}"]
-    assert worker.calls == ["pause", "drain", f"switch:{TARGET}", "resume"]
-    assert worker.target == TARGET and worker.phase == "onprem_return_live"
+    assert [n for enabled, n in bot.calls if enabled] == [100, 200]
+    assert fakes["ingress"].target == "onprem" and bot.generation == "stopped"
     assert db.app_insert == {SOURCE: False, TARGET: True}
 
 
 # ---- d) SWITCHING 이후 실패: 낡은 AWS 로 자동 원복하지 않는다 ---------------------------------
 
 
-def _fail_wrong_database(fakes) -> None:
-    """FakeWorker 그대로면 옛 온프렘 DB(migration_demo)에 붙은 것으로 보고된다."""
-    fakes["worker"] = _worker(FakeWorker)
+def _fail_wrong_database(fakes):
+    fakes["ingress"].check_app = lambda target: {"ok": target == SOURCE}
 
 
-def _fail_worker_target(fakes) -> None:
-    def switch_target(target, phase=None):
-        raise RuntimeError("worker /target 실패")
-
-    fakes["worker"].switch_target = switch_target
+def _fail_bot_target(fakes):
+    def fail(*args):
+        raise RuntimeError("ingress /target 실패")
+    fakes["ingress"].set_target = fail
 
 
 def _fail_final_verify(fakes) -> None:
-    fakes["verify"].results = [True, True, True, False]
+    """전환 후 건수 확인(VERIFYING)에서 대상 delta 가 한 번 모자란다. 재시도(force-retry)에서는 맞는다."""
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+    state = {"failed": False}
+
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == TARGET and upto is None and not state["failed"] and fakes.get("_cut") is not None \
+                and fakes["_cut"].job.stage == VERIFYING:
+            state["failed"] = True
+            return n - 101  # 봇 100건을 넣어도 1건 부족
+        return n
+
+    db.count_rows_in_scope = count_rows_in_scope
 
 
 @pytest.mark.parametrize(("arrange", "failed_stage"), [
     (_fail_wrong_database, SWITCHING),
-    (_fail_worker_target, SWITCHING),
+    (_fail_bot_target, SWITCHING),
     (_fail_final_verify, VERIFYING),
 ])
 def test_failure_after_switching_never_reopens_aws(return_config, state_dir, fakes, arrange, failed_stage):
@@ -277,7 +272,18 @@ def _fail_fence(fakes) -> None:
 
 
 def _fail_pre_verify(fakes) -> None:
-    fakes["verify"].results = [False]
+    """SYNC_CONFIRMED 첫 건수 확인(pre-stop)에서 기준점 이전 건수가 어긋난다."""
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == TARGET and upto is not None and fakes.get("_cut") is not None \
+                and fakes["_cut"].job.stage == SYNC_CONFIRMED:
+            return n - 1
+        return n
+
+    db.count_rows_in_scope = count_rows_in_scope
 
 
 @pytest.mark.parametrize(("arrange", "failed_stage"), [
@@ -287,15 +293,15 @@ def _fail_pre_verify(fakes) -> None:
 def test_failure_before_switching_aborts_and_rollback_reopens_aws(return_config, state_dir, fakes, arrange, failed_stage):
     arrange(fakes)
     cut = _run_to_failure(return_config, state_dir, fakes, ABORTED)
-    worker, db, connect = fakes["worker"], fakes["db"], fakes["connect"]
+    bot, db, connect = fakes["bot"], fakes["db"], fakes["connect"]
     assert cut.job.stage == ABORTED and cut.job.checkpoint["failed_stage"] == failed_stage
     assert db.app_insert == {SOURCE: False, TARGET: False}
-    assert worker.state == "PAUSED" and f"grant:{TARGET}" not in db.calls
+    assert bot.generation == "stopped" and f"grant:{TARGET}" not in db.calls
 
     out = _build(return_config, state_dir, fakes).abort_rollback()
-    assert out["source_app_insert"] is True and out["worker"] == "RUNNING"
+    assert out["source_app_insert"] is True and out["bot"] == "stopped"
     assert db.app_insert == {SOURCE: True, TARGET: False}
-    assert worker.target == SOURCE and worker.state == "RUNNING"
+    assert fakes["ingress"].target == "aws_db" and bot.generation == "stopped"
     assert connect.connectors == {} and set(connect.deletes) >= {SOURCE_CONNECTOR, SINK_CONNECTOR}
     assert _build(return_config, state_dir, fakes).job.stage == ROLLED_BACK
 

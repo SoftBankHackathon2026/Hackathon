@@ -22,6 +22,7 @@ function run(state: AgentRunState, run_id = `run-${state}`): AgentRun {
     created_at: "2026-11-07T00:00:00Z",
     updated_at: "2026-11-07T00:00:00Z",
     summary: { reason_codes: [], changes: [], diagnosis: null },
+    can_delete: true,
   };
 }
 

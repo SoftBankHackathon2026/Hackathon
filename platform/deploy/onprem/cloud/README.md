@@ -14,7 +14,8 @@
 2. `MIGRATION_CLOUD_CONFIG`의 `job` 절만 그 작업(`job_id`, `source`=`data_source`, `target`=`data_target`)으로 바꾼 `jobs/<job_id>.cloud.yaml`을 만들어요.
 3. 명령을 실행하는 동안 `crosscloud serve-adapter`를 띄워요. 어댑터는 `migration.cloud`의 앱 제어 API(일시정지·비우기·대상 변경·재개·상태 점검)를 온프렘 접수 큐 제어 API 로 바꿔 줘요. 명령이 끝나면 어댑터도 내려요.
 4. 상태는 `/var/lib/worker/cloud/`에 따로 남겨요. 보고할 때 `migration.cloud`의 `STOPPING`·`FAILED`를 플랫폼 단계 `SYNC_CONFIRMED`·`ABORTED`로 바꿔요.
-5. 지원하는 명령은 시작(`run`)·승인(`run --approve`)·재시도(`run --retry`)예요. 중단·강제 재시도는 `migration.cloud`에 없어서 설정 오류(exit 2)로 돌려줘요.
+5. 승인 명령은 바로 실행하지 않아요. 먼저 `crosscloud ingress-status`(읽기 전용)로 접수 큐·대상 앱 상태를 확인하고, 통과하지 못하면 승인하지 않고 그 결과를 플랫폼에 실패로 올려요. `CROSSCLOUD_TARGET_ENVIRONMENT`를 주면 대상 앱 신원도 함께 대조해요.
+6. 지원하는 명령은 시작(`run`)·승인(`run --approve`)·재시도(`run --retry`)예요. 중단·강제 재시도는 `migration.cloud`에 없어서 설정 오류(exit 2)로 돌려줘요.
 
 ## 적용 순서
 
@@ -46,7 +47,10 @@
 ### 5. DB 준비
 `crosscloud prepare-target`(datapath)으로 이전용 계정과 빈 대상 스키마를 만들어요. 원본 RDS 는 `rds_replication`, 대상 Cloud SQL 은 `REPLICATION` 속성을 쓰고, 두 DB 모두 논리 복제가 켜져 있어요(`rds.logical_replication=1`, `cloudsql.logical_decoding=on`). 전환 전 `db_readiness`로 점검해요.
 
-### 6. 작업 만들기와 실행
+### 6. 승인 전에 사람이 할 일
+crosscloud 런북(`crosscloud/deploy/rehearsal/README.md`)처럼, READY 뒤 승인 전에 대상 앱이 대상 DB 를 보도록 바꿔야 해요(`crosscloud prepare-target`: 대상 DB 로그인 생성, 대상 앱 재배포, `/readyz`·`/api/info` 확인). 러너는 이 단계를 자동으로 하지 않아요. 지금 `prepare-target`은 Cloud Run·ECS 재배포만 지원하고 GKE 재배포 경로는 없어서, GKE `sample-app`은 사람이 DB 접속 Secret 을 바꿔 재배포해야 해요. 이 단계가 끝나지 않으면 승인 전 `ingress-status`가 실패해서 승인이 막혀요.
+
+### 7. 작업 만들기와 실행
 ```sh
 POST /api/v1/migrations
 {"source_env": "aws", "target_env": "gcp", "data_source": "aws", "data_target": "gcp"}

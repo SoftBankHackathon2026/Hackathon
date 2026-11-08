@@ -2,7 +2,7 @@ export const UNAUTHORIZED_EVENT = "oneport:unauthorized";
 
 export type RequestOptions = {
   token?: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   body?: unknown;
   headers?: Record<string, string>;
   signal?: AbortSignal;
@@ -37,12 +37,16 @@ async function readJson<T>(response: Response): Promise<T> {
   return body as T;
 }
 
+export const OFFLINE_MESSAGE =
+  "플랫폼 서버에 연결하지 못했어요. 네트워크를 확인하고 다시 불러오세요.";
+
 export async function request<T>(
   path: string,
   { token = "", method, body, headers, signal }: RequestOptions = {},
 ): Promise<T> {
-  return readJson<T>(
-    await fetch(`/api/v1/${path}`, {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1/${path}`, {
       method,
       signal,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -51,8 +55,12 @@ export async function request<T>(
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         ...headers,
       },
-    }),
-  );
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(OFFLINE_MESSAGE);
+  }
+  return readJson<T>(response);
 }
 
 export function errorMessage(error: unknown, fallback: string) {

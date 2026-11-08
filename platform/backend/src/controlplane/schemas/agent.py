@@ -48,6 +48,8 @@ RERUN_STATES: frozenset[str] = frozenset(
         "RESTART_FAILED",
     }
 )
+ACTIVE_STATES: frozenset[str] = frozenset({"CHECKING", "APPLYING", "WAITING_APPROVAL"})
+RUN_DELETE_LIMIT = 200
 CommandKind = Literal["settings", "rerun"]
 
 
@@ -194,10 +196,38 @@ class RunListItem(BaseModel):
     created_at: datetime
     updated_at: datetime
     summary: RunSummary
+    can_delete: bool
 
 
 class RunList(BaseModel):
     runs: list[RunListItem]
+    can_delete: bool
+
+
+RunIdValue = Annotated[str, Field(pattern=RUN_ID_PATTERN)]
+
+
+class RunDeletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_ids: list[RunIdValue] = Field(min_length=1, max_length=RUN_DELETE_LIMIT)
+
+    @field_validator("run_ids")
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("run ids must be unique")
+        return value
+
+
+class SkippedRun(BaseModel):
+    run_id: str
+    reason: str
+
+
+class RunDeletionResult(BaseModel):
+    deleted: list[str]
+    skipped: list[SkippedRun]
 
 
 class PendingApproval(BaseModel):

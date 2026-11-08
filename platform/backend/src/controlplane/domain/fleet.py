@@ -93,12 +93,20 @@ class MigrationConfig(BaseModel):
     apps: list[str] = Field(default_factory=list)
 
 
+class TaskDefaults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_url: str | None = None
+    connect_url: str | None = None
+
+
 class FleetConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["live", "simulated"] = "simulated"
     environments: list[EnvironmentConfig]
     migrations: list[MigrationConfig]
+    task_defaults: TaskDefaults = Field(default_factory=TaskDefaults)
     sample_seconds: int = Field(default=5, ge=1, le=60)
 
     def environment(self, env_id: str) -> EnvironmentConfig:

@@ -123,6 +123,9 @@ class CutoverCommandService:
     def events(self, job_id: str) -> list[MigrationEvent]:
         return command_events(self._store.list(job_id))
 
+    def has_active(self, job_id: str) -> bool:
+        return self._store.active(job_id) is not None
+
     def claim(self, job_id: str) -> CutoverCommand | None:
         self._check_job(job_id)
         return self._store.claim(job_id, self._now())
@@ -142,6 +145,7 @@ class CutoverCommandService:
             data_target=task.data_target,
             source_provider=self._provider(task.source_env, task.source_provider),
             target_provider=self._provider(task.target_env, task.target_provider),
+            apps=list(task.apps),
         )
 
     def _provider(self, env_id: str, given: str | None) -> str | None:
