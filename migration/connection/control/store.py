@@ -31,15 +31,22 @@ class PostgresStore:
             ).fetchone()
             return row["document"] if row else None
 
-    def list(self, team):
+    def list(self, team, *, include_observations=False):
+        query = (
+            "SELECT document, observation FROM connection_requests"
+            if include_observations
+            else "SELECT document FROM connection_requests"
+        )
         with self.connect() as conn:
-            return [
-                row["document"]
-                for row in conn.execute(
-                    "SELECT document FROM connection_requests WHERE team=%s ORDER BY created_at DESC LIMIT 100",
-                    (team,),
-                ).fetchall()
-            ]
+            rows = conn.execute(
+                query + " WHERE team=%s ORDER BY created_at DESC LIMIT 100", (team,)
+            ).fetchall()
+        return [
+            {**row["document"], "observation": row["observation"]}
+            if include_observations
+            else row["document"]
+            for row in rows
+        ]
 
     @contextmanager
     def locked(self, request_id):
@@ -65,10 +72,17 @@ class PostgresStore:
                 # Expected rejections may consume a nonce or count an approval failure.
                 error = caught
             for request_id, row in rows.items():
-                conn.execute(
-                    "UPDATE connection_requests SET document=%s WHERE id=%s",
-                    (Jsonb(row), request_id),
-                )
+                if "observation" in row:
+                    latest = row.pop("observation")
+                    conn.execute(
+                        "UPDATE connection_requests SET document=%s, observation=%s WHERE id=%s",
+                        (Jsonb(row), Jsonb(latest), request_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE connection_requests SET document=%s WHERE id=%s",
+                        (Jsonb(row), request_id),
+                    )
         if error:
             raise error
 
@@ -78,6 +92,7 @@ class MemoryStore:
 
     def __init__(self):
         self.rows = {}
+        self.observations = {}
         self.mutex = threading.RLock()
 
     def create(self, row):
@@ -99,9 +114,23 @@ class MemoryStore:
         with self.mutex:
             return deepcopy(self.rows.get(request_id))
 
-    def list(self, team):
+    def list(self, team, *, include_observations=False):
         with self.mutex:
-            return deepcopy([row for row in self.rows.values() if row["team"] == team])
+            return deepcopy(
+                [
+                    {**row, "observation": self.observations.get(row["id"])}
+                    if include_observations
+                    else row
+                    for row in self.rows.values()
+                    if row["team"] == team
+                ]
+            )
+
+    def _save(self, rows):
+        for request_id, row in rows.items():
+            if "observation" in row:
+                self.observations[request_id] = row.pop("observation")
+        self.rows.update(rows)
 
     @contextmanager
     def locked(self, request_id):
@@ -120,7 +149,7 @@ class MemoryStore:
             try:
                 yield rows
             except ConnectionError:
-                self.rows.update(rows)
+                self._save(rows)
                 raise
             else:
-                self.rows.update(rows)
+                self._save(rows)

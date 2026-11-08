@@ -117,6 +117,9 @@ export type FleetEnvironment = {
   cluster?: ClusterInfo | null;
   registered?: boolean;
   project?: string | null;
+  observation_state?:
+    "registered" | "current" | "partial" | "stale" | "unavailable";
+  observed_namespaces?: string[];
 };
 /** CPU 는 밀리코어, 메모리는 바이트. */
 export type ClusterResources = { cpu_millicores: number; memory_bytes: number };
