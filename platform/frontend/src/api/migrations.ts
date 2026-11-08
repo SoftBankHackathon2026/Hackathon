@@ -102,7 +102,7 @@ export type EnvIssue = {
 export type FleetEnvironment = {
   id: string;
   name: string;
-  kind: "k3s" | "eks" | "gke";
+  kind: "k3s" | "eks" | "gke" | "kubernetes";
   provider: "onprem" | "aws" | "gcp";
   region: string;
   role: "legacy" | "target";
@@ -115,6 +115,8 @@ export type FleetEnvironment = {
   boundary?: string[];
   /** 클러스터 버전, 노드, 자원 합계. 연결이 끊겼거나 백엔드가 아직 보내지 않으면 null/undefined. */
   cluster?: ClusterInfo | null;
+  registered?: boolean;
+  project?: string | null;
 };
 /** CPU 는 밀리코어, 메모리는 바이트. */
 export type ClusterResources = { cpu_millicores: number; memory_bytes: number };

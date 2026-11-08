@@ -12,8 +12,7 @@ import { fleetQueryOptions } from "../migrations/queries";
 import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
 import { clusterRailRows } from "./clusterModel";
-import { envRailRows } from "./model";
-import { RegisteredConnections } from "./RegisteredConnections";
+import { envRailRows, registeredRailRow } from "./model";
 
 function useViewportHeight() {
   const [height, setHeight] = useState(() => window.innerHeight);
@@ -51,7 +50,6 @@ export function EnvironmentsPage({
         tabs={[{ id: "architecture", label: "아키텍처" }]}
         active="architecture"
       />
-      <RegisteredConnections />
       <ScopeFilterRow>
         <FilterSelect
           label="환경"
@@ -76,6 +74,7 @@ export function EnvironmentsPage({
                     title: undefined as string | undefined,
                   })),
                   ...clusterRailRows(env),
+                  ...[registeredRailRow(env)].filter((row) => row !== null),
                 ].map((row) => {
                   const body = row.tone ? (
                     <StatusDot tone={row.tone}>{row.value}</StatusDot>

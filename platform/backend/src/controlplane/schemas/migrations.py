@@ -113,7 +113,7 @@ class ClusterView(BaseModel):
 class EnvironmentView(BaseModel):
     id: str
     name: str
-    kind: Literal["k3s", "eks", "gke"]
+    kind: Literal["k3s", "eks", "gke", "kubernetes"]
     provider: Literal["onprem", "aws", "gcp"]
     region: str
     role: Literal["legacy", "target"]
@@ -125,6 +125,8 @@ class EnvironmentView(BaseModel):
     boundary: list[str] = Field(default_factory=list)
     issues: list[EnvironmentIssue] = Field(default_factory=list)
     cluster: ClusterView | None = None
+    registered: bool = False
+    project: str | None = None
 
 
 class WriteCounts(BaseModel):

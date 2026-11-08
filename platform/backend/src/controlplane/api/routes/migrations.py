@@ -37,13 +37,19 @@ from controlplane.schemas.migrations import (
 )
 from controlplane.schemas.security import SecurityPosture
 from controlplane.services.data_mapping import DataMappingService
+from controlplane.services.registered_environments import registered_environments
 
 router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
 
 @router.get("/fleet")
-def fleet(service: FleetDep, identity: ViewerIdentity) -> Fleet:
-    return service.get_fleet()
+def fleet(service: FleetDep, identity: ViewerIdentity, container: ContainerDep) -> Fleet:
+    view = service.get_fleet()
+    known = {env.id for env in view.environments}
+    for env in registered_environments(container.connections, container.auth_mode, identity):
+        if env.id not in known:
+            view.environments.append(env)
+    return view
 
 
 @router.get("/fleet/environments/{env_id}/components/{component_id}/pods/{pod}/logs")
