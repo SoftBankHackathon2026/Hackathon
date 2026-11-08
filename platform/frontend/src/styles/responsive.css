@@ -13,17 +13,6 @@
   min-width: 0;
   max-width: 100%;
 }
-.registered-connections .pk-table {
-  min-width: 560px;
-  table-layout: fixed;
-}
-.registered-connections .pk-table th:nth-child(-n + 2) {
-  width: 30%;
-}
-.registered-connections .pk-table td {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .pk-title-row h1,
 .pk-section-meta,
 .pk-header-meta {

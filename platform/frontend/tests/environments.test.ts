@@ -17,6 +17,7 @@ import {
   groupByLayer,
   kindLabel,
   nodeDetail,
+  registeredRailRow,
 } from "../src/features/environments/model.ts";
 
 function component(
@@ -186,6 +187,26 @@ test("envRailRows summarizes an environment in six plain rows", () => {
   assert.equal(rows[3].value, "1");
   assert.equal(rows[4].value, "PostgreSQL, Kafka");
   assert.equal(rows[5].value, "방금");
+});
+
+test("registeredRailRow links a registered environment back to its connection", () => {
+  const env = {
+    id: "connected-abc_DEF-123",
+    kind: "kubernetes",
+    registered: true,
+    project: "billing",
+  } as unknown as FleetEnvironment;
+  assert.deepEqual(registeredRailRow(env), {
+    label: "출처",
+    value: "직접 등록, billing",
+    href: "#prepare/abc_DEF-123",
+    title: "등록할 때 수집한 정보예요. 준비 화면에서 연결 상태를 볼 수 있어요.",
+  });
+  assert.equal(
+    registeredRailRow({ ...env, project: null })?.value,
+    "직접 등록",
+  );
+  assert.equal(registeredRailRow({ ...env, registered: false }), null);
 });
 
 test("componentRows flattens environments and filterComponentRows narrows by env and text", () => {
