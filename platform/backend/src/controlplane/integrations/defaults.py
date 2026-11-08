@@ -1,4 +1,5 @@
 from controlplane.domain.fleet import (
+    CloudScope,
     ComponentConfig,
     DeclaredFacts,
     EnvironmentConfig,
@@ -386,6 +387,7 @@ AWS = EnvironmentConfig(
         waf=False,
         policy_gates=True,
     ),
+    cloud_scope=CloudScope(cluster="oneaction", databases=["oneaction-review-db"]),
 )
 
 GCP = EnvironmentConfig(
@@ -418,6 +420,12 @@ GCP = EnvironmentConfig(
         ingress_tls=False,
         waf=False,
         policy_gates=True,
+    ),
+    cloud_scope=CloudScope(
+        cluster="oneaction-dev",
+        cluster_location="asia-northeast3",
+        project="ghost-project-513812",
+        databases=["oneaction-dev-review"],
     ),
 )
 

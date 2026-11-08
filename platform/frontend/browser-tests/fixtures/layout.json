@@ -962,17 +962,23 @@
           "onprem": {
             "status": "pass",
             "detail": "hackathon: default-deny 포함 NetworkPolicy 6개",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -996,17 +1002,23 @@
           "onprem": {
             "status": "pass",
             "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB가 사설망에서만 접근 가능 (oneaction-review-db PubliclyAccessible=False)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB가 사설망에서만 접근 가능 (oneaction-dev-review 공인 IP 꺼짐)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1023,17 +1035,23 @@
           "onprem": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["Cloud Load Balancing"]
+            "resources": ["Cloud Load Balancing"],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1050,17 +1068,23 @@
           "onprem": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["Cloud Load Balancing"]
+            "resources": ["Cloud Load Balancing"],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1083,17 +1107,23 @@
           "onprem": {
             "status": "pass",
             "detail": "앱 워크로드 4개 모두 runAsNonRoot 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1115,17 +1145,23 @@
           "onprem": {
             "status": "fail",
             "detail": "readOnlyRootFilesystem 미적용: kafka-broker, postgres",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1147,17 +1183,23 @@
           "onprem": {
             "status": "pass",
             "detail": "앱 워크로드 4개 모두 drop ALL 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1179,17 +1221,23 @@
           "onprem": {
             "status": "pass",
             "detail": "privileged 컨테이너 없음",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1206,17 +1254,23 @@
           "onprem": {
             "status": "fail",
             "detail": "digest 미고정 이미지 4/4개",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1238,17 +1292,23 @@
           "onprem": {
             "status": "fail",
             "detail": "hackathon: Pod Security Admission enforce 라벨 없음",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1270,17 +1330,23 @@
           "onprem": {
             "status": "fail",
             "detail": "와일드카드 권한 바인딩: hackathon/argocd-hackathon-deployer, hackathon/hackathon-full-access",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1302,17 +1368,23 @@
           "onprem": {
             "status": "pass",
             "detail": "Argo CD admin/익명 접근 비활성",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "Argo CD 설정을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "Argo CD 설정을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1329,17 +1401,23 @@
           "onprem": {
             "status": "fail",
             "detail": "정적 토큰/키로 권한 부여",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "워크로드 ID로 클라우드 권한 위임",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "워크로드 ID로 클라우드 권한 위임",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1361,17 +1439,23 @@
           "onprem": {
             "status": "pass",
             "detail": "DB가 TLS 연결만 허용",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB가 TLS 연결만 허용",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB가 TLS 연결만 허용 (oneaction-review-db oneaction-postgres16 rds.force_ssl=1)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB가 TLS 연결만 허용",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB가 TLS 연결만 허용 (oneaction-dev-review sslMode=ENCRYPTED_ONLY)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1388,17 +1472,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB 스토리지 암호화",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB 스토리지 암호화 (oneaction-review-db StorageEncrypted=True)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB 스토리지 암호화",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB 스토리지 암호화 (기본 암호화: oneaction-dev-review Google 관리 키)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1415,17 +1505,23 @@
           "onprem": {
             "status": "not_applicable",
             "detail": "이 환경에는 DB가 없어요.",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB 백업 구성됨",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB 백업 구성됨 (oneaction-review-db 백업 보존 7일)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB 백업 구성됨",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB 백업 구성됨 (oneaction-dev-review 자동 백업 켜짐)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1442,17 +1538,23 @@
           "onprem": {
             "status": "fail",
             "detail": "Secret을 스크립트로 직접 생성 (외부 비밀 저장소 미사용)",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "ExternalSecret 1개로 비밀값 동기화",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "ExternalSecret 1개로 비밀값 동기화",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1473,17 +1575,23 @@
           "onprem": {
             "status": "fail",
             "detail": "위협 탐지 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
-            "detail": "위협 탐지 없음",
-            "resources": []
+            "detail": "위협 탐지 없음 (ap-northeast-2 에 GuardDuty 디텍터 없음)",
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "위협 탐지 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": "권한 없음: securitycentermanagement.securityCenterServices.get (HTTP 403)"
           }
         }
       },
@@ -1500,17 +1608,23 @@
           "onprem": {
             "status": "fail",
             "detail": "posture 집계 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "manual",
             "detail": "Security Hub 콘솔 증빙으로 확인해요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "posture 집계 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1534,17 +1648,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "감사 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "감사 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1566,17 +1686,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "흐름 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": "권한 없음: eks:DescribeCluster, ec2:DescribeFlowLogs"
           },
           "gcp": {
             "status": "pass",
-            "detail": "흐름 로그 수집",
-            "resources": []
+            "detail": "흐름 로그 수집 (oneaction-dev 서브넷 gke-subnet 흐름 로그 켜짐)",
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1598,17 +1724,23 @@
           "onprem": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1625,17 +1757,23 @@
           "onprem": {
             "status": "pass",
             "detail": "hackathon: ResourceQuota 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1652,17 +1790,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "온프렘 사이트 'seoul-local'는 클라우드 리전 코드가 아니어서 데이터가 일본에 있는지 판단할 수 없어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
             "detail": "일본 밖 리전: EKS 클러스터(ap-northeast-2), RDS oneaction-review-db(ap-northeast-2), MSK oneaction-review(ap-northeast-2), S3 oneaction-review-docs(ap-northeast-2)",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "일본 밖 리전: GKE 클러스터(asia-northeast3), Cloud SQL oneaction-dev-review(asia-northeast3), Managed Kafka oneaction-dev-review(asia-northeast3), Cloud Storage oneaction-dev-review(asia-northeast3)",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1679,17 +1823,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "컨트롤플레인 버전을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "컨트롤플레인 버전을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "컨트롤플레인 버전을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       }

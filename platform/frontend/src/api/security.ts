@@ -33,10 +33,15 @@ export type EnvironmentScore = {
   manual?: number;
   by_severity: Record<Severity, number>;
 };
+/** observed: 클러스터·클라우드 API 에서 읽음, declared: fleet.json 신고값 */
+export type ResultSource = "observed" | "declared";
 export type ControlResult = {
   status: ControlStatus;
   detail: string;
   resources?: string[];
+  source?: ResultSource | null;
+  /** 실측을 못 해 신고값을 쓰거나 판단하지 못한 이유 */
+  fallback_reason?: string | null;
 };
 export type Control = {
   id: string;

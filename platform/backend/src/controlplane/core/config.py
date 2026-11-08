@@ -103,6 +103,8 @@ class SecuritySettings(BaseSettings):
     # 다음 갱신: EKS 1.35 표준 지원 종료일 전. 위 EKS 달력에서 날짜를 확인해 올린다.
     k8s_min_minor: str = Field(default="1.35", pattern=r"^\d+\.\d+$")
     k8s_max_node_skew: int = Field(default=1, ge=0, le=3)
+    # 클라우드 API 보안 실측 주기(초). 설정은 자주 바뀌지 않고 API 호출 수가 있어 비용 수집과 같은 5분.
+    cloud_interval_seconds: int = Field(default=300, ge=60, le=86400)
 
     @field_validator("japan_regions", mode="before")
     @classmethod

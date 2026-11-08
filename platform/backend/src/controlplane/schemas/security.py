@@ -40,10 +40,17 @@ class EnvironmentPosture(BaseModel):
     by_severity: SeverityCounts
 
 
+# observed: 클러스터·클라우드 API 에서 읽은 값 / declared: fleet.json 신고값(설정)
+ResultSource = Literal["observed", "declared"]
+
+
 class ControlResult(BaseModel):
     status: ControlStatus
     detail: str
     resources: list[str] = Field(default_factory=list)
+    source: ResultSource | None = None
+    # 실측을 시도했지만 실패해 신고값을 쓰거나 판단하지 못한 이유(권한 없음, 시간 초과 등)
+    fallback_reason: str | None = None
 
 
 class ControlView(BaseModel):

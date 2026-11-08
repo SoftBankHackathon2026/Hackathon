@@ -8,6 +8,8 @@ import { impactPath } from "./pathModel";
 import {
   CATEGORY_LABELS,
   SEVERITY_LABELS,
+  SOURCE_HELP,
+  SOURCE_LABELS,
   STATUS_LABELS,
   standardId,
 } from "./posture";
@@ -111,6 +113,14 @@ export function FindingPanel({
               <div className="fp-env-head">
                 <ProviderLogo provider={fleetEnv?.provider} />
                 <span className="fp-env-name">{env.name}</span>
+                {result?.source && (
+                  <span
+                    className={`fp-source source-${result.source}`}
+                    title={SOURCE_HELP[result.source]}
+                  >
+                    {SOURCE_LABELS[result.source]}
+                  </span>
+                )}
                 {result ? (
                   <span
                     className={`pk-label tone-${STATUS_DOT[result.status]}`}
@@ -123,6 +133,11 @@ export function FindingPanel({
               </div>
               {result?.detail && (
                 <p className="fp-env-detail">{result.detail}</p>
+              )}
+              {result?.fallback_reason && (
+                <p className="fp-env-detail fp-fallback">
+                  실측 못 함: {result.fallback_reason}
+                </p>
               )}
               {(result?.resources?.length ?? 0) > 0 && (
                 <ul className="fp-resources" aria-label="영향 리소스">

@@ -1,8 +1,10 @@
 import math
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from controlplane.domain.cloud_security import CloudSecurityReader, Observation
 from controlplane.domain.fleet import (
     ClusterFacts,
     CutoverRecord,
@@ -15,6 +17,10 @@ from controlplane.domain.fleet import (
     Workload,
 )
 from controlplane.domain.migration import Stage
+from controlplane.integrations.cloud_security import (
+    StaticCloudSecurityReader,
+    collect_cloud_security,
+)
 from controlplane.schemas.migrations import (
     AppState,
     ConnectorView,
@@ -174,13 +180,50 @@ RETURN_EVIDENCE = {
 }
 
 
+# 시뮬레이션용 보안 실측. 실측 성공, 권한 부족 폴백 경로가 모두 화면에 보이게 고른 값이다.
+SIMULATED_CLOUD: dict[str, dict[str, Observation]] = {
+    "aws": {
+        "db_public": Observation.seen(False, "oneaction-review-db PubliclyAccessible=False"),
+        "db_tls_required": Observation.seen(
+            True, "oneaction-review-db oneaction-postgres16 rds.force_ssl=1"
+        ),
+        "db_encrypted_at_rest": Observation.seen(True, "oneaction-review-db StorageEncrypted=True"),
+        "db_backups": Observation.seen(True, "oneaction-review-db 백업 보존 7일"),
+        "threat_detection": Observation.seen(False, "ap-northeast-2 에 GuardDuty 디텍터 없음"),
+        "flow_logs": Observation.failed("denied", "eks:DescribeCluster, ec2:DescribeFlowLogs"),
+    },
+    "gcp": {
+        "db_public": Observation.seen(False, "oneaction-dev-review 공인 IP 꺼짐"),
+        "db_tls_required": Observation.seen(True, "oneaction-dev-review sslMode=ENCRYPTED_ONLY"),
+        "db_encrypted_at_rest": Observation.seen(
+            True, "기본 암호화: oneaction-dev-review Google 관리 키"
+        ),
+        "db_backups": Observation.seen(True, "oneaction-dev-review 자동 백업 켜짐"),
+        "threat_detection": Observation.failed(
+            "denied", "securitycentermanagement.securityCenterServices.get (HTTP 403)"
+        ),
+        "flow_logs": Observation.seen(True, "oneaction-dev 서브넷 gke-subnet 흐름 로그 켜짐"),
+    },
+}
+SIMULATED_READERS: dict[str, CloudSecurityReader] = {
+    provider: StaticCloudSecurityReader(facts, provider)
+    for provider, facts in SIMULATED_CLOUD.items()
+}
+
+
 class SimulatedFleet:
     mode = "simulated"
 
     def __init__(
-        self, config: FleetConfig, *, anchor: datetime | None = None, clock=time.time
+        self,
+        config: FleetConfig,
+        *,
+        anchor: datetime | None = None,
+        clock=time.time,
+        cloud_readers: Mapping[str, CloudSecurityReader] = SIMULATED_READERS,
     ) -> None:
         self._config = config
+        self._cloud_readers = cloud_readers
         self._clock = clock
         now = datetime.fromtimestamp(clock(), UTC)
         self._anchor = anchor or now - timedelta(seconds=HISTORY_SECONDS)
@@ -311,7 +354,11 @@ class SimulatedFleet:
     def list_environments(self) -> list[EnvironmentSnapshot]:
         observed = self._now()
         return [
-            EnvironmentSnapshot(config=env, cluster=_simulated_cluster(env, observed))
+            EnvironmentSnapshot(
+                config=env,
+                cluster=_simulated_cluster(env, observed),
+                cloud=collect_cloud_security(env, self._cloud_readers, now=self._now),
+            )
             for env in self._config.environments
         ]
 

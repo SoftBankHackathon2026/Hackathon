@@ -2,6 +2,7 @@ import type {
   Category,
   Control,
   ControlStatus,
+  ResultSource,
   Severity,
 } from "../../api/security.ts";
 import type { CardLine } from "../../components/SignalCard.tsx";
@@ -42,6 +43,16 @@ export const STATUS_LABELS: Record<ControlStatus, string> = {
   unknown: "미확인",
   not_applicable: "해당 없음",
   manual: "수동 확인",
+};
+
+export const SOURCE_LABELS: Record<ResultSource, string> = {
+  observed: "관측",
+  declared: "신고",
+};
+
+export const SOURCE_HELP: Record<ResultSource, string> = {
+  observed: "클러스터나 클라우드 API에서 직접 읽은 값이에요.",
+  declared: "fleet.json에 운영자가 적어 둔 값이에요.",
 };
 
 /** 고객 측 기술 통제만 보는 표준(ISMAP 등)은 "준수율" 대신 이 이름으로 보여 준다. */

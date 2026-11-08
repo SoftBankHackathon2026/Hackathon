@@ -4,10 +4,17 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from controlplane.domain.cloud_security import Observation
 from controlplane.domain.compliance_mappings import ISMAP, ISMS_CLOUD
 from controlplane.domain.fleet import EnvironmentSnapshot, Workload
 from controlplane.schemas.migrations import ComponentView
-from controlplane.schemas.security import Category, ControlResult, Severity, Standard
+from controlplane.schemas.security import (
+    Category,
+    ControlResult,
+    ResultSource,
+    Severity,
+    Standard,
+)
 
 STANDARDS = [
     Standard(id="CIS-K8S", name="CIS Kubernetes Benchmark v1.10"),
@@ -61,6 +68,8 @@ class Control:
     targets: tuple[str, ...] = ()
     # True 면 check 가 (snapshot, policy) 를 받는다.
     uses_policy: bool = False
+    # check 가 출처를 정하지 않은 pass/fail 결과의 출처. 대부분 클러스터에서 읽은 값이다.
+    source: ResultSource = "observed"
 
 
 def passed(detail: str) -> ControlResult:
@@ -82,7 +91,51 @@ def not_applicable(detail: str) -> ControlResult:
 def declared(value: bool | None, yes: str, no: str) -> ControlResult:
     if value is None:
         return unknown("인프라 설정에서 확인할 수 없어요.")
-    return passed(yes) if value else failed(no)
+    result = passed(yes) if value else failed(no)
+    return result.model_copy(update={"source": "declared"})
+
+
+def _fallback_reason(snapshot: EnvironmentSnapshot, observation: Observation | None) -> str | None:
+    """실측하지 못한 이유. 온프렘은 원래 신고값을 쓰므로 이유가 없다."""
+    if snapshot.config.provider == "onprem":
+        return None
+    if snapshot.cloud is None:
+        return "실측 결과 없음(수집기가 아직 읽지 않았어요)"
+    if observation is None:
+        return "실측 결과에 이 항목이 없어요"
+    return observation.reason()
+
+
+def _measured(attribute: str, yes: str, no: str, *, true_is_bad: bool = False) -> Check:
+    """실측값이 있으면 실측, 없거나 실패하면 신고값. 둘 다 없으면 unknown + 이유."""
+
+    def check(snapshot: EnvironmentSnapshot) -> ControlResult:
+        observation = snapshot.cloud.get(attribute) if snapshot.cloud else None
+        if observation is not None and observation.value is not None:
+            good = observation.value != true_is_bad
+            label = yes if good else no
+            detail = f"{label} ({observation.evidence})" if observation.evidence else label
+            return ControlResult(
+                status="pass" if good else "fail", detail=detail, source="observed"
+            )
+        reason = _fallback_reason(snapshot, observation)
+        value = getattr(snapshot.config.declared, attribute)
+        if value is None:
+            detail = (
+                f"실측하지 못했고 신고값도 없어요 ({reason})"
+                if reason
+                else "인프라 설정에서 확인할 수 없어요."
+            )
+            return ControlResult(status="unknown", detail=detail, fallback_reason=reason)
+        good = value != true_is_bad
+        return ControlResult(
+            status="pass" if good else "fail",
+            detail=yes if good else no,
+            source="declared",
+            fallback_reason=reason,
+        )
+
+    return check
 
 
 def _app_workloads(snapshot: EnvironmentSnapshot) -> list[Workload]:
@@ -224,9 +277,13 @@ def _japan_region(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -> Cont
         f"{name}({region})" for name, region in located if region not in policy.japan_regions
     ]
     if outside:
-        return failed(f"일본 밖 리전: {', '.join(outside)}")
+        return failed(f"일본 밖 리전: {', '.join(outside)}").model_copy(
+            update={"source": "declared"}
+        )
     regions = sorted({region for _, region in located})
-    return passed(f"클러스터와 데이터 서비스 {len(located)}개 모두 일본 리전({', '.join(regions)})")
+    return passed(
+        f"클러스터와 데이터 서비스 {len(located)}개 모두 일본 리전({', '.join(regions)})"
+    ).model_copy(update={"source": "declared"})
 
 
 def _minor(version: str | None) -> tuple[int, int] | None:
@@ -265,15 +322,6 @@ def _supported_versions(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -
     )
 
 
-def _db_private(snapshot: EnvironmentSnapshot) -> ControlResult:
-    public = snapshot.config.declared.db_public
-    if public is None:
-        return unknown("인프라 설정에서 확인할 수 없어요.")
-    return (
-        failed("DB가 공개 엔드포인트로 노출됨") if public else passed("DB가 사설망에서만 접근 가능")
-    )
-
-
 CONTROLS: tuple[Control, ...] = (
     Control(
         "NET-01",
@@ -291,7 +339,14 @@ CONTROLS: tuple[Control, ...] = (
         "critical",
         ("ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"),
         "DB를 사설 서브넷/ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
-        _database_only(_db_private),
+        _database_only(
+            _measured(
+                "db_public",
+                "DB가 사설망에서만 접근 가능",
+                "DB가 공개 엔드포인트로 노출됨",
+                true_is_bad=True,
+            )
+        ),
     ),
     Control(
         "NET-03",
@@ -401,7 +456,7 @@ CONTROLS: tuple[Control, ...] = (
         "high",
         ("ONEPORT", "CIS-GCP 6.4"),
         "rds.force_ssl=1, Cloud SQL ssl_mode=ENCRYPTED_ONLY 또는 pg_hba hostssl만 허용하세요.",
-        _database_only(_declared("db_tls_required", "DB가 TLS 연결만 허용", "DB가 평문 연결 허용")),
+        _database_only(_measured("db_tls_required", "DB가 TLS 연결만 허용", "DB가 평문 연결 허용")),
     ),
     Control(
         "DATA-02",
@@ -411,7 +466,7 @@ CONTROLS: tuple[Control, ...] = (
         ("AWS-FSBP RDS.3",),
         "스토리지 암호화를 켜세요.",
         _database_only(
-            _declared("db_encrypted_at_rest", "DB 스토리지 암호화", "DB 스토리지 미암호화")
+            _measured("db_encrypted_at_rest", "DB 스토리지 암호화", "DB 스토리지 미암호화")
         ),
     ),
     Control(
@@ -421,7 +476,7 @@ CONTROLS: tuple[Control, ...] = (
         "medium",
         ("AWS-FSBP RDS.11", "CIS-GCP 6.7"),
         "자동 백업 또는 주기 덤프를 구성하세요.",
-        _database_only(_declared("db_backups", "DB 백업 구성됨", "DB 백업 없음")),
+        _database_only(_measured("db_backups", "DB 백업 구성됨", "DB 백업 없음")),
     ),
     Control(
         "DATA-04",
@@ -439,7 +494,7 @@ CONTROLS: tuple[Control, ...] = (
         "high",
         ("AWS-FSBP GuardDuty.1",),
         "AWS는 GuardDuty, GCP는 Security Command Center 위협 탐지, 온프렘은 Falco 같은 런타임 탐지를 켜세요.",
-        _declared("threat_detection", "위협 탐지 활성", "위협 탐지 없음"),
+        _measured("threat_detection", "위협 탐지 활성", "위협 탐지 없음"),
     ),
     Control(
         "DET-02",
@@ -466,7 +521,7 @@ CONTROLS: tuple[Control, ...] = (
         "low",
         ("AWS-FSBP EC2.6", "CIS-GCP 3.8"),
         "VPC Flow Logs(AWS/GCP) 또는 CNI 흐름 로그를 켜세요.",
-        _declared("flow_logs", "흐름 로그 수집", "흐름 로그 없음"),
+        _measured("flow_logs", "흐름 로그 수집", "흐름 로그 없음"),
     ),
     Control(
         "GOV-01",
@@ -564,7 +619,10 @@ def affected_components(control_id: str, components: list[ComponentView]) -> lis
 def run_check(
     control: Control, snapshot: EnvironmentSnapshot, policy: SecurityPolicy
 ) -> ControlResult:
-    return control.check(snapshot, policy) if control.uses_policy else control.check(snapshot)
+    result = control.check(snapshot, policy) if control.uses_policy else control.check(snapshot)
+    if result.source is None and result.status in ("pass", "fail"):
+        return result.model_copy(update={"source": control.source})
+    return result
 
 
 def evaluate(snapshot: EnvironmentSnapshot, policy: SecurityPolicy) -> dict[str, ControlResult]:

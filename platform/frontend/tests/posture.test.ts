@@ -14,6 +14,7 @@ import {
   overviewScore,
   scoreTone,
   standardCompliance,
+  SOURCE_LABELS,
   standardId,
   STATUS_LABELS,
   statusTone,
@@ -203,4 +204,9 @@ test("only coverage standards use the coverage wording", () => {
   assert.equal(isCoverageStandard({}), false);
   assert.equal(COVERAGE_LABEL, "기술 통제 커버리지");
   assert.equal(COVERAGE_BAND_LABELS.high, "기술 통제 양호");
+});
+
+test("result sources have badge labels", () => {
+  assert.equal(SOURCE_LABELS.observed, "관측");
+  assert.equal(SOURCE_LABELS.declared, "신고");
 });

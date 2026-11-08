@@ -46,7 +46,8 @@
         "db_tls_required": true, "db_public": false, "db_encrypted_at_rest": true,
         "db_backups": true, "workload_identity": true, "ingress_tls": false, "waf": false,
         "policy_gates": true
-      }
+      },
+      "cloud_scope": {"cluster": "oneaction", "databases": ["oneaction-review-db"]}
     },
     {
       "id": "gcp",
@@ -70,6 +71,12 @@
         "db_tls_required": true, "db_public": false, "db_encrypted_at_rest": true,
         "db_backups": true, "workload_identity": true, "ingress_tls": false, "waf": false,
         "policy_gates": true
+      },
+      "cloud_scope": {
+        "cluster": "oneaction-dev",
+        "cluster_location": "asia-northeast3",
+        "project": "ghost-project-513812",
+        "databases": ["oneaction-dev-review"]
       }
     }
   ],

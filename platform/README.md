@@ -13,6 +13,7 @@
 - 프론트: `frontend/` (React 19, Vite 7). 디자인 규칙은 [frontend/DESIGN.md](frontend/DESIGN.md)
 - 화면과 데이터 출처 상세: [docs/MIGRATION-DASHBOARD.md](docs/MIGRATION-DASHBOARD.md)
 - 비용 추산(환경별 월 비용·이전 증감): [docs/COST-ESTIMATION.md](docs/COST-ESTIMATION.md)
+- 보안 탭 클라우드 실측 권한(AWS IAM·GCP 역할): [docs/SECURITY-CLOUD-PERMISSIONS.md](docs/SECURITY-CLOUD-PERMISSIONS.md)
 
 ## 1. 시뮬레이션으로 켜기
 
