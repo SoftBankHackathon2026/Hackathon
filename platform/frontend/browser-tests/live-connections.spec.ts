@@ -486,10 +486,13 @@ async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
     mutations.find((item) => item.action === "register")?.body.target,
   ).not.toHaveProperty("role");
   await page.goto("/#environments");
-  const records = page.getByRole("region", { name: "직접 등록한 환경" });
-  await expect(records.getByText("시험 프로젝트")).toBeVisible();
-  await expect(records.getByRole("link")).toHaveAttribute(
-    "href",
-    `#prepare/${id}`,
-  );
+  await expect(
+    page.getByRole("button", { name: "아키텍처", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "필터" }).getByRole("combobox"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "직접 등록한 환경" }),
+  ).toHaveCount(0);
 }

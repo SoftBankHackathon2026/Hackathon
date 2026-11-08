@@ -13,7 +13,6 @@ import { ArchitectureCanvas } from "./ArchitectureCanvas";
 import { ComponentsList } from "./ComponentsList";
 import { clusterRailRows } from "./clusterModel";
 import { envRailRows } from "./model";
-import { RegisteredConnections } from "./RegisteredConnections";
 
 function useViewportHeight() {
   const [height, setHeight] = useState(() => window.innerHeight);
@@ -51,7 +50,6 @@ export function EnvironmentsPage({
         tabs={[{ id: "architecture", label: "아키텍처" }]}
         active="architecture"
       />
-      <RegisteredConnections />
       <ScopeFilterRow>
         <FilterSelect
           label="환경"
