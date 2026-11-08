@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CostOverview } from "../src/api/costs.ts";
 import type { FleetEnvironment } from "../src/api/migrations.ts";
-import { envLabels } from "../src/features/costs/costView.ts";
+import {
+  envLabels,
+  withoutDisconnected,
+} from "../src/features/costs/costView.ts";
 
 const overview = {
   environments: [
@@ -26,12 +29,36 @@ test("env labels prefer cost names, then registered environments, then the id", 
     provider: "onprem",
   });
   assert.deepEqual(label("connected-zzz"), {
-    name: "연결 해제된 환경",
+    name: "connected-zzz",
     provider: undefined,
   });
   assert.equal(label("legacy-env").name, "legacy-env");
   assert.equal(
     envLabels(overview, undefined)("connected-abc").name,
-    "연결 해제된 환경",
+    "connected-abc",
+  );
+});
+
+test("tasks on disconnected environments drop out of the cost view", () => {
+  const costs = {
+    ...overview,
+    migrations: [
+      { job_id: "a", source_env: "aws", target_env: "connected-abc" },
+      { job_id: "b", source_env: "connected-gone", target_env: "aws" },
+      { job_id: "c", source_env: "aws", target_env: "connected-gone" },
+      { job_id: "d", source_env: "legacy-env", target_env: "aws" },
+    ],
+  } as unknown as CostOverview;
+  assert.deepEqual(
+    withoutDisconnected(costs, fleet).migrations.map((m) => m.job_id),
+    ["a", "d"],
+  );
+  assert.deepEqual(
+    withoutDisconnected(costs, undefined).migrations.map((m) => m.job_id),
+    ["d"],
+  );
+  assert.equal(
+    withoutDisconnected(costs, fleet).environments,
+    costs.environments,
   );
 });

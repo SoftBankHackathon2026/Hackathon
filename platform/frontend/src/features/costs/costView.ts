@@ -163,8 +163,6 @@ export function lineLabel(line: CostLine) {
   return line.item;
 }
 
-const DISCONNECTED = "연결 해제된 환경";
-
 export type EnvLabel = { name: string; provider: string | undefined };
 
 /** 이전 작업의 환경 이름. 비용을 계산한 환경이 먼저고, 직접 연결한 환경은 환경 목록 이름을 쓴다. */
@@ -177,9 +175,23 @@ export function envLabels(
     labels.set(env.id, { name: env.name, provider: env.provider });
   for (const env of overview.environments)
     labels.set(env.env_id, { name: env.name, provider: env.provider });
-  return (id) =>
-    labels.get(id) ?? {
-      name: id.startsWith("connected-") ? DISCONNECTED : id,
-      provider: undefined,
-    };
+  return (id) => labels.get(id) ?? { name: id, provider: undefined };
+}
+
+/** 연결을 해제한 직접 연결 환경(환경 목록에도 비용 목록에도 없는 connected-...)을 쓰는 작업은 비용 화면에서 뺀다. */
+export function withoutDisconnected(
+  overview: CostOverview,
+  fleet: readonly FleetEnvironment[] | undefined,
+): CostOverview {
+  const known = new Set([
+    ...(fleet ?? []).map((env) => env.id),
+    ...overview.environments.map((env) => env.env_id),
+  ]);
+  const gone = (id: string) => id.startsWith("connected-") && !known.has(id);
+  return {
+    ...overview,
+    migrations: overview.migrations.filter(
+      (m) => !gone(m.source_env) && !gone(m.target_env),
+    ),
+  };
 }
