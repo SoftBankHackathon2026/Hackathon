@@ -87,12 +87,25 @@ function createControl(options = {}) {
     return null;
   }
 
+  /**
+   * Starting while the receipt queue does not deliver only piles requests up: they are written later,
+   * when the next cutover opens the queue, and break its row budget (repeat demo, 2026-11-08).
+   * Stopping stays allowed because it only reduces that backlog.
+   */
+  function startBlockReason(target) {
+    const general = blockReason(target);
+    if (general) return general;
+    if (!report.route?.known) return 'ROUTE_UNKNOWN';
+    if (report.route.mode !== 'running') return 'INGRESS_PAUSED';
+    return null;
+  }
+
   function submit({target, action}) {
     expire();
     if (!TARGETS.includes(target) || !ACTIONS.includes(action)) {
       return {ok: false, status: 400, code: 'INVALID_COMMAND'};
     }
-    const reason = blockReason(target);
+    const reason = action === 'start' ? startBlockReason(target) : blockReason(target);
     if (reason) return {ok: false, status: 409, code: reason};
     const command = {id: crypto.randomUUID(), target, action, status: 'queued',
       created_at: now(), sent_at: null, finished_at: null, error: null};
@@ -152,6 +165,7 @@ function createControl(options = {}) {
       bots: report ? report.bots : {bot: cleanBot(null)},
       route: report ? report.route : {known: false},
       blocked: Object.fromEntries(TARGETS.map((x) => [x, blockReason(x)])),
+      start_blocked: Object.fromEntries(TARGETS.map((x) => [x, startBlockReason(x)])),
       commands: commands.slice(-20).reverse().map(view),
     };
   }
