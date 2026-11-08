@@ -31,11 +31,5 @@ export function AccountControls({
         </div>
       </details>
     );
-  if (access.auth_mode === "demo")
-    return (
-      <span className="pill" title="로그인 없이 볼 수 있는 시연 모드예요">
-        시연 모드
-      </span>
-    );
   return null;
 }

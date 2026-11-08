@@ -74,7 +74,7 @@ export function connectionStatus(s: ConnectionSnapshot): {
       label:
         s.cleanup?.server && s.cleanup.gateway && s.cleanup.local
           ? "연결 해제됨"
-          : "권한 철회됨 · 정리 확인 중",
+          : "권한 철회됨, 정리 확인 중",
       tone: "idle",
     };
   if (s.device === "REJECTED") return { label: "단말 확인 종료", tone: "idle" };
