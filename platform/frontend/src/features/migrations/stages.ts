@@ -130,10 +130,11 @@ export const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
 };
 
 export function stageDurationSeconds(
-  stage: Pick<StageInfo, "started_at" | "finished_at">,
+  stage: Pick<StageInfo, "status" | "started_at" | "finished_at">,
   now: number,
 ) {
   if (stage.started_at === null) return null;
+  if (stage.finished_at === null && stage.status !== "current") return null;
   const start = Date.parse(stage.started_at);
   const end = stage.finished_at === null ? now : Date.parse(stage.finished_at);
   if (Number.isNaN(start) || Number.isNaN(end)) return null;
