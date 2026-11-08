@@ -161,11 +161,6 @@ const FLEET_PROVIDERS: Record<FleetEnvironment["provider"], string> = {
   gcp: "GCP",
 };
 
-const FLEET_ROLES: Record<FleetEnvironment["role"], string> = {
-  legacy: "출발 환경",
-  target: "도착 환경",
-};
-
 export type ExistingEnvironment = {
   id: string;
   name: string;
@@ -183,7 +178,7 @@ export function existingEnvironments(
     .map((env) => ({
       id: env.id,
       name: env.name,
-      detail: `${FLEET_PROVIDERS[env.provider] ?? env.provider}, ${FLEET_ROLES[env.role] ?? env.role}`,
+      detail: FLEET_PROVIDERS[env.provider] ?? env.provider,
       label: env.connected ? "연결됨" : "상태 정보 없음",
       tone: env.connected ? "ok" : "idle",
     }));

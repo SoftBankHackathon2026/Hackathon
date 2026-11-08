@@ -293,8 +293,10 @@ export function PreparePage({
           <div className="connection-sidebar-heading">
             <h2>연결 환경</h2>
             <span>
-              기존 {existing.length}개, 직접 연결{" "}
-              {listedConnections.filter((s) => s.environmentId).length}개
+              환경{" "}
+              {existing.length +
+                listedConnections.filter((s) => s.environmentId).length}
+              개
             </span>
           </div>
           <button
@@ -318,27 +320,19 @@ export function PreparePage({
                 작업 등록으로 돌아가기
               </button>
             )}
-          {existing.length > 0 && (
-            <>
-              <h3 className="connection-group-title">기존 환경</h3>
-              <ul className="connection-environments" aria-label="기존 환경">
-                {existing.map((env) => (
-                  <li key={env.id} className="is-static">
-                    <div className="connection-environment-select">
-                      <strong>{env.name}</strong>
-                      <span>{env.detail}</span>
-                      <StatusDot tone={env.tone}>{env.label}</StatusDot>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <h3 className="connection-group-title">직접 연결</h3>
-            </>
-          )}
-          {listedConnections.length === 0 ? (
-            <p className="connection-empty">직접 추가한 연결이 없어요.</p>
+          {existing.length === 0 && listedConnections.length === 0 ? (
+            <p className="connection-empty">등록된 환경이 없어요.</p>
           ) : (
             <ul className="connection-environments">
+              {existing.map((env) => (
+                <li key={env.id} className="is-static">
+                  <div className="connection-environment-select">
+                    <strong>{env.name}</strong>
+                    <span>{env.detail}</span>
+                    <StatusDot tone={env.tone}>{env.label}</StatusDot>
+                  </div>
+                </li>
+              ))}
               {listedConnections.map((s) => {
                 const state = connectionStatus(s);
                 const name =

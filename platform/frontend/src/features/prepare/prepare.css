@@ -171,12 +171,6 @@
 .connection-environments li.is-static:hover {
   background: transparent;
 }
-.connection-group-title {
-  margin: 20px 0 0;
-  color: var(--text-tertiary);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
 .connection-environments li:has([aria-current]) {
   background: var(--accent-soft);
   border-color: var(--accent-line);
