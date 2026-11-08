@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  deleteMigrations,
   getEvents,
   getFleet,
   getMigration,
@@ -13,12 +14,14 @@ import {
   requestCommand,
   type CommandRequest,
   type Fleet,
+  type TaskDeletion,
 } from "../../api/migrations";
 import {
   confirmDataMapping,
   getDataMapping,
   type DataMappingUpdate,
 } from "../../api/dataMapping";
+import { withoutDeleted } from "./deletion";
 import { isActive, pollInterval } from "./stages";
 import { getTaskPlan } from "../../api/taskPlan";
 
@@ -108,6 +111,30 @@ export function useConfirmDataMapping(jobId: string) {
       return queryClient.invalidateQueries({
         queryKey: ["migration", jobId, "commands"],
       });
+    },
+  });
+}
+
+/**
+ * 작업 지우기. 결과 처리는 훅 단계에서 한다. 상세 화면이 먼저 닫혀도 결과 문장을 놓치지 않게.
+ * 결과를 먼저 넘기고(상세 화면은 이때 개요로 돌아감), 지운 작업을 개요 목록에서 빼고 상세 질의를 버린 뒤
+ * 개요와 비용을 다시 읽는다.
+ */
+export function useDeleteMigrations(onDone: (result: TaskDeletion) => void) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobIds: string[]) => deleteMigrations(jobIds),
+    onSuccess: (result) => {
+      onDone(result);
+      queryClient.setQueryData<Fleet>(["fleet"], (fleet) =>
+        fleet ? withoutDeleted(fleet, result.deleted) : fleet,
+      );
+      for (const jobId of result.deleted)
+        queryClient.removeQueries({ queryKey: ["migration", jobId] });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["fleet"] });
+      void queryClient.invalidateQueries({ queryKey: ["costs"] });
     },
   });
 }

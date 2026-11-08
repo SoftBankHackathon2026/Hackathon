@@ -31,6 +31,7 @@ import {
 } from "./stages";
 import { lifetimeMinutes, lifetimeSpan, lifetimeWindow } from "./timeline";
 import { StageLog } from "./StageLog";
+import { TaskDeletePanel } from "./TaskDelete";
 import { failedWrites } from "./summary";
 import { TransitionTimeline } from "./TransitionTimeline";
 import { GatesTable, VerifyTable } from "./VerifyGates";
@@ -49,6 +50,7 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
   const { data: detail } = useSuspenseQuery(migrationQueryOptions(jobId));
   const fleet = useQuery(fleetQueryOptions()).data;
   const [minutes, setMinutes] = useState(ALL);
+  const [deleting, setDeleting] = useState(false);
   const { summary } = detail;
   const interval = pollInterval(summary.status);
   const rangeSeries = useQuery({
@@ -121,7 +123,24 @@ export function MigrationDetailPage({ jobId }: { jobId: string }) {
             {summary.stage_index}/{summary.stage_count}단계
           </>
         }
+        actions={
+          summary.can_delete && !deleting ? (
+            <button
+              type="button"
+              className="pk-button weak"
+              onClick={() => setDeleting(true)}
+            >
+              작업 삭제
+            </button>
+          ) : undefined
+        }
       />
+      {deleting && (
+        <TaskDeletePanel
+          summary={summary}
+          onCancel={() => setDeleting(false)}
+        />
+      )}
       {sentence.parts.some((part) => part.bad) && (
         <p className="pk-alert" role="status">
           {sentence.parts.map((part, i) =>

@@ -176,13 +176,19 @@ export type MigrationSummary = {
     p95_latency_seconds: number | null;
   };
   verify_mismatch: number | null;
+  /** 화면이나 생성 API 로 등록한 작업. 설정 파일 작업은 false 이고 지울 수 없어요. */
+  registered: boolean;
+  can_delete: boolean;
 };
 export type Fleet = {
   generated_at: string;
   source: DataSource;
   environments: FleetEnvironment[];
   migrations: MigrationSummary[];
+  can_delete: boolean;
 };
+export type SkippedTask = { job_id: string; reason: string };
+export type TaskDeletion = { deleted: string[]; skipped: SkippedTask[] };
 
 export type StageInfo = {
   name: string;
@@ -373,4 +379,11 @@ export function requestCommand(jobId: string, body: CommandRequest) {
     `migrations/${encodeURIComponent(jobId)}/commands`,
     { method: "POST", body },
   );
+}
+
+export function deleteMigrations(jobIds: string[]) {
+  return request<TaskDeletion>("migrations/delete", {
+    method: "POST",
+    body: { job_ids: jobIds },
+  });
 }

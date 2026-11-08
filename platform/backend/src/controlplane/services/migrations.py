@@ -8,6 +8,7 @@ from controlplane.domain.migration import (
     FLOW,
     FLOW_STAGES,
     POINT_OF_NO_RETURN,
+    MigrationStatus,
     Stage,
     progress_of,
     stage_index,
@@ -22,6 +23,7 @@ from controlplane.domain.task_plan import (
 )
 from controlplane.integrations.base import FleetSource
 from controlplane.schemas.migrations import (
+    ConnectorView,
     DowntimeEvidence,
     MigrationDetail,
     MigrationEvent,
@@ -46,6 +48,18 @@ PAUSED_STATES = frozenset({"PAUSED", "SWITCHING", "ERROR"})
 MAX_SERIES_POINTS = 720
 DEFAULT_WINDOW_MINUTES = 120
 MAX_LIFETIME = timedelta(days=1)
+# 전환이 진행 중(승인 대기 포함)이거나 복구를 기다리는 작업. 지우면 진행 상황과 복구 경로를 화면에서 잃는다.
+IN_PROGRESS_STATUSES = frozenset(
+    {MigrationStatus.RUNNING, MigrationStatus.WAITING_APPROVAL, MigrationStatus.NEEDS_RECOVERY}
+)
+CONNECTOR_RUNNING = "RUNNING"
+
+
+def in_progress(status: MigrationStatus, connectors: Sequence[ConnectorView]) -> bool:
+    """전환 단계가 끝나지 않았거나 CDC 커넥터가 아직 돌고 있으면 진행 중이다."""
+    return status in IN_PROGRESS_STATUSES or any(
+        connector.state == CONNECTOR_RUNNING for connector in connectors
+    )
 
 
 def write_pause_seconds(samples: Sequence[WorkerSample]) -> float | None:
@@ -279,6 +293,16 @@ class MigrationService:
         return [
             self.summarize(state, self._lifetime(state)) for state in self._source.list_migrations()
         ]
+
+    def in_progress_jobs(self, job_ids: set[str]) -> set[str]:
+        busy = set()
+        for state in self._source.list_migrations():
+            if state.config.job_id not in job_ids:
+                continue
+            stage = state.cutover.stage if state.cutover else None
+            if in_progress(status_of(stage), state.connectors):
+                busy.add(state.config.job_id)
+        return busy
 
     def get_detail(self, job_id: str) -> MigrationDetail:
         state = self._state(job_id)

@@ -314,6 +314,24 @@ EnrollerIdentity = Annotated[Identity | None, Depends(require_enroller)]
 CutoverOperatorIdentity = Annotated[Identity | None, Depends(require_cutover_operator)]
 
 
+def cutover_permitted(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> bool:
+    """조회 응답에 화면 조작(작업 삭제 등) 단추를 보일지. 실제 요청은 require_cutover_operator 가 막는다."""
+    if container.auth_mode == AuthMode.OPERATOR:
+        if container.operator_token is None:
+            return False
+        expected = "Bearer " + container.operator_token.get_secret_value()
+        return secrets.compare_digest(authorization.encode(), expected.encode())
+    if container.auth_mode != AuthMode.LOGIN:
+        return True
+    identity = session_identity(request, container)
+    return identity is not None and identity.can_deploy
+
+
+CutoverPermitted = Annotated[bool, Depends(cutover_permitted)]
+
+
 def require_login_mode(request: Request, container: ContainerDep) -> AuthService:
     if container.auth_mode != AuthMode.LOGIN:
         raise OperationNotFound(NOT_LOGIN_MODE)

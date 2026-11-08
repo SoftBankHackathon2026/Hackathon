@@ -7,6 +7,7 @@ from controlplane.api.deps import (
     ContainerDep,
     CutoverCommandsDep,
     CutoverOperatorIdentity,
+    CutoverPermitted,
     DataMappingsDep,
     FleetDep,
     IngestCommandsDep,
@@ -33,18 +34,37 @@ from controlplane.schemas.migrations import (
     MigrationIngest,
     MigrationSeries,
     PodLogs,
+    TaskDeletion,
+    TaskDeletionResult,
     TaskPlan,
 )
 from controlplane.schemas.security import SecurityPosture
+from controlplane.services.cutover_commands import CutoverCommandService
 from controlplane.services.data_mapping import DataMappingService
+from controlplane.services.migration_tasks import BusyJobs
+from controlplane.services.migrations import MigrationService, in_progress
 from controlplane.services.registered_environments import registered_environments
 
 router = APIRouter(prefix="/api/v1", tags=["migrations"])
 
 
+def _busy(migrations: MigrationService, commands: CutoverCommandService) -> BusyJobs:
+    return lambda job_ids: migrations.in_progress_jobs(job_ids) | commands.active_jobs(job_ids)
+
+
 @router.get("/fleet")
-def fleet(service: FleetDep, identity: ViewerIdentity, container: ContainerDep) -> Fleet:
+def fleet(
+    service: FleetDep,
+    identity: ViewerIdentity,
+    container: ContainerDep,
+    tasks: TasksDep,
+    migrations: MigrationsDep,
+    commands: CutoverCommandsDep,
+    permitted: CutoverPermitted,
+) -> Fleet:
     view = service.get_fleet()
+    view.can_delete = permitted
+    tasks.mark(view.migrations, permitted, _busy(migrations, commands))
     known = {env.id for env in view.environments}
     for env in registered_environments(container.connections, container.auth_mode, identity):
         if env.id not in known:
@@ -71,8 +91,34 @@ def pod_logs(
 
 
 @router.get("/migrations/{job_id}")
-def migration(job_id: str, service: MigrationsDep, identity: ViewerIdentity) -> MigrationDetail:
-    return service.get_detail(job_id)
+def migration(
+    job_id: str,
+    service: MigrationsDep,
+    identity: ViewerIdentity,
+    tasks: TasksDep,
+    commands: CutoverCommandsDep,
+    permitted: CutoverPermitted,
+) -> MigrationDetail:
+    detail = service.get_detail(job_id)
+    running = in_progress(detail.summary.status, detail.connectors)
+
+    def busy(job_ids: set[str]) -> set[str]:
+        return (job_ids if running else set()) | commands.active_jobs(job_ids)
+
+    tasks.mark([detail.summary], permitted, busy)
+    return detail
+
+
+# 화면이나 생성 API 로 등록한 작업만 숨긴다. 설정 파일 작업, 진행 중인 작업, 없는 작업은 사유와 함께 건너뛴다.
+@router.post("/migrations/delete")
+def delete_migrations(
+    body: TaskDeletion,
+    tasks: TasksDep,
+    migrations: MigrationsDep,
+    commands: CutoverCommandsDep,
+    identity: CutoverOperatorIdentity,
+) -> TaskDeletionResult:
+    return tasks.delete(body, identity, _busy(migrations, commands))
 
 
 @router.post("/migrations", status_code=201)
