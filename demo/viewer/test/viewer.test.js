@@ -573,3 +573,14 @@ test('the deployed config polls only public addresses', () => {
     assert.notEqual(environment.local_only, true, environment.id);
   }
 });
+
+test('the grid has as many columns as configured environments', async () => {
+  const screen = await openViewer([liveAnswer(1, 0)]);
+  assert.equal(screen.context.document.getElementById('grid').dataset.columns, '1');
+});
+
+test('the demo config shows on-prem and AWS only', () => {
+  const config = JSON.parse(fs.readFileSync(
+      path.join(__dirname, '..', 'config.demo.json'), 'utf8'));
+  assert.deepEqual(config.environments.map((e) => e.id), ['onprem', 'aws']);
+});

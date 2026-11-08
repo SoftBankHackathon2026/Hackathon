@@ -341,6 +341,7 @@ async function start() {
       `각 환경의 /api/live 를 ${seconds}초마다 요청한 결과입니다`;
   document.getElementById('top-ja').textContent =
       `各環境の /api/live に${seconds}秒ごとにリクエストした結果です`;
+  document.getElementById('grid').dataset.columns = String(config.environments.length);
   const panels = config.environments.map((environment) =>
     createPanel(environment, config.pollMillis, config.timeoutMillis));
   setInterval(() => {
