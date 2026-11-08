@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/PageKit";
 import { StatusDot } from "../../components/StatusDot";
 import { Icon } from "../../components/Icon";
@@ -25,8 +26,10 @@ import {
   RegisteredEnvironment,
 } from "./ConnectionRegistration";
 import { CopyFailure, copyEnrollmentCommand } from "./copyEnrollmentCommand";
+import { fleetQueryOptions } from "../migrations/queries";
 import {
   connectionStatus,
+  existingEnvironments,
   formatTime,
   isListedConnection,
   STEPS,
@@ -84,6 +87,11 @@ export function PreparePage({
     () => snapshots.filter(isListedConnection),
     [snapshots],
   );
+  const fleet = useQuery({
+    ...fleetQueryOptions(),
+    enabled: gateway.mode !== "preview",
+  });
+  const existing = existingEnvironments(fleet.data?.environments);
   const snapshot = snapshots.find((s) => s.id === requestId) ?? null;
   const [acknowledged, setAcknowledged] = useState(false),
     [busy, setBusy] = useState(false);
@@ -285,7 +293,7 @@ export function PreparePage({
           <div className="connection-sidebar-heading">
             <h2>연결 환경</h2>
             <span>
-              직접 연결{" "}
+              기존 {existing.length}개, 직접 연결{" "}
               {listedConnections.filter((s) => s.environmentId).length}개
             </span>
           </div>
@@ -310,12 +318,25 @@ export function PreparePage({
                 작업 등록으로 돌아가기
               </button>
             )}
+          {existing.length > 0 && (
+            <>
+              <h3 className="connection-group-title">기존 환경</h3>
+              <ul className="connection-environments" aria-label="기존 환경">
+                {existing.map((env) => (
+                  <li key={env.id} className="is-static">
+                    <div className="connection-environment-select">
+                      <strong>{env.name}</strong>
+                      <span>{env.detail}</span>
+                      <StatusDot tone={env.tone}>{env.label}</StatusDot>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <h3 className="connection-group-title">직접 연결</h3>
+            </>
+          )}
           {listedConnections.length === 0 ? (
-            <p className="connection-empty">
-              직접 추가한 연결이 없어요.
-              <br />
-              기존 환경은 작업 등록에서 선택할 수 있어요.
-            </p>
+            <p className="connection-empty">직접 추가한 연결이 없어요.</p>
           ) : (
             <ul className="connection-environments">
               {listedConnections.map((s) => {
