@@ -140,7 +140,7 @@ def stage_views(state: MigrationState) -> list[StageView]:
                 description=info.description,
                 status=progress_of(position, current, failed=failed, finished=finished),
                 started_at=started,
-                finished_at=following if started and (following or finished) else None,
+                finished_at=following or (started if finished else None) if started else None,
                 point_of_no_return=info.stage == POINT_OF_NO_RETURN,
                 evidence=cutover.checkpoint.get(info.evidence_key, {}) if cutover else {},
             )
