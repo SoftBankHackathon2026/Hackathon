@@ -3,7 +3,6 @@
   "timeoutMillis": 3000,
   "environments": [
     {"id": "onprem", "name": "온프렘", "nameJa": "オンプレミス", "url": "https://sample-app.onprem.yubin.dev", "public_url": "https://sample-app.onprem.yubin.dev"},
-    {"id": "aws", "name": "AWS", "nameJa": "AWS", "url": "https://sample-app.hackerthon.yubin.dev", "public_url": "https://sample-app.hackerthon.yubin.dev"},
-    {"id": "gcp", "name": "GCP", "nameJa": "GCP", "url": "http://34.64.252.44", "public_url": "http://34.64.252.44"}
+    {"id": "aws", "name": "AWS", "nameJa": "AWS", "url": "https://sample-app.hackerthon.yubin.dev", "public_url": "https://sample-app.hackerthon.yubin.dev"}
   ]
 }
