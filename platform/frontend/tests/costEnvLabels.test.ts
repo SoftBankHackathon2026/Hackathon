@@ -26,11 +26,12 @@ test("env labels prefer cost names, then registered environments, then the id", 
     provider: "onprem",
   });
   assert.deepEqual(label("connected-zzz"), {
-    name: "connected-zzz",
+    name: "연결 해제된 환경",
     provider: undefined,
   });
-  assert.deepEqual(
+  assert.equal(label("legacy-env").name, "legacy-env");
+  assert.equal(
     envLabels(overview, undefined)("connected-abc").name,
-    "connected-abc",
+    "연결 해제된 환경",
   );
 });
