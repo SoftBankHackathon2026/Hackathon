@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -252,6 +254,43 @@ class TrafficConfig:
 
 
 @dataclass(frozen=True)
+class FullMigrationConfig:
+    """Move the receipt ledger/queue and public application, not only the DB."""
+
+    destination_control_url: str = ""
+    destination_token_env: str = ""
+    destination_target: str = ""
+    destination_app_version: str = ""
+    forward_target: str = ""
+    destination_receipt_url: str = ""
+    destination_api_token_env: str = ""
+    timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        for name in ("destination_control_url", "destination_receipt_url"):
+            value = getattr(self, name)
+            try:
+                url = urlsplit(value)
+                port = url.port
+            except ValueError:
+                raise ConfigError(f"full_migration.{name}: invalid HTTPS URL") from None
+            if (url.scheme != "https" or not url.hostname or url.username or url.password
+                    or url.query or url.fragment or (port is not None and port < 1)
+                    or (name != "destination_control_url" and url.path not in ("", "/"))):
+                raise ConfigError(f"full_migration.{name}: credential-free HTTPS URL required")
+        for name in ("destination_token_env", "destination_api_token_env"):
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*", getattr(self, name)):
+                raise ConfigError(f"full_migration.{name}: secret environment reference required")
+        if not re.fullmatch(r"[a-zA-Z0-9._-]{1,100}", self.destination_app_version):
+            raise ConfigError("full_migration.destination_app_version: pinned application version required")
+        for name in ("destination_target", "forward_target"):
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", getattr(self, name)):
+                raise ConfigError(f"full_migration.{name}: target name required")
+        if not math.isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 300:
+            raise ConfigError("full_migration.timeout_seconds: expected 0 < timeout <= 300")
+
+
+@dataclass(frozen=True)
 class Config:
     """설정 파일 전체."""
 
@@ -263,6 +302,7 @@ class Config:
     cutover: CutoverConfig = field(default_factory=CutoverConfig)
     ingress: IngressConfig = field(default_factory=IngressConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
+    full_migration: FullMigrationConfig | None = None
 
     def target(self, name: str) -> TargetConfig:
         try:
@@ -450,7 +490,7 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         raise ConfigError(f"job.source/target 은 targets 에 있어야 한다: {job.source}, {job.target}")
     if job.source == job.target:
         raise ConfigError("job.source 와 job.target 이 같다")
-    return Config(
+    config = Config(
         targets=targets,
         job=job,
         kafka=_dataclass_from(KafkaConfig, raw.get("kafka"), "kafka"),
@@ -459,7 +499,23 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         cutover=_dataclass_from(CutoverConfig, raw.get("cutover"), "cutover"),
         ingress=_parse_ingress(raw.get("ingress"), targets),
         traffic=_parse_traffic(raw.get("traffic"), targets),
+        full_migration=(_dataclass_from(FullMigrationConfig, raw["full_migration"], "full_migration")
+                        if "full_migration" in raw else None),
     )
+    if config.full_migration is not None:
+        if config.traffic.enabled:
+            raise ConfigError("full_migration moves components first; traffic/DNS cutover is a separate operation")
+        if not config.ingress.enabled or not config.ingress.token_env:
+            raise ConfigError("full_migration requires authenticated source ingress control")
+        if config.ingress.ingress_target(job.target) != config.full_migration.destination_target:
+            raise ConfigError("full_migration destination_target must match ingress target app")
+        check = config.ingress.app_checks.get(job.target)
+        if not check or not check.environment or check.database != config.target(job.target).dbname:
+            raise ConfigError("full_migration requires target app environment/database identity")
+        url = urlsplit(check.url)
+        if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+            raise ConfigError("full_migration target app requires a credential-free HTTPS endpoint")
+    return config
 
 
 def load_config(path: str | Path) -> Config:

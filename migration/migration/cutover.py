@@ -22,9 +22,10 @@ from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask
     sink_kafka_offsets, template_variables
 from .config import Config, ConfigError, LIVE_ROWS, load_config, POST_SWITCH_ROWS, SEED_ROWS, TOTAL_ROWS
 from .state import CutoverJob, CutoverStore
-from .cutover_policy import CutoverPolicyGate
+from .cutover_policy import CutoverPolicyGate, execution_digest
 from .ingress_client import HttpIngressClient, IngressClientError, check_app_ready
 from .traffic_client import HttpTrafficClient
+from .full_migration import ReceiptHandoff
 from .policy_client import build_check
 from .bot_client import HttpBotClient, BotClientError
 
@@ -320,6 +321,7 @@ class Ports:
     verify: VerifyPort
     ingress: IngressPort | None = None   # None 이면 접수 큐는 운영자가 수동으로 제어한다
     traffic: TrafficPort | None = None
+    handoff: ReceiptHandoff | None = None
 
 
 class Cutover:
@@ -351,7 +353,19 @@ class Cutover:
         self.cc = config.cutover
         self.job = store.load(self.job_id) or CutoverJob(
             job_id=self.job_id, direction=f"{self.source}->{self.target}", source=self.source,
-            target=self.target, stage=PRECHECK, checkpoint={"grant_tracking_version": 1, "writer_mode": "traffic_bot_v1"}, updated_at="")
+            target=self.target, stage=PRECHECK, checkpoint={"grant_tracking_version": 1, "writer_mode": "traffic_bot_v1",
+                "migration_scope": "full_service_v1" if config.full_migration else "db_only"}, updated_at="")
+        expected_scope = "full_service_v1" if config.full_migration else "db_only"
+        if self.job.checkpoint.get("migration_scope", "db_only") != expected_scope:
+            raise ConfigError("기존 작업의 DB/전체 서비스 이전 모드를 바꿀 수 없다. 새 job_id 필요")
+        if config.full_migration and ports.handoff is None:
+            raise ConfigError("전체 서비스 이전에는 접수큐 인계 포트가 필요하다")
+        if config.full_migration:
+            digest = execution_digest(config)
+            saved = self.job.checkpoint.get("handoff_config_digest")
+            if saved is not None and saved != digest:
+                raise ConfigError("전체 서비스 이전 설정이 변경되었다. 기존 작업 자동 재개 불가")
+            self.job.checkpoint["handoff_config_digest"] = digest
         if (self.job.source, self.job.target) != (self.source, self.target):
             raise ConfigError(f"저장된 작업 {self.job_id} 의 방향({self.job.direction})이 설정과 다르다")
 
@@ -496,9 +510,14 @@ class Cutover:
         key = f"bot_{label}_limit"
         st = self._bot_snapshot()
         target = self.source if label == "source" else self.target
-        snap = self._ingress_snapshot()
-        if snap["target"] != self._ingress_name(target) or snap["mode"] != "running":
-            raise CutoverError("트래픽봇 시작 전 접수 큐 경로/실행 상태 불일치")
+        if label == "target" and self.p.handoff is not None:
+            sealed = self.job.checkpoint["receipt_sealed"]
+            self.p.handoff.resume_destination(sealed)
+            self.p.handoff.forward(sealed)
+        else:
+            snap = self._ingress_snapshot()
+            if snap["target"] != self._ingress_name(target) or snap["mode"] != "running":
+                raise CutoverError("트래픽봇 시작 전 접수 큐 경로/실행 상태 불일치")
         if not self.p.db.app_can_insert(target):
             raise CutoverError("트래픽봇 대상 앱 INSERT 권한이 없다")
         if key not in self.job.checkpoint:
@@ -574,6 +593,9 @@ class Cutover:
                             "expected": {"source": src_route, "target": tgt_route}}
             if traffic_info["target"] not in (None, src_route):
                 problems.append(f"공개 도메인 경로={traffic_info['target']} 이 원본({src_route}) 이 아니다")
+        if self.p.handoff is not None:
+            binding = self.p.handoff.precheck()
+            self._save(receipt_binding=binding)
         if problems:
             raise CutoverError("PRECHECK 실패: " + "; ".join(problems))
         self._save(COPYING, bot_identity={"run_id": bs["run_id"], "ledger_id": bs["ledger_id"]},
@@ -662,7 +684,15 @@ class Cutover:
         ingress_paused: dict[str, Any] | None = None
         if self.ingress is not None:
             # 접수는 계속 받되(202) 앱으로 보내는 것만 멈춘다. settled 가 아니면 원본을 닫지 않는다.
-            ingress_paused = self._step("ingress_pause", lambda: self.ingress.pause())  # type: ignore[union-attr]
+            if self.p.handoff is not None:
+                # Persist intent before sealing: never auto-reopen an admission gate
+                # whose seal response may have been lost.
+                self._save(receipt_seal_attempted=True)
+                sealed = self.p.handoff.seal(self.job.checkpoint["receipt_binding"])
+                self._save(receipt_sealed=sealed)
+                ingress_paused = {"settled": True}
+            else:
+                ingress_paused = self._step("ingress_pause", lambda: self.ingress.pause())  # type: ignore[union-attr]
             snap = self._ingress_snapshot()
             if snap.get("mode") != "paused" or snap.get("in_flight"):
                 raise CutoverError(f"접수 서비스가 paused 가 아니거나 전달 중 요청이 있다: {snap}")
@@ -775,6 +805,8 @@ class Cutover:
                 }, source="migration.cutover"),
             }
             self._policy_guard("final_verify", checks)
+        if self.p.handoff is not None:
+            self._step("receipt_import", lambda: self.p.handoff.transfer(self.job.checkpoint["receipt_sealed"]))
         if not self.job.checkpoint.get("target_grant_attempted"):
             self._set_bot_generation(False)
             self._wait_bot_settled()
@@ -786,8 +818,17 @@ class Cutover:
             raise CutoverError("대상 쓰기 전 건수 기준점이 없다. 수동 복구 필요")
         self._save(target_grant_attempted=True)
         self._step("grant_target_app_insert", lambda: (self.p.db.grant_app_insert(self.target), {"granted": True})[1])
-        ingress_switch = self._switch_ingress()
+        if self.p.handoff is not None:
+            self._wait("target_app_ready", lambda: self._app_ready(self.target))
+            self._save(receipt_activation_attempted=True)
+            sealed = self.job.checkpoint["receipt_sealed"]
+            ingress_switch = self.p.handoff.activate(sealed)
+            self.p.handoff.forward(sealed)
+        else:
+            ingress_switch = self._switch_ingress()
         traffic_switch = self._switch_traffic() if self.p.traffic is not None else None
+        if self.p.handoff is not None:
+            self._save(cloud_components=self.p.handoff.verify_destination(self.job.checkpoint["receipt_sealed"]))
         self._start_bot_batch("target", self.cc.min_rows_after_switch)
         self._save(VERIFYING, switched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                    ingress=ingress_switch, traffic=traffic_switch)
@@ -853,10 +894,16 @@ class Cutover:
         # Resume only the remaining requests of the saved batch after a transient failure.
         if "bot_target_limit" not in self.job.checkpoint:
             raise CutoverError("대상 트래픽봇 한도 기록이 없다. 수동 복구 필요")
-        snap = self._ingress_snapshot()
-        if snap["target"] != self._ingress_name(self.target):
-            raise CutoverError("검증 재개 전 접수 큐 대상이 바뀌었다. 수동 복구 필요")
-        self._switch_ingress()
+        if self.p.handoff is not None:
+            sealed = self.job.checkpoint["receipt_sealed"]
+            self.p.handoff.resume_destination(sealed)
+            self.p.handoff.forward(sealed)
+            self.p.handoff.verify_destination(sealed)
+        else:
+            snap = self._ingress_snapshot()
+            if snap["target"] != self._ingress_name(self.target):
+                raise CutoverError("검증 재개 전 접수 큐 대상이 바뀌었다. 수동 복구 필요")
+            self._switch_ingress()
         self._start_bot_batch("target", self.cc.min_rows_after_switch)
         bs = self._wait_bot_batch("target")
         self._set_bot_generation(False)
@@ -874,7 +921,11 @@ class Cutover:
         info["rows"] = {"source": source_rows, "target": target_rows, "budget": TOTAL_ROWS}
         if self.p.db.app_can_insert(self.source):
             raise CutoverError("원본 앱 쓰기가 다시 열려 있다")
-        if self.ingress is not None:
+        if self.p.handoff is not None:
+            sealed = self.job.checkpoint["receipt_sealed"]
+            info["ingress"] = self.p.handoff.resume_destination(sealed)
+            info["cloud_components"] = self.p.handoff.verify_destination(sealed)
+        elif self.ingress is not None:
             snap = self._ingress_snapshot()
             if snap.get("mode") != "running" or snap.get("target") != self._ingress_name(self.target):
                 raise CutoverError(f"접수 서비스가 대상으로 돌아가고 있지 않다: {snap}")
@@ -901,12 +952,15 @@ class Cutover:
             if cleanup.get("error"):
                 log.warning("원본 후처리 미완료 (%s) — python -m migration.source_cleanup --config <same-config>",
                             cleanup["error"])
+        if self.p.handoff is not None:
+            info["dns_cutover_pending"] = True
+            info["source_receipt_role"] = "forwarding"
         self._save(COMPLETED, counts_final=result, post_switch=info, source_cleanup=cleanup)
 
     # ---- 실행 -----
 
     def plan(self) -> list[tuple[str, str]]:
-        return [
+        plan = [
             (PRECHECK, "양쪽 DB·트래픽봇 제어/원장·접수 큐 경로·Connect 확인"),
             (COPYING, "기준점(원본 max(created_at)) 저장, publication/slot 준비, Source/Sink 등록, snapshot(seed) 완료 대기"),
             (CATCHING_UP, f"기준점 이전 집합 digest 확정 → 기준점 이후 최소 {self.cc.min_live_rows_after_snapshot}건 반영 확인"),
@@ -922,6 +976,16 @@ class Cutover:
             (VERIFYING, f"대상 신규 {self.cc.min_rows_after_switch}건 확인 → 건수 확인(대상 delta ≥ 원본, 스냅샷 건수 일치)"),
             (COMPLETED, "트래픽봇 생성 정지·미확인 요청 0 확인 후 완료"),
         ]
+        if self.config.full_migration:
+            descriptions = {
+                PRECHECK: "DB·봇·접수 원장 식별자·AWS standby·고정 앱 버전/DB 확인",
+                FENCING: "봇 정지·확인 → 원본 접수 영속 봉인/진행 요청 종료 → 원본 DB INSERT 회수",
+                SWITCHING: "접수 원장/Redis 큐 페이지 인계·digest 검증 → 대상 GRANT → AWS 앱 확인 → AWS 접수 활성화 → 구주소 forwarding",
+                VERIFYING: "AWS 앱/접수 원장 직접 확인 → 대상 신규 쓰기·건수 확인 → 봇 정지",
+                COMPLETED: "DB·데모앱·접수서비스/Redis 이전 완료 (사용자 DNS 전환은 후속, 원본은 forwarding 유지)",
+            }
+            plan = [(stage, descriptions.get(stage, text)) for stage, text in plan]
+        return plan
 
     def run(self, *, retry: bool = False, force_retry: bool = False) -> str:
         stage = self.job.stage
@@ -978,6 +1042,8 @@ class Cutover:
     def _target_writes_possible(self, stage: str) -> bool:
         # Persisted intent precedes GRANT. A missing response is not proof that
         # the grant failed; never reopen the source in that case.
+        if self.job.checkpoint.get("receipt_activation_attempted"):
+            return True
         if self.job.checkpoint.get("target_grant_attempted"):
             return True
         if self.store.step_done(self.job_id, "grant_target_app_insert") is not None:
@@ -993,6 +1059,8 @@ class Cutover:
         if self.job.stage != ABORTED:
             raise CutoverError(f"abort 는 ABORTED 상태에서만 가능 (현재 {self.job.stage})")
         failed = str(self.job.checkpoint.get("failed_stage") or PRECHECK)
+        if self.job.checkpoint.get("receipt_seal_attempted"):
+            raise CutoverError("접수 원장 봉인 이후 자동 원복은 금지된다. 같은 작업 재개 또는 수동 복구 필요")
         if self._target_writes_possible(failed):
             raise CutoverError("대상 쓰기 이후 실패는 자동 원복하지 않는다")
         if self.p.db.app_can_insert(self.target):
@@ -1059,6 +1127,7 @@ def _build(config: Config, state_dir: Path, report_dir: Path, approve: str | Non
         verify=VerifyAdapter(config, state_dir, report_dir),
         ingress=IngressAdapter(config) if config.ingress.enabled else None,
         traffic=HttpTrafficClient(config.traffic) if config.traffic.enabled else None,
+        handoff=ReceiptHandoff(config) if config.full_migration else None,
     )
     return Cutover(config, store, ports, connector_docs=docs, approve=approve,
                    policy_gate=CutoverPolicyGate(config, state_dir))

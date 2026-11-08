@@ -322,6 +322,28 @@ def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
     base = yaml.safe_load(Path(base_path).read_text()) or {}
     targets = base.get("targets") or {}
     source, target = claimed["data_source"], claimed["data_target"]
+    if base.get("full_migration") is not None:
+        mapping = base.get("platform_data_targets")
+        if not isinstance(mapping, dict) or not mapping:
+            raise ValueError("full migration requires explicit platform_data_targets")
+        resolved = []
+        for side in ("source", "target"):
+            environment = claimed.get(f"{side}_env")
+            configured = mapping.get(environment)
+            requested = claimed[f"data_{side}"]
+            if not isinstance(configured, str) or requested not in (environment, configured):
+                raise ValueError(f"full migration {side} environment/data target mismatch")
+            resolved.append(configured)
+        source, target = resolved
+        base_job = base.get("job") or {}
+        if (source, target) != (base_job.get("source"), base_job.get("target")):
+            raise ValueError("full migration only supports the configured source/target direction")
+        allowed_apps, selected_apps = base.get("platform_apps"), claimed.get("apps")
+        if (not isinstance(allowed_apps, list) or not allowed_apps
+                or not all(isinstance(app, str) and app for app in allowed_apps)
+                or not isinstance(selected_apps, list) or len(selected_apps) != 1
+                or selected_apps[0] not in allowed_apps):
+            raise ValueError("full migration requires exactly one configured sample-app selection")
     missing = [name for name in (source, target) if name not in targets]
     if missing:
         raise ValueError(f"러너 설정 targets 에 없는 대상입니다: {', '.join(missing)}")

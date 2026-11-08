@@ -289,6 +289,81 @@ def test_job_config_rejects_targets_the_runner_does_not_know(tmp_path):
         reporter.job_config(str(base), unknown, tmp_path / "jobs")
 
 
+FULL_CONFIG = (
+    BASE_CONFIG
+    + """
+full_migration: {destination_target: aws_eks}
+platform_data_targets: {onprem: onprem_return, aws: aws}
+platform_apps: [sample-app, hackathon/Deployment/sample-app, hackathon/Rollout/sample-app]
+"""
+)
+
+
+@pytest.mark.parametrize("source", ["onprem", "onprem_return"])
+@pytest.mark.parametrize(
+    "app", ["sample-app", "hackathon/Deployment/sample-app", "hackathon/Rollout/sample-app"]
+)
+def test_full_job_config_resolves_only_explicit_platform_aliases(tmp_path, source, app):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(FULL_CONFIG)
+    claimed = {**CLAIMED, "data_source": source, "apps": [app]}
+    path = reporter.job_config(str(base), claimed, tmp_path / "jobs")
+    config = yaml.safe_load(path.read_text())
+    assert (config["job"]["source"], config["job"]["target"]) == ("onprem_return", "aws")
+    assert config["full_migration"] == {"destination_target": "aws_eks"}
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"data_source": "aws"},
+        {"data_target": "onprem_return"},
+        {"source_env": "connected-7"},
+        {
+            "source_env": "aws",
+            "target_env": "onprem",
+            "data_source": "aws",
+            "data_target": "onprem_return",
+        },
+        {"apps": []},
+        {"apps": ["other-app"]},
+        {"apps": ["sample-app", "other-app"]},
+        {"apps": ["sample-app", "sample-app"]},
+        {"apps": ["other-namespace/Deployment/sample-app"]},
+    ],
+)
+def test_full_job_config_rejects_wrong_database_direction_or_apps(tmp_path, override):
+    base = tmp_path / "config.yaml"
+    base.write_text(FULL_CONFIG)
+    claimed = {**CLAIMED, "apps": ["sample-app"], **override}
+    with pytest.raises(ValueError, match="full migration"):
+        reporter.job_config(str(base), claimed, tmp_path / "jobs")
+    assert not (tmp_path / "jobs").exists()
+
+
+@pytest.mark.parametrize("remove", ["platform_data_targets", "platform_apps"])
+def test_full_job_config_requires_explicit_platform_contract(tmp_path, remove):
+    import yaml
+
+    config = yaml.safe_load(FULL_CONFIG)
+    del config[remove]
+    base = tmp_path / "config.yaml"
+    base.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="full migration"):
+        reporter.job_config(str(base), {**CLAIMED, "apps": ["sample-app"]}, tmp_path / "jobs")
+
+
+def test_db_only_job_config_preserves_platform_target_without_full_remapping(tmp_path):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(BASE_CONFIG)
+    path = reporter.job_config(str(base), {**CLAIMED, "data_source": "onprem"}, tmp_path / "jobs")
+    assert yaml.safe_load(path.read_text())["job"]["source"] == "onprem"
+
+
 def test_execute_any_runs_the_claimed_task_with_its_own_config(tmp_path, monkeypatch):
     base = tmp_path / "config.yaml"
     base.write_text(BASE_CONFIG)
