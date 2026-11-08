@@ -344,6 +344,12 @@ def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
                 or not isinstance(selected_apps, list) or len(selected_apps) != 1
                 or selected_apps[0] not in allowed_apps):
             raise ValueError("full migration requires exactly one configured sample-app selection")
+    else:
+        aliases = base.get("platform_data_targets") or {}
+        source, target = (
+            aliases.get(name, name) if name == claimed.get(f"{side}_env") else name
+            for side, name in (("source", source), ("target", target))
+        )
     missing = [name for name in (source, target) if name not in targets]
     if missing:
         raise ValueError(f"러너 설정 targets 에 없는 대상입니다: {', '.join(missing)}")
