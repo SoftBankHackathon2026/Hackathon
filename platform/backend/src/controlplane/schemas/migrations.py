@@ -379,6 +379,7 @@ class ClaimedCommand(BaseModel):
     target_env: str
     data_source: str
     data_target: str
+    apps: list[str] = Field(default_factory=list)
 
 
 class PodLogLine(BaseModel):

@@ -25,6 +25,13 @@ Keycloak 인증 기반의 탐색·점검·호스트 설치는 독립 명령
 > **주의: 이 코드는 아직 실제 클러스터(온프렘 k3s, 기존 Postgres, RDS, Kafka Connect)에서 실행·검증하지 않았다.**
 > 로컬에서는 pytest 단위 테스트와 `docker run postgres:16-alpine` 통합 테스트만 통과했다. Debezium/Kafka Connect 와의 결합은 미검증이다.
 
+## DB·데모앱·접수서비스 전체 이전
+
+`full_migration`을 명시한 새 작업은 AWS EKS의 고정 버전 데모앱과 전용 접수서비스/Redis를
+확인하고, DB 전환과 함께 대기 요청·처리 기록을 인계한다. 기본 DB-only 동작과 구분한다.
+[설정·단계·실패 복구·로컬 검증](docs/full-service-migration.md)을 참고한다.
+사용자 도메인의 DNS 변경은 후속 단계이며, 이 작업 완료만으로 온프렘을 꺼서는 안 된다.
+
 ## 구성
 
 ```
