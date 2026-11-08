@@ -6,6 +6,7 @@ from psycopg.types.json import Jsonb
 from controlplane.core.errors import RequestConflict
 from controlplane.repositories.releases import ReleaseStore
 from controlplane.schemas.agent import (
+    ACTIVE_STATES,
     AgentCommand,
     AgentHeartbeat,
     ApprovalTicket,
@@ -20,6 +21,7 @@ RUN_COLUMNS = "run_id, agent_id, job_id, state, created_at, updated_at, detail, 
 APPROVAL_COLUMNS = "id, run_id, decision, requested_by, requested_at"
 COMMAND_COLUMNS = "id, kind, payload, requested_by, requested_at"
 RERUN_PENDING = "이 에이전트에 아직 처리하지 않은 다시 판정 요청이 있어요."
+VISIBLE = "hidden_at IS NULL"
 
 
 class AgentJournal:
@@ -131,7 +133,7 @@ class AgentJournal:
     def runs(self, limit: int) -> list[StoredRun]:
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT {RUN_COLUMNS} FROM agent_runs "
+                f"SELECT {RUN_COLUMNS} FROM agent_runs WHERE {VISIBLE} "
                 "ORDER BY created_at DESC, run_id DESC LIMIT %s",
                 (limit,),
             ).fetchall()
@@ -140,9 +142,31 @@ class AgentJournal:
     def run(self, run_id: str) -> StoredRun | None:
         with self.connect() as conn:
             row = conn.execute(
-                f"SELECT {RUN_COLUMNS} FROM agent_runs WHERE run_id=%s", (run_id,)
+                f"SELECT {RUN_COLUMNS} FROM agent_runs WHERE run_id=%s AND {VISIBLE}", (run_id,)
             ).fetchone()
         return StoredRun.model_validate(row) if row else None
+
+    def hide_runs(
+        self, run_ids: list[str], hidden_by: str, hidden_at: datetime
+    ) -> tuple[set[str], set[str]]:
+        """보이는 실행 중 진행 중이 아닌 것만 숨기고, (숨긴 것, 진행 중이라 남긴 것)을 돌려준다.
+
+        행을 지우지 않는다. 에이전트가 같은 run_id 를 다시 보내도 upsert 가 hidden_at 을 건드리지 않아
+        목록에 돌아오지 않는다.
+        """
+        active = sorted(ACTIVE_STATES)
+        with self.connect() as conn:
+            hidden = conn.execute(
+                "UPDATE agent_runs SET hidden_at=%s, hidden_by=%s "
+                f"WHERE run_id = ANY(%s) AND {VISIBLE} AND NOT (state = ANY(%s)) "
+                "RETURNING run_id",
+                (hidden_at, hidden_by, run_ids, active),
+            ).fetchall()
+            kept = conn.execute(
+                f"SELECT run_id FROM agent_runs WHERE run_id = ANY(%s) AND {VISIBLE}",
+                (run_ids,),
+            ).fetchall()
+        return {row["run_id"] for row in hidden}, {row["run_id"] for row in kept}
 
     def pending(self, run_id: str) -> ApprovalTicket | None:
         with self.connect() as conn:
@@ -172,7 +196,7 @@ class AgentJournal:
             rows = conn.execute(
                 "SELECT a.id, a.run_id, a.decision, a.requested_by, a.requested_at "
                 "FROM agent_approvals a JOIN agent_runs r ON r.run_id = a.run_id "
-                "WHERE r.agent_id=%s AND a.consumed_at IS NULL "
+                "WHERE r.agent_id=%s AND a.consumed_at IS NULL AND r.hidden_at IS NULL "
                 "ORDER BY a.requested_at, a.id",
                 (agent_id,),
             ).fetchall()

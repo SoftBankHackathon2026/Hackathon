@@ -1,5 +1,5 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentDecision,
   AgentRun,
@@ -24,6 +24,14 @@ import {
   formatRatio,
   formatSeconds,
 } from "../../lib/format";
+import {
+  chosenIds,
+  confirmText,
+  deletionText,
+  headerCheck,
+  toggleAll,
+  toggleRun,
+} from "./deletion";
 import { fixView, hypotheses, sandbox } from "./evidence";
 import { FixDiff, HypothesisTree, SandboxSteps } from "./RunEvidence";
 import {
@@ -49,6 +57,7 @@ import {
   agentRunsQueryOptions,
   agentStatusQueryOptions,
   useDecideAgentRun,
+  useDeleteAgentRuns,
 } from "./queries";
 import { AgentSettings, RerunButton } from "./AgentSettings";
 import { hasPendingRerun } from "./settings";
@@ -65,10 +74,15 @@ export function AgentPage({ runId }: { runId?: string }) {
   const { data: list } = useSuspenseQuery(agentRunsQueryOptions());
   const [filter, setFilter] = useState<RunFilter>("acted");
   const rows = filterRuns(list.runs, filter);
+  const [notice, setNotice] = useState<string | null>(null);
   const select = useCallback(
     (id: string | undefined) => replaceHash(agentHash(id)),
     [],
   );
+  const deleted = (ids: string[], text: string) => {
+    setNotice(text);
+    if (runId && ids.includes(runId)) select(undefined);
+  };
   const empty = status.agents.length === 0 && list.runs.length === 0;
   return (
     <div className="pk-page">
@@ -102,12 +116,25 @@ export function AgentPage({ runId }: { runId?: string }) {
             />
           </ScopeFilterRow>
           <Section title="실행 기록" meta={rows.length}>
-            <RunsTable rows={rows} selected={runId} onSelect={select} />
+            <RunsTable
+              rows={rows}
+              selected={runId}
+              onSelect={select}
+              canDelete={list.can_delete}
+              notice={notice}
+              onPick={() => setNotice(null)}
+              onDeleted={deleted}
+            />
           </Section>
         </>
       )}
       {runId && (
-        <RunPanel key={runId} runId={runId} onClose={() => select(undefined)} />
+        <RunPanel
+          key={runId}
+          runId={runId}
+          onClose={() => select(undefined)}
+          onDeleted={deleted}
+        />
       )}
     </div>
   );
@@ -197,75 +224,309 @@ function ScoreRow({ runs }: { runs: AgentRun[] }) {
   );
 }
 
+type OnDeleted = (ids: string[], text: string) => void;
+
 function RunsTable({
   rows,
   selected,
   onSelect,
+  canDelete,
+  notice,
+  onPick,
+  onDeleted,
 }: {
   rows: AgentRun[];
   selected: string | undefined;
   onSelect: (id: string | undefined) => void;
+  canDelete: boolean;
+  notice: string | null;
+  onPick: () => void;
+  onDeleted: OnDeleted;
 }) {
-  if (rows.length === 0)
-    return <p className="empty-line">보여 줄 실행 기록이 없어요.</p>;
+  const [picked, setPickedState] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const setPicked = (next: ReadonlySet<string>) => {
+    setPickedState(next);
+    onPick();
+  };
+  const chosen = chosenIds(picked, rows);
+  const check = headerCheck(picked, rows);
+  const headRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (headRef.current) headRef.current.indeterminate = check === "some";
+  }, [check]);
+  const deletable = canDelete && rows.some((run) => run.can_delete);
   return (
-    <div className="table-wrap">
-      <table className="pk-table" data-panel-owner>
-        <thead>
-          <tr>
-            <th>상태</th>
-            <th>시작</th>
-            <th>작업</th>
-            <th>판정 사유</th>
-            <th>변경</th>
-            <th>걸린 시간</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((run) => {
-            const open = run.run_id === selected;
-            const flip = () => onSelect(open ? undefined : run.run_id);
-            return (
-              <tr
-                key={run.run_id}
-                className={`clickable${open ? " selected" : ""}`}
-                tabIndex={0}
-                aria-selected={open}
-                onClick={flip}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    flip();
-                  }
-                }}
-              >
-                <td>
-                  <StatusDot tone={runTone(run.state)}>
-                    {runStateLabel(run.state)}
-                  </StatusDot>
-                </td>
-                <td className="sub">
-                  <time dateTime={run.created_at}>
-                    {formatDateTime(run.created_at)}
-                  </time>
-                </td>
-                <td>
-                  {run.job_id}
-                  <span className="mono sub agent-run-id">{run.run_id}</span>
-                </td>
-                <td className="mono">{reasonText(run.summary.reason_codes)}</td>
-                <td className="mono">{changeText(run.summary.changes)}</td>
-                <td className="sub">{formatSeconds(runSeconds(run))}</td>
+    <>
+      {canDelete && (
+        <DeleteBar
+          deletable={deletable}
+          runIds={chosen}
+          notice={notice}
+          onDeleted={(ids, text) => {
+            setPickedState(new Set());
+            onDeleted(ids, text);
+          }}
+        />
+      )}
+      {rows.length === 0 ? (
+        <p className="empty-line">보여 줄 실행 기록이 없어요.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="pk-table" data-panel-owner>
+            <thead>
+              <tr>
+                {canDelete && (
+                  <th className="agent-check-cell">
+                    <input
+                      ref={headRef}
+                      type="checkbox"
+                      aria-label="보이는 실행 모두 선택"
+                      checked={check === "all"}
+                      disabled={!deletable}
+                      onChange={() => setPicked(toggleAll(picked, rows))}
+                    />
+                  </th>
+                )}
+                <th>상태</th>
+                <th>시작</th>
+                <th>작업</th>
+                <th>판정 사유</th>
+                <th>변경</th>
+                <th>걸린 시간</th>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {rows.map((run) => {
+                const open = run.run_id === selected;
+                const flip = () => onSelect(open ? undefined : run.run_id);
+                return (
+                  <tr
+                    key={run.run_id}
+                    className={`clickable${open ? " selected" : ""}`}
+                    tabIndex={0}
+                    aria-selected={open}
+                    onClick={flip}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        flip();
+                      }
+                    }}
+                  >
+                    {canDelete && (
+                      <td
+                        className="agent-check-cell"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <label
+                          className="agent-check"
+                          title={
+                            run.can_delete
+                              ? undefined
+                              : "진행 중인 실행은 지울 수 없어요."
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`${run.job_id} ${run.run_id} 선택`}
+                            checked={run.can_delete && picked.has(run.run_id)}
+                            disabled={!run.can_delete}
+                            onChange={() =>
+                              setPicked(toggleRun(picked, run.run_id))
+                            }
+                          />
+                        </label>
+                      </td>
+                    )}
+                    <td>
+                      <StatusDot tone={runTone(run.state)}>
+                        {runStateLabel(run.state)}
+                      </StatusDot>
+                    </td>
+                    <td className="sub">
+                      <time dateTime={run.created_at}>
+                        {formatDateTime(run.created_at)}
+                      </time>
+                    </td>
+                    <td>
+                      {run.job_id}
+                      <span className="mono sub agent-run-id">
+                        {run.run_id}
+                      </span>
+                    </td>
+                    <td className="mono">
+                      {reasonText(run.summary.reason_codes)}
+                    </td>
+                    <td className="mono">{changeText(run.summary.changes)}</td>
+                    <td className="sub">{formatSeconds(runSeconds(run))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+function DeleteBar({
+  deletable,
+  runIds,
+  notice,
+  onDeleted,
+}: {
+  deletable: boolean;
+  runIds: string[];
+  notice: string | null;
+  onDeleted: OnDeleted;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const remove = useDeleteAgentRuns((result) => {
+    setConfirming(false);
+    onDeleted(result.deleted, deletionText(result));
+  });
+  const count = runIds.length;
+  const asking = confirming && count > 0;
+  if (!deletable && count === 0 && !notice && !remove.isError) return null;
+  return (
+    <div className="agent-bulk" data-panel-owner>
+      {!asking && (
+        <div
+          className="agent-bulk-row ctl-actions"
+          role="group"
+          aria-label="선택한 실행"
+        >
+          <span className="agent-bulk-count">{count}개 선택</span>
+          <button
+            type="button"
+            className="pk-button weak"
+            disabled={count === 0}
+            onClick={() => setConfirming(true)}
+          >
+            선택 삭제
+          </button>
+        </div>
+      )}
+      {asking && (
+        <DeleteConfirm
+          count={count}
+          pending={remove.isPending}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => remove.mutate(runIds)}
+        />
+      )}
+      {notice && !asking && (
+        <p className="info-line" role="status">
+          {notice}
+        </p>
+      )}
+      {remove.isError && (
+        <p className="pk-alert" role="alert">
+          {errorMessage(remove.error, "기록을 지우지 못했어요.")}
+        </p>
+      )}
     </div>
   );
 }
 
-function RunPanel({ runId, onClose }: { runId: string; onClose: () => void }) {
+function DeleteConfirm({
+  count,
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  count: number;
+  pending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="agent-confirm" role="group" aria-label="삭제 확인">
+      <p className="info-line">{confirmText(count)}</p>
+      <div className="ctl-actions">
+        <button
+          type="button"
+          className="pk-button"
+          disabled={pending}
+          onClick={onConfirm}
+        >
+          삭제 확정
+        </button>
+        <button
+          type="button"
+          className="pk-button weak"
+          disabled={pending}
+          onClick={onCancel}
+        >
+          취소
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RunDeleteControl({
+  run,
+  onDeleted,
+}: {
+  run: AgentRunDetail;
+  onDeleted: OnDeleted;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [kept, setKept] = useState<string | null>(null);
+  const remove = useDeleteAgentRuns((result) => {
+    setConfirming(false);
+    if (result.deleted.length > 0)
+      onDeleted(result.deleted, deletionText(result));
+    else setKept(deletionText(result));
+  });
+  if (!confirming && !kept && !remove.isError)
+    return (
+      <button
+        type="button"
+        className="pk-button weak"
+        onClick={() => setConfirming(true)}
+      >
+        기록 삭제
+      </button>
+    );
+  return (
+    <div className="agent-decide">
+      {confirming ? (
+        <DeleteConfirm
+          count={1}
+          pending={remove.isPending}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => remove.mutate([run.run_id])}
+        />
+      ) : null}
+      {kept && (
+        <p className="info-line" role="status">
+          {kept}
+        </p>
+      )}
+      {remove.isError && (
+        <p className="pk-alert" role="alert">
+          {errorMessage(remove.error, "기록을 지우지 못했어요.")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RunPanel({
+  runId,
+  onClose,
+  onDeleted,
+}: {
+  runId: string;
+  onClose: () => void;
+  onDeleted: OnDeleted;
+}) {
   const query = useQuery(agentRunQueryOptions(runId));
   const status = useQuery(agentStatusQueryOptions());
   const run = query.data;
@@ -296,12 +557,15 @@ function RunPanel({ runId, onClose }: { runId: string; onClose: () => void }) {
       }
       actions={
         run ? (
-          <>
+          <div className="agent-panel-actions">
             <DecisionControls run={run} />
             {(run.can_rerun || rerunPending) && (
               <RerunButton agentId={run.agent_id} pending={rerunPending} />
             )}
-          </>
+            {run.can_delete && (
+              <RunDeleteControl run={run} onDeleted={onDeleted} />
+            )}
+          </div>
         ) : undefined
       }
     >

@@ -41,6 +41,7 @@ function detail(
     pending_approval: null,
     can_decide: false,
     can_rerun: false,
+    can_delete: false,
   };
 }
 
@@ -261,6 +262,7 @@ function row(state: AgentRunState, seconds: number, changes = 0): AgentRun {
       })),
       diagnosis: null,
     },
+    can_delete: true,
   };
 }
 
