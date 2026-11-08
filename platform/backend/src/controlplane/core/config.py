@@ -80,6 +80,38 @@ class _HttpEnvironment(BaseSettings):
         return _split_csv(value)
 
 
+class SecuritySettings(BaseSettings):
+    """보안 탭 점검 기준값. ONEPORT_SECURITY_* 환경변수로 바꾼다.
+
+    k8s_max_node_skew 는 컨트롤플레인과 각 노드 kubelet 의 마이너 버전 차이 허용값이다.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="ONEPORT_SECURITY_", extra="ignore")
+
+    japan_regions: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "ap-northeast-1",
+            "ap-northeast-3",
+            "asia-northeast1",
+            "asia-northeast2",
+        ]
+    )
+    # 지원 하한 마이너 버전. 근거(2026-11-08 확인):
+    # - 업스트림 1.34 EOL 2026-10-27 (https://kubernetes.io/releases/)
+    # - EKS 1.34 표준 지원 종료 2026-12-02, 1.35 이상은 표준 지원 중
+    #   (https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html)
+    # 다음 갱신: EKS 1.35 표준 지원 종료일 전. 위 EKS 달력에서 날짜를 확인해 올린다.
+    k8s_min_minor: str = Field(default="1.35", pattern=r"^\d+\.\d+$")
+    k8s_max_node_skew: int = Field(default=1, ge=0, le=3)
+    # 클라우드 API 보안 실측 주기(초). 설정은 자주 바뀌지 않고 API 호출 수가 있어 비용 수집과 같은 5분.
+    cloud_interval_seconds: int = Field(default=300, ge=60, le=86400)
+
+    @field_validator("japan_regions", mode="before")
+    @classmethod
+    def comma_separated(cls, value: object) -> object:
+        return _split_csv(value)
+
+
 class PlatformEnvironment(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ONEPORT_", extra="ignore")
 

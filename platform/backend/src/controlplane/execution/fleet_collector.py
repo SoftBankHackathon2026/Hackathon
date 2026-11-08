@@ -2,17 +2,20 @@ import argparse
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 from controlplane.core import db
+from controlplane.core.config import SecuritySettings
 from controlplane.cost.collect import carry_over_kubernetes, collect_inventory
 from controlplane.cost.config import CostConfig, load_cost_config
 from controlplane.cost.models import CostInventory
 from controlplane.cost.onprem import OnPremMeter, create_meter
 from controlplane.cost.store import CostStore
+from controlplane.domain.cloud_security import CloudSecurityReader
 from controlplane.domain.fleet import EnvironmentConfig, FleetConfig, MigrationConfig
+from controlplane.integrations.cloud_security import collect_cloud_security, default_readers
 from controlplane.integrations.codec import (
     connector_view,
     facts_to_json,
@@ -56,6 +59,8 @@ class FleetCollector:
         cost_config: CostConfig | None = None,
         cost_reader: Callable[..., CostInventory] = collect_inventory,
         clock: Callable[[], float] = time.monotonic,
+        cloud_readers: Mapping[str, CloudSecurityReader] | None = None,
+        cloud_seconds: float = 300,
     ) -> None:
         self._config = config
         self._journal = journal
@@ -66,6 +71,9 @@ class FleetCollector:
         self._meters: dict[str, OnPremMeter] = {}
         self._clock = clock
         self._last_run: dict[str, float] = {}
+        # None 이면 클라우드 보안 실측을 하지 않는다(테스트·로컬). main 이 운영 리더를 넣는다.
+        self._cloud_readers = cloud_readers
+        self._cloud_seconds = cloud_seconds
 
     def _meter(self, env: EnvironmentConfig) -> OnPremMeter | None:
         """비용 설정이 고른 온프렘 측정기. 환경마다 한 번 만든다."""
@@ -121,6 +129,14 @@ class FleetCollector:
             env.id, facts.observed_at or datetime.now(UTC), facts_to_json(facts)
         )
 
+    def collect_cloud_security(self, env: EnvironmentConfig) -> None:
+        if self._cloud_readers is None:
+            return
+        facts = collect_cloud_security(env, self._cloud_readers)
+        if facts is None:
+            return
+        self._journal.put_cloud_security(env.id, facts.observed_at, facts.model_dump(mode="json"))
+
     def _due(self, name: str, interval: float, now: float) -> bool:
         last = self._last_run.get(name)
         if last is not None and now - last < interval:
@@ -153,6 +169,12 @@ class FleetCollector:
                     self.collect_costs(env)
                 except Exception as exc:  # noqa: BLE001 - DB·검증 오류도 다음 환경과 다음 tick 을 막지 않는다
                     LOG.warning("env=%s cost error=%s", env.id, type(exc).__name__)
+        if self._cloud_readers is not None and self._due("cloud", self._cloud_seconds, now):
+            for env in self._config.environments:
+                try:
+                    self.collect_cloud_security(env)
+                except Exception as exc:  # noqa: BLE001 - 한 환경의 저장 오류가 다른 환경을 막지 않게 한다
+                    LOG.warning("env=%s cloud security error=%s", env.id, type(exc).__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         FleetJournal(platform.store),
         costs=CostStore(platform.store),
         cost_config=load_cost_config(),
+        cloud_readers=default_readers(),
+        cloud_seconds=SecuritySettings().cloud_interval_seconds,
     )
     tasks = MigrationTaskService(config, MigrationTaskJournal(platform.store))
     heartbeat = os.environ.get(HEARTBEAT_ENV)

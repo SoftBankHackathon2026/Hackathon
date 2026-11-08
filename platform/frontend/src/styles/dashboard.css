@@ -3579,6 +3579,28 @@ body {
 .fp-env-head .pk-label {
   margin-left: auto;
 }
+.fp-env-head .fp-source {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+.fp-env-head .fp-source + .pk-label {
+  margin-left: 0;
+}
+.fp-source.source-observed {
+  color: #1f6fb4;
+  border-color: #b9d5ef;
+}
+.fp-source.source-declared {
+  color: var(--text-secondary);
+}
+.fp-group p.fp-fallback {
+  color: #9a5b00;
+}
 .fp-group p.fp-env-detail {
   margin: 4px 0 0 30px;
   color: var(--text-secondary);

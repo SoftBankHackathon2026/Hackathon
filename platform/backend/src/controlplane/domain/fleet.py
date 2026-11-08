@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from controlplane.domain.cloud_security import CloudSecurityFacts
 from controlplane.domain.migration import Direction, Stage
 from controlplane.schemas.migrations import (
     AppState,
@@ -30,6 +31,21 @@ class DeclaredFacts(BaseModel):
     ingress_tls: bool | None = None
     waf: bool | None = None
     policy_gates: bool | None = None
+
+
+class CloudScope(BaseModel):
+    """보안 실측 수집 범위. 클라우드 API 를 읽을 대상 자원의 이름이다(읽기 전용)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # EKS 클러스터 이름 / GKE 클러스터 이름. 흐름 로그 대상 VPC·서브넷을 여기서 찾는다.
+    cluster: str
+    # GKE 클러스터 위치(리전 또는 존). 비우면 환경 region.
+    cluster_location: str | None = None
+    # GCP 프로젝트 ID. AWS 는 수집기의 자격 증명 계정을 쓴다.
+    project: str | None = None
+    # RDS DB 인스턴스 식별자 / Cloud SQL 인스턴스 이름.
+    databases: list[str] = Field(default_factory=list)
 
 
 class ComponentConfig(BaseModel):
@@ -75,6 +91,8 @@ class EnvironmentConfig(BaseModel):
     components: list[ComponentConfig] = Field(default_factory=list)
     boundary: list[str] = Field(default_factory=list)
     declared: DeclaredFacts = Field(default_factory=DeclaredFacts)
+    # 있으면 수집기가 클라우드 API 로 일부 신고값을 실측한다. 온프렘은 두지 않는다.
+    cloud_scope: CloudScope | None = None
 
 
 class MigrationConfig(BaseModel):
@@ -264,3 +282,4 @@ class ClusterFacts:
 class EnvironmentSnapshot:
     config: EnvironmentConfig
     cluster: ClusterFacts
+    cloud: CloudSecurityFacts | None = None

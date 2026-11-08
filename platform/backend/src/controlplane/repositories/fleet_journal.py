@@ -143,3 +143,17 @@ class FleetJournal:
             return conn.execute(
                 "SELECT facts, observed_at FROM fleet_environment_facts WHERE env_id=%s", (env_id,)
             ).fetchone()
+
+    def put_cloud_security(self, env_id: str, at: datetime, facts: Row) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO fleet_cloud_security(env_id, facts, observed_at) VALUES(%s,%s,%s) "
+                "ON CONFLICT(env_id) DO UPDATE SET facts=excluded.facts, observed_at=excluded.observed_at",
+                (env_id, Jsonb(facts), at),
+            )
+
+    def get_cloud_security(self, env_id: str) -> Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT facts, observed_at FROM fleet_cloud_security WHERE env_id=%s", (env_id,)
+            ).fetchone()

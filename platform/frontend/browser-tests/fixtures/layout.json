@@ -845,33 +845,64 @@
     "standards": [
       {
         "id": "CIS-K8S",
-        "name": "CIS Kubernetes Benchmark v1.10"
+        "name": "CIS Kubernetes Benchmark v1.10",
+        "kind": "compliance",
+        "version": null,
+        "note": null
       },
       {
         "id": "AWS-FSBP",
-        "name": "AWS Foundational Security Best Practices"
+        "name": "AWS Foundational Security Best Practices",
+        "kind": "compliance",
+        "version": null,
+        "note": null
       },
       {
         "id": "CIS-GCP",
-        "name": "CIS Google Cloud Platform Foundation Benchmark"
+        "name": "CIS Google Cloud Platform Foundation Benchmark",
+        "kind": "compliance",
+        "version": null,
+        "note": null
       },
       {
         "id": "NSA-K8S",
-        "name": "NSA/CISA Kubernetes Hardening Guide"
+        "name": "NSA/CISA Kubernetes Hardening Guide",
+        "kind": "compliance",
+        "version": null,
+        "note": null
       },
       {
         "id": "ONEPORT",
-        "name": "Oneport 마이그레이션 정책 (OPA)"
+        "name": "Oneport 마이그레이션 정책 (OPA)",
+        "kind": "compliance",
+        "version": null,
+        "note": null
+      },
+      {
+        "id": "ISMAP",
+        "name": "ISMAP 政府情報システムのためのセキュリティ評価制度",
+        "kind": "coverage",
+        "version": "2023",
+        "note": "ISMAP 管理基準 (令和5年9月22日最終改定, JIS Q 27002:2014 = ISO/IEC 27002:2013 번호 체계) 기준. 고객 측 기술 통제만 점검하고 조직·인적·물리 통제는 점검하지 않아요."
+      },
+      {
+        "id": "ISMS-CLOUD",
+        "name": "ISMS 클라우드 보안 인증 (ISO/IEC 27017)",
+        "kind": "coverage",
+        "version": "2016",
+        "note": "ISMS 클라우드 보안 인증 (ISO/IEC 27017:2015, JIP-ISMS517-1.0) 기준. 고객 측 기술 통제만 점검하고 조직·인적·물리 통제는 점검하지 않아요."
       }
     ],
     "environments": [
       {
         "env_id": "onprem",
         "name": "온프렘 k3s (서울)",
-        "score": 57,
-        "passed": 10,
+        "score": 55,
+        "passed": 9,
         "failed": 10,
-        "unknown": 3,
+        "unknown": 5,
+        "not_applicable": 1,
+        "manual": 0,
         "by_severity": {
           "critical": 0,
           "high": 5,
@@ -882,27 +913,31 @@
       {
         "env_id": "aws",
         "name": "AWS EKS oneaction (서울)",
-        "score": 72,
+        "score": 70,
         "passed": 9,
         "failed": 4,
-        "unknown": 10,
+        "unknown": 11,
+        "not_applicable": 0,
+        "manual": 1,
         "by_severity": {
           "critical": 0,
-          "high": 2,
-          "medium": 2,
+          "high": 3,
+          "medium": 1,
           "low": 0
         }
       },
       {
         "env_id": "gcp",
         "name": "GCP GKE oneaction-dev (서울)",
-        "score": 72,
+        "score": 67,
         "passed": 9,
-        "failed": 4,
-        "unknown": 10,
+        "failed": 5,
+        "unknown": 11,
+        "not_applicable": 0,
+        "manual": 0,
         "by_severity": {
           "critical": 0,
-          "high": 2,
+          "high": 3,
           "medium": 2,
           "low": 0
         }
@@ -914,7 +949,12 @@
         "title": "앱 네임스페이스 default-deny NetworkPolicy",
         "category": "network",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 5.3.2", "NSA-K8S"],
+        "standard_refs": [
+          "CIS-K8S 5.3.2",
+          "NSA-K8S",
+          "ISMAP 13.1.3",
+          "ISMS-CLOUD CLD.9.5.1"
+        ],
         "remediation": "앱 네임스페이스에 ingress default-deny 정책을 두고 필요한 흐름만 허용하세요.",
         "why": "기본 차단 정책이 없으면 같은 클러스터의 다른 파드가 앱과 DB에 자유롭게 접근할 수 있어요. 한 파드가 뚫리면 옆으로 번지기 쉬워요.",
         "scope": "resource",
@@ -922,17 +962,23 @@
           "onprem": {
             "status": "pass",
             "detail": "hackathon: default-deny 포함 NetworkPolicy 6개",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -941,7 +987,14 @@
         "title": "DB 비공개 (SEC-01)",
         "category": "network",
         "severity": "critical",
-        "standard_refs": ["ONEPORT SEC-01", "AWS-FSBP RDS.2", "CIS-GCP 6.6"],
+        "standard_refs": [
+          "ONEPORT SEC-01",
+          "AWS-FSBP RDS.2",
+          "CIS-GCP 6.6",
+          "ISMAP 13.1.1",
+          "ISMAP 13.1.3",
+          "ISMS-CLOUD CLD.13.1.4"
+        ],
         "remediation": "DB를 사설 서브넷/ClusterIP로만 노출하세요. Cloud SQL은 공인 IP를 끄세요.",
         "why": "DB가 인터넷에 노출되면 비밀번호 대입이나 취약점 공격의 직접 대상이 돼요. 이전 중에는 원본과 대상 DB 모두 사설망에만 있어야 해요.",
         "scope": "resource",
@@ -949,17 +1002,23 @@
           "onprem": {
             "status": "pass",
             "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB가 사설망에서만 접근 가능 (oneaction-review-db PubliclyAccessible=False)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB가 사설망에서만 접근 가능",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB가 사설망에서만 접근 가능 (oneaction-dev-review 공인 IP 꺼짐)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -968,7 +1027,7 @@
         "title": "외부 진입점 TLS",
         "category": "network",
         "severity": "high",
-        "standard_refs": ["AWS-FSBP ELB.1"],
+        "standard_refs": ["AWS-FSBP ELB.1", "ISMAP 13.2.1", "ISMAP 14.1.2"],
         "remediation": "ALB/Cloud Load Balancing/Ingress에 HTTPS 리스너와 인증서를 연결하세요.",
         "why": "외부 진입점이 평문 HTTP면 로그인 쿠키와 요청 내용이 네트워크에서 그대로 보여요.",
         "scope": "resource",
@@ -976,17 +1035,23 @@
           "onprem": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "외부 진입점이 평문 HTTP",
-            "resources": ["Cloud Load Balancing"]
+            "resources": ["Cloud Load Balancing"],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -995,7 +1060,7 @@
         "title": "웹 방화벽(WAF)",
         "category": "network",
         "severity": "medium",
-        "standard_refs": ["AWS-FSBP WAF.1"],
+        "standard_refs": ["AWS-FSBP WAF.1", "ISMAP 13.1.2"],
         "remediation": "ALB 앞에 AWS WAF, Cloud Load Balancing 앞에 Cloud Armor(또는 오픈소스 WAF Ingress)를 두세요.",
         "why": "웹 방화벽이 없으면 SQL 인젝션, 봇 트래픽 같은 흔한 웹 공격을 앞단에서 걸러내지 못해요.",
         "scope": "resource",
@@ -1003,17 +1068,23 @@
           "onprem": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["Cloudflare Tunnel", "Traefik Ingress"]
+            "resources": ["Cloudflare Tunnel", "Traefik Ingress"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"]
+            "resources": ["ALB oneaction-alb", "AWS Load Balancer Controller"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "WAF 미적용",
-            "resources": ["Cloud Load Balancing"]
+            "resources": ["Cloud Load Balancing"],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1022,7 +1093,13 @@
         "title": "컨테이너 비루트 실행",
         "category": "workload",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 5.2.6", "NSA-K8S"],
+        "standard_refs": [
+          "CIS-K8S 5.2.6",
+          "NSA-K8S",
+          "ISMAP 9.4.4",
+          "ISMAP 12.5.1",
+          "ISMS-CLOUD CLD.9.5.2"
+        ],
         "remediation": "securityContext.runAsNonRoot=true를 지정하세요.",
         "why": "컨테이너가 root로 실행되면 컨테이너 탈출 취약점이 곧 노드 권한 탈취로 이어질 수 있어요.",
         "scope": "resource",
@@ -1030,17 +1107,23 @@
           "onprem": {
             "status": "pass",
             "detail": "앱 워크로드 4개 모두 runAsNonRoot 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1049,7 +1132,12 @@
         "title": "읽기 전용 루트 파일시스템",
         "category": "workload",
         "severity": "medium",
-        "standard_refs": ["NSA-K8S"],
+        "standard_refs": [
+          "NSA-K8S",
+          "ISMAP 9.4.4",
+          "ISMAP 12.5.1",
+          "ISMS-CLOUD CLD.9.5.2"
+        ],
         "remediation": "readOnlyRootFilesystem=true와 쓰기 볼륨 분리를 적용하세요.",
         "why": "루트 파일시스템에 쓸 수 있으면 공격자가 실행 파일을 바꾸거나 도구를 심을 수 있어요.",
         "scope": "resource",
@@ -1057,17 +1145,23 @@
           "onprem": {
             "status": "fail",
             "detail": "readOnlyRootFilesystem 미적용: kafka-broker, postgres",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1076,7 +1170,12 @@
         "title": "Linux capability 전체 제거",
         "category": "workload",
         "severity": "medium",
-        "standard_refs": ["CIS-K8S 5.2.9"],
+        "standard_refs": [
+          "CIS-K8S 5.2.9",
+          "ISMAP 9.4.4",
+          "ISMAP 12.5.1",
+          "ISMS-CLOUD CLD.9.5.2"
+        ],
         "remediation": "capabilities.drop: [ALL]을 지정하세요.",
         "why": "남아 있는 Linux capability는 권한 상승에 쓰일 수 있어요. 앱에 필요한 것만 남겨야 해요.",
         "scope": "resource",
@@ -1084,17 +1183,23 @@
           "onprem": {
             "status": "pass",
             "detail": "앱 워크로드 4개 모두 drop ALL 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1103,7 +1208,12 @@
         "title": "privileged 컨테이너 금지",
         "category": "workload",
         "severity": "critical",
-        "standard_refs": ["CIS-K8S 5.2.2"],
+        "standard_refs": [
+          "CIS-K8S 5.2.2",
+          "ISMAP 9.4.4",
+          "ISMAP 12.5.1",
+          "ISMS-CLOUD CLD.9.5.2"
+        ],
         "remediation": "privileged=false를 강제하세요.",
         "why": "privileged 컨테이너는 노드의 모든 장치와 커널 기능에 접근할 수 있어 사실상 노드 root와 같아요.",
         "scope": "resource",
@@ -1111,17 +1221,23 @@
           "onprem": {
             "status": "pass",
             "detail": "privileged 컨테이너 없음",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1130,7 +1246,7 @@
         "title": "이미지 digest 고정",
         "category": "workload",
         "severity": "medium",
-        "standard_refs": ["NSA-K8S"],
+        "standard_refs": ["NSA-K8S", "ISMAP 12.5.1", "ISMAP 14.2.4"],
         "remediation": "태그 대신 @sha256 digest로 이미지를 고정하세요.",
         "why": "태그로만 지정한 이미지는 같은 이름으로 다른 내용이 올라오면 그대로 배포돼요. digest로 고정해야 검증한 이미지만 실행돼요.",
         "scope": "resource",
@@ -1138,17 +1254,23 @@
           "onprem": {
             "status": "fail",
             "detail": "digest 미고정 이미지 4/4개",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1157,7 +1279,12 @@
         "title": "Pod Security Admission 적용",
         "category": "workload",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 5.2.1"],
+        "standard_refs": [
+          "CIS-K8S 5.2.1",
+          "ISMAP 9.4.4",
+          "ISMAP 12.5.1",
+          "ISMS-CLOUD CLD.9.5.2"
+        ],
         "remediation": "네임스페이스에 pod-security.kubernetes.io/enforce=restricted 라벨을 붙이세요.",
         "why": "Pod Security Admission이 없으면 위의 컨테이너 규칙을 지키지 않은 파드도 그대로 생성돼요.",
         "scope": "resource",
@@ -1165,17 +1292,23 @@
           "onprem": {
             "status": "fail",
             "detail": "hackathon: Pod Security Admission enforce 라벨 없음",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1184,7 +1317,12 @@
         "title": "와일드카드 RBAC 금지",
         "category": "identity",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 5.1.3"],
+        "standard_refs": [
+          "CIS-K8S 5.1.3",
+          "ISMAP 9.1.2",
+          "ISMAP 9.2.3",
+          "ISMS-CLOUD CLD.12.1.5"
+        ],
         "remediation": "verbs/resources에 *를 쓰는 Role을 필요한 권한으로 줄이세요.",
         "why": "* 권한을 가진 계정이 유출되면 네임스페이스 안의 모든 리소스(Secret 포함)를 읽고 바꿀 수 있어요.",
         "scope": "environment",
@@ -1192,17 +1330,23 @@
           "onprem": {
             "status": "fail",
             "detail": "와일드카드 권한 바인딩: hackathon/argocd-hackathon-deployer, hackathon/hackathon-full-access",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1211,7 +1355,12 @@
         "title": "Argo CD admin/익명 접근 차단",
         "category": "identity",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 5.1.1"],
+        "standard_refs": [
+          "CIS-K8S 5.1.1",
+          "ISMAP 9.2.3",
+          "ISMAP 9.4.2",
+          "ISMS-CLOUD CLD.12.1.5"
+        ],
         "remediation": "admin.enabled=false, users.anonymous.enabled=false로 두세요.",
         "why": "Argo CD의 admin이나 익명 접근이 열려 있으면 배포 설정을 바꿔 클러스터 전체에 원하는 것을 배포할 수 있어요.",
         "scope": "environment",
@@ -1219,17 +1368,23 @@
           "onprem": {
             "status": "pass",
             "detail": "Argo CD admin/익명 접근 비활성",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "Argo CD 설정을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "Argo CD 설정을 읽지 못했어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       },
@@ -1238,7 +1393,7 @@
         "title": "워크로드 ID 연동 (정적 키 미사용)",
         "category": "identity",
         "severity": "high",
-        "standard_refs": ["AWS-FSBP IAM.6"],
+        "standard_refs": ["AWS-FSBP IAM.6", "ISMAP 9.2.4"],
         "remediation": "EKS Pod Identity/GKE Workload Identity 또는 OIDC 워크로드 ID로 정적 자격증명을 대체하세요.",
         "why": "정적 토큰과 키는 유출돼도 알아채기 어렵고 교체도 수동이에요. 워크로드 ID는 짧게 쓰고 버리는 자격증명을 써요.",
         "scope": "environment",
@@ -1246,17 +1401,23 @@
           "onprem": {
             "status": "fail",
             "detail": "정적 토큰/키로 권한 부여",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "워크로드 ID로 클라우드 권한 위임",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "워크로드 ID로 클라우드 권한 위임",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1265,7 +1426,12 @@
         "title": "DB 전송 구간 TLS 강제",
         "category": "data",
         "severity": "high",
-        "standard_refs": ["ONEPORT", "CIS-GCP 6.4"],
+        "standard_refs": [
+          "ONEPORT",
+          "CIS-GCP 6.4",
+          "ISMAP 10.1.1",
+          "ISMAP 13.2.1"
+        ],
         "remediation": "rds.force_ssl=1, Cloud SQL ssl_mode=ENCRYPTED_ONLY 또는 pg_hba hostssl만 허용하세요.",
         "why": "DB 연결이 평문이면 이전 중 오가는 데이터와 계정 정보가 네트워크에서 보여요.",
         "scope": "resource",
@@ -1273,17 +1439,23 @@
           "onprem": {
             "status": "pass",
             "detail": "DB가 TLS 연결만 허용",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB가 TLS 연결만 허용",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB가 TLS 연결만 허용 (oneaction-review-db oneaction-postgres16 rds.force_ssl=1)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB가 TLS 연결만 허용",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB가 TLS 연결만 허용 (oneaction-dev-review sslMode=ENCRYPTED_ONLY)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1292,7 +1464,7 @@
         "title": "DB 저장 데이터 암호화",
         "category": "data",
         "severity": "high",
-        "standard_refs": ["AWS-FSBP RDS.3"],
+        "standard_refs": ["AWS-FSBP RDS.3", "ISMAP 10.1.1"],
         "remediation": "스토리지 암호화를 켜세요.",
         "why": "디스크가 암호화되지 않으면 스냅샷이나 디스크가 유출될 때 데이터가 그대로 읽혀요.",
         "scope": "resource",
@@ -1300,17 +1472,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": ["PostgreSQL 16"]
+            "resources": ["PostgreSQL 16"],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB 스토리지 암호화",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB 스토리지 암호화 (oneaction-review-db StorageEncrypted=True)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB 스토리지 암호화",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB 스토리지 암호화 (기본 암호화: oneaction-dev-review Google 관리 키)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1319,25 +1497,31 @@
         "title": "DB 백업",
         "category": "data",
         "severity": "medium",
-        "standard_refs": ["AWS-FSBP RDS.11", "CIS-GCP 6.7"],
+        "standard_refs": ["AWS-FSBP RDS.11", "CIS-GCP 6.7", "ISMAP 12.3.1"],
         "remediation": "자동 백업 또는 주기 덤프를 구성하세요.",
         "why": "백업이 없으면 이전 중 실수나 장애로 데이터가 깨졌을 때 되돌릴 지점이 없어요.",
         "scope": "resource",
         "results": {
           "onprem": {
-            "status": "pass",
-            "detail": "DB 백업 구성됨",
-            "resources": ["PostgreSQL 16"]
+            "status": "not_applicable",
+            "detail": "이 환경에는 DB가 없어요.",
+            "resources": ["PostgreSQL 16"],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
-            "detail": "DB 백업 구성됨",
-            "resources": ["RDS oneaction-review-db"]
+            "detail": "DB 백업 구성됨 (oneaction-review-db 백업 보존 7일)",
+            "resources": ["RDS oneaction-review-db"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
-            "detail": "DB 백업 구성됨",
-            "resources": ["Cloud SQL oneaction-dev-review"]
+            "detail": "DB 백업 구성됨 (oneaction-dev-review 자동 백업 켜짐)",
+            "resources": ["Cloud SQL oneaction-dev-review"],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1346,7 +1530,7 @@
         "title": "외부 비밀 저장소 동기화",
         "category": "data",
         "severity": "medium",
-        "standard_refs": ["NSA-K8S"],
+        "standard_refs": ["NSA-K8S", "ISMAP 9.2.4", "ISMAP 10.1.2"],
         "remediation": "External Secrets Operator로 Secrets Manager/Secret Manager/Vault에서 동기화하세요.",
         "why": "비밀값을 스크립트로 직접 만들면 교체 이력과 접근 기록이 남지 않아요.",
         "scope": "environment",
@@ -1354,17 +1538,23 @@
           "onprem": {
             "status": "fail",
             "detail": "Secret을 스크립트로 직접 생성 (외부 비밀 저장소 미사용)",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "ExternalSecret 1개로 비밀값 동기화",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "ExternalSecret 1개로 비밀값 동기화",
-            "resources": []
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1373,7 +1563,11 @@
         "title": "위협 탐지",
         "category": "detection",
         "severity": "high",
-        "standard_refs": ["AWS-FSBP GuardDuty.1"],
+        "standard_refs": [
+          "AWS-FSBP GuardDuty.1",
+          "ISMAP 12.2.1",
+          "ISMAP 16.1.2"
+        ],
         "remediation": "AWS는 GuardDuty, GCP는 Security Command Center 위협 탐지, 온프렘은 Falco 같은 런타임 탐지를 켜세요.",
         "why": "위협 탐지가 없으면 비정상 API 호출, 크립토마이닝, 유출 시도 같은 공격이 진행돼도 알 수 없어요.",
         "scope": "environment",
@@ -1381,17 +1575,23 @@
           "onprem": {
             "status": "fail",
             "detail": "위협 탐지 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "fail",
-            "detail": "위협 탐지 없음",
-            "resources": []
+            "detail": "위협 탐지 없음 (ap-northeast-2 에 GuardDuty 디텍터 없음)",
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "위협 탐지 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": "권한 없음: securitycentermanagement.securityCenterServices.get (HTTP 403)"
           }
         }
       },
@@ -1400,7 +1600,7 @@
         "title": "보안 상태 집계 서비스",
         "category": "detection",
         "severity": "medium",
-        "standard_refs": ["AWS-FSBP SecurityHub.1"],
+        "standard_refs": ["AWS-FSBP SecurityHub.1", "ISMAP 18.2.3"],
         "remediation": "Security Hub, Security Command Center 또는 동등한 posture 집계를 켜세요.",
         "why": "보안 상태를 모아 보는 곳이 없으면 보안 설정이 언제 바뀌었는지 계속 추적할 수 없어요.",
         "scope": "environment",
@@ -1408,17 +1608,23 @@
           "onprem": {
             "status": "fail",
             "detail": "posture 집계 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
-            "status": "fail",
-            "detail": "posture 집계 없음",
-            "resources": []
+            "status": "manual",
+            "detail": "Security Hub 콘솔 증빙으로 확인해요.",
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "fail",
             "detail": "posture 집계 없음",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1427,7 +1633,14 @@
         "title": "클러스터 감사 로그",
         "category": "detection",
         "severity": "high",
-        "standard_refs": ["CIS-K8S 3.2.1", "AWS-FSBP EKS.8", "CIS-GCP 2.1"],
+        "standard_refs": [
+          "CIS-K8S 3.2.1",
+          "AWS-FSBP EKS.8",
+          "CIS-GCP 2.1",
+          "ISMAP 12.4.1",
+          "ISMAP 12.4.3",
+          "ISMS-CLOUD CLD.12.4.5"
+        ],
         "remediation": "API server audit 로그를 켜고 보관하세요.",
         "why": "감사 로그가 없으면 누가 언제 무엇을 바꿨는지 사고 뒤에 확인할 수 없어요.",
         "scope": "environment",
@@ -1435,17 +1648,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "감사 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "감사 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1454,7 +1673,12 @@
         "title": "네트워크 흐름 로그",
         "category": "detection",
         "severity": "low",
-        "standard_refs": ["AWS-FSBP EC2.6", "CIS-GCP 3.8"],
+        "standard_refs": [
+          "AWS-FSBP EC2.6",
+          "CIS-GCP 3.8",
+          "ISMAP 12.4.1",
+          "ISMS-CLOUD CLD.13.1.4"
+        ],
         "remediation": "VPC Flow Logs(AWS/GCP) 또는 CNI 흐름 로그를 켜세요.",
         "why": "흐름 로그가 없으면 차단된 접근 시도나 예상하지 못한 통신을 사후에 확인할 수 없어요.",
         "scope": "environment",
@@ -1462,17 +1686,23 @@
           "onprem": {
             "status": "unknown",
             "detail": "인프라 설정에서 확인할 수 없어요.",
-            "resources": []
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "흐름 로그 수집",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": "권한 없음: eks:DescribeCluster, ec2:DescribeFlowLogs"
           },
           "gcp": {
             "status": "pass",
-            "detail": "흐름 로그 수집",
-            "resources": []
+            "detail": "흐름 로그 수집 (oneaction-dev 서브넷 gke-subnet 흐름 로그 켜짐)",
+            "resources": [],
+            "source": "observed",
+            "fallback_reason": null
           }
         }
       },
@@ -1481,7 +1711,12 @@
         "title": "마이그레이션 정책 게이트 (OPA)",
         "category": "governance",
         "severity": "high",
-        "standard_refs": ["ONEPORT SEC-02", "ONEPORT OPS-01"],
+        "standard_refs": [
+          "ONEPORT SEC-02",
+          "ONEPORT OPS-01",
+          "ISMAP 12.1.2",
+          "ISMAP 14.2.2"
+        ],
         "remediation": "단계별 OPA 판정이 allow일 때만 진행하세요.",
         "why": "정책 게이트 없이 전환하면 DB 노출이나 미동기화 같은 조건을 사람이 놓쳐도 그대로 진행돼요.",
         "scope": "environment",
@@ -1489,17 +1724,23 @@
           "onprem": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "aws": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           },
           "gcp": {
             "status": "pass",
             "detail": "OPA 게이트가 단계 진행을 판정",
-            "resources": []
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
           }
         }
       },
@@ -1508,7 +1749,7 @@
         "title": "네임스페이스 자원 상한",
         "category": "governance",
         "severity": "low",
-        "standard_refs": ["NSA-K8S"],
+        "standard_refs": ["NSA-K8S", "ISMAP 12.1.3"],
         "remediation": "ResourceQuota/LimitRange로 자원 상한을 두세요.",
         "why": "자원 상한이 없으면 한 앱의 폭주가 같은 클러스터의 다른 앱까지 멈추게 할 수 있어요.",
         "scope": "resource",
@@ -1516,17 +1757,89 @@
           "onprem": {
             "status": "pass",
             "detail": "hackathon: ResourceQuota 적용",
-            "resources": ["review-api", "review-worker", "sample-app"]
+            "resources": ["review-api", "review-worker", "sample-app"],
+            "source": "observed",
+            "fallback_reason": null
           },
           "aws": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
           },
           "gcp": {
             "status": "unknown",
             "detail": "근거를 수집하지 못했어요.",
-            "resources": ["review-service", "sample-app"]
+            "resources": ["review-service", "sample-app"],
+            "source": null,
+            "fallback_reason": null
+          }
+        }
+      },
+      {
+        "id": "JP-01",
+        "title": "일본 리전 데이터 저장",
+        "category": "japan",
+        "severity": "high",
+        "standard_refs": ["ISMAP 18.1.1", "ISMS-CLOUD 18.1.1"],
+        "remediation": "클러스터와 DB·메시지·오브젝트 스토리지를 도쿄(ap-northeast-1, asia-northeast1) 또는 오사카(ap-northeast-3, asia-northeast2) 리전에 두세요. 백업·복제본도 같은 범위에 두세요.",
+        "why": "일본 정부·공공 시스템은 데이터 소재지와 준거법을 일본으로 두도록 요구해요. 일본 밖 리전에 두면 외국 법률이 적용될 수 있고 개인정보의 국외 이전 절차도 필요해져요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "unknown",
+            "detail": "온프렘 사이트 'seoul-local'는 클라우드 리전 코드가 아니어서 데이터가 일본에 있는지 판단할 수 없어요.",
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
+          },
+          "aws": {
+            "status": "fail",
+            "detail": "일본 밖 리전: EKS 클러스터(ap-northeast-2), RDS oneaction-review-db(ap-northeast-2), MSK oneaction-review(ap-northeast-2), S3 oneaction-review-docs(ap-northeast-2)",
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
+          },
+          "gcp": {
+            "status": "fail",
+            "detail": "일본 밖 리전: GKE 클러스터(asia-northeast3), Cloud SQL oneaction-dev-review(asia-northeast3), Managed Kafka oneaction-dev-review(asia-northeast3), Cloud Storage oneaction-dev-review(asia-northeast3)",
+            "resources": [],
+            "source": "declared",
+            "fallback_reason": null
+          }
+        }
+      },
+      {
+        "id": "JP-09",
+        "title": "지원되는 클러스터/노드 버전",
+        "category": "japan",
+        "severity": "medium",
+        "standard_refs": ["ISMAP 12.6.1"],
+        "remediation": "컨트롤플레인을 지원 기간 안의 버전으로 올리고, 노드 그룹도 컨트롤플레인과 같은 마이너 버전으로 맞추세요.",
+        "why": "지원이 끝난 버전은 보안 패치가 나오지 않아요. 노드와 컨트롤플레인 버전이 벌어지면 업그레이드가 밀리고 알려진 취약점이 남아요.",
+        "scope": "environment",
+        "results": {
+          "onprem": {
+            "status": "unknown",
+            "detail": "컨트롤플레인 버전을 읽지 못했어요.",
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
+          },
+          "aws": {
+            "status": "unknown",
+            "detail": "컨트롤플레인 버전을 읽지 못했어요.",
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
+          },
+          "gcp": {
+            "status": "unknown",
+            "detail": "컨트롤플레인 버전을 읽지 못했어요.",
+            "resources": [],
+            "source": null,
+            "fallback_reason": null
           }
         }
       }

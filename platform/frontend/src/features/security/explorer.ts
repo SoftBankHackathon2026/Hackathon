@@ -26,6 +26,7 @@ export const ALL_CATEGORIES: Category[] = [
   "data",
   "detection",
   "governance",
+  "japan",
 ];
 export const SHOWN_STATUSES: ControlStatus[] = ["fail", "unknown", "pass"];
 

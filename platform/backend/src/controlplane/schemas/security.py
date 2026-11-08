@@ -5,14 +5,20 @@ from pydantic import BaseModel, Field
 
 from controlplane.schemas.migrations import DataSource
 
-ControlStatus = Literal["pass", "fail", "unknown", "not_applicable"]
+# not_applicable: 그 환경에 대상이 없음(예: DB 없는 환경의 DB 통제).
+# manual: 자동 점검할 수 없어 사람이 증빙으로 확인해야 함. 둘 다 점수 분모에서 빠진다.
+ControlStatus = Literal["pass", "fail", "unknown", "not_applicable", "manual"]
 Severity = Literal["critical", "high", "medium", "low"]
-Category = Literal["network", "workload", "identity", "data", "detection", "governance"]
+Category = Literal["network", "workload", "identity", "data", "detection", "governance", "japan"]
 
 
 class Standard(BaseModel):
     id: str
     name: str
+    # compliance: 표준 전체를 점검 / coverage: 고객 측 기술 통제만 점검(조직·인적·물리 통제 제외)
+    kind: Literal["compliance", "coverage"] = "compliance"
+    version: str | None = None
+    note: str | None = None
 
 
 class SeverityCounts(BaseModel):
@@ -29,13 +35,22 @@ class EnvironmentPosture(BaseModel):
     passed: int
     failed: int
     unknown: int
+    not_applicable: int = 0
+    manual: int = 0
     by_severity: SeverityCounts
+
+
+# observed: 클러스터·클라우드 API 에서 읽은 값 / declared: fleet.json 신고값(설정)
+ResultSource = Literal["observed", "declared"]
 
 
 class ControlResult(BaseModel):
     status: ControlStatus
     detail: str
     resources: list[str] = Field(default_factory=list)
+    source: ResultSource | None = None
+    # 실측을 시도했지만 실패해 신고값을 쓰거나 판단하지 못한 이유(권한 없음, 시간 초과 등)
+    fallback_reason: str | None = None
 
 
 class ControlView(BaseModel):

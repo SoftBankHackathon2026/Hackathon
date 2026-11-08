@@ -1,5 +1,9 @@
+import logging
 from datetime import datetime
 
+from pydantic import ValidationError
+
+from controlplane.domain.cloud_security import CloudSecurityFacts
 from controlplane.domain.fleet import (
     ClusterFacts,
     CutoverRecord,
@@ -12,6 +16,8 @@ from controlplane.domain.fleet import (
 from controlplane.domain.migration import Stage
 from controlplane.integrations.codec import facts_from_json, sample_from_json, worker_view
 from controlplane.repositories.fleet_journal import FleetJournal
+
+LOG = logging.getLogger(__name__)
 
 
 class JournalFleet:
@@ -30,8 +36,21 @@ class JournalFleet:
                 if row
                 else ClusterFacts(observed_at=None, connected=False)
             )
-            snapshots.append(EnvironmentSnapshot(config=env, cluster=facts))
+            snapshots.append(
+                EnvironmentSnapshot(config=env, cluster=facts, cloud=self._cloud(env.id))
+            )
         return snapshots
+
+    def _cloud(self, env_id: str) -> CloudSecurityFacts | None:
+        row = self._journal.get_cloud_security(env_id)
+        if row is None:
+            return None
+        try:
+            return CloudSecurityFacts.model_validate(row["facts"])
+        except ValidationError:
+            # 저장 형식이 바뀐 옛 행은 버리고 신고값으로 폴백한다. 다음 수집에서 덮어쓴다.
+            LOG.warning("env=%s cloud security row invalid", env_id)
+            return None
 
     def _cutover(self, job_id: str) -> CutoverRecord | None:
         row, stages = self._journal.get_cutover(job_id)
