@@ -71,9 +71,9 @@ function report(overrides = {}) {
     agent: {version: 't'},
     lock: {locked: false, reasons: []},
     bots: {
-      worker: {reachable: true, controllable: true, mode: 'continuous', generation: 'running'},
       bot: {reachable: true, controllable: true, mode: 'continuous', generation: 'stopped'},
     },
+    route: {known: true, target: 'onprem', mode: 'running'},
     ...overrides,
   };
 }
@@ -100,26 +100,27 @@ test('locks: cutover, stale agent, uncontrollable target, missing lock field', (
   let t = 0;
   const c = createControl({now: () => t});
   c.acceptReport(report({lock: {locked: true, reasons: ['커넥터 1개']}}));
-  assert.equal(c.submit({target: 'worker', action: 'stop'}).code, 'CUTOVER_LOCK');
+  assert.equal(c.submit({target: 'bot', action: 'stop'}).code, 'CUTOVER_LOCK');
   c.acceptReport(report({lock: undefined}));
   assert.equal(c.state().lock.locked, true, 'missing lock info must fail closed');
-  c.acceptReport(report({bots: {worker: {reachable: true, controllable: false, mode: 'budget'}}}));
-  assert.equal(c.submit({target: 'worker', action: 'stop'}).code, 'TARGET_NOT_CONTROLLABLE');
+  c.acceptReport(report({bots: {bot: {reachable: true, controllable: false, mode: 'unsupported'}}}));
   assert.equal(c.submit({target: 'bot', action: 'stop'}).code, 'TARGET_NOT_CONTROLLABLE');
+  // The retired INSERT worker is not a command target any more.
+  assert.equal(c.submit({target: 'worker', action: 'stop'}).code, 'INVALID_COMMAND');
   c.acceptReport(report());
   t = 16000;
-  assert.equal(c.submit({target: 'worker', action: 'stop'}).code, 'AGENT_STALE');
+  assert.equal(c.submit({target: 'bot', action: 'stop'}).code, 'AGENT_STALE');
 });
 
 test('commands expire when the agent never picks them up or never answers', () => {
   let t = 0;
   const c = createControl({now: () => t});
   c.acceptReport(report());
-  const a = c.submit({target: 'worker', action: 'stop'}).command;
+  const a = c.submit({target: 'bot', action: 'stop'}).command;
   t = 31000;
   c.acceptReport(report());
   assert.equal(c.state().commands.find((x) => x.id === a.id).status, 'expired');
-  const b = c.submit({target: 'worker', action: 'stop'}).command;
+  const b = c.submit({target: 'bot', action: 'stop'}).command;
   c.take();
   t = 92000;
   c.acceptReport(report());
@@ -130,12 +131,19 @@ test('commands expire when the agent never picks them up or never answers', () =
 
 test('report fields are whitelisted', () => {
   const c = createControl();
-  c.acceptReport(report({bots: {worker: {reachable: true, state: '<b>x</b>'.repeat(100),
-    secret: 'leak', rate_per_second: 'NaN'}}}));
-  const w = c.state().bots.worker;
-  assert.equal(w.secret, undefined);
-  assert.equal(w.rate_per_second, null);
-  assert.equal(w.state.length, 200);
+  c.acceptReport(report({bots: {bot: {reachable: true, reason: '<b>x</b>'.repeat(100),
+    secret: 'leak', rate_per_second: 'NaN'}}, route: {known: true, target: 'x'.repeat(300),
+    token: 'leak'}}));
+  const b = c.state().bots.bot;
+  assert.equal(b.secret, undefined);
+  assert.equal(b.rate_per_second, null);
+  assert.equal(b.reason.length, 200);
+  assert.equal(c.state().bots.worker, undefined);
+  const route = c.state().route;
+  assert.equal(route.token, undefined);
+  assert.equal(route.target.length, 200);
+  c.acceptReport(report({route: {target: 'onprem'}}));
+  assert.deepEqual(c.state().route, {known: false}, 'route without known=true is unknown');
 });
 
 async function withServer(fn) {

@@ -1,6 +1,6 @@
 'use strict';
 // 데모 트래픽 제어 서버. 외부 의존성 없음 (Node 22 내장 모듈만). 설계: DESIGN.md
-//   OPERATOR_KEY=... AGENT_KEY=... node demo/traffic-control/server.js   http://127.0.0.1:5060
+//   OPERATOR_KEY=... AGENT_KEY=... node demo/traffic-control/server.js   http://127.0.0.1:8095
 //   HOST=0.0.0.0 PORT=8080 node server.js                                  (클러스터 배포)
 // 키가 없으면 해당 역할의 경로는 닫힌다(503). 상태판(GET /api/state)은 누구나 읽는다.
 const fs = require('node:fs');
@@ -132,7 +132,7 @@ function keyFromEnv(name) {
 if (require.main === module) {
   const keys = {operator: keyFromEnv('OPERATOR_KEY'), agent: keyFromEnv('AGENT_KEY')};
   const host = process.env.HOST || '127.0.0.1';
-  const port = Number(process.env.PORT || 5060);
+  const port = Number(process.env.PORT || 8095);
   createServer({keys}).listen(port, host, () => {
     process.stdout.write(`demo-traffic-control http://${host}:${port} ` +
       `operator=${keys.operator ? 'on' : 'off'} agent=${keys.agent ? 'on' : 'off'}\n`);

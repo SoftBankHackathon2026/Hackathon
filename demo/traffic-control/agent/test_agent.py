@@ -1,4 +1,4 @@
-"""python3 -I -m unittest discover -s demo/traffic-control/agent"""
+"""python3 -I demo/traffic-control/agent/test_agent.py"""
 import json
 import os
 import sqlite3
@@ -47,18 +47,15 @@ class Base(unittest.TestCase):
         make_db(self.db, [("done", "COMPLETED", {}), ("closed", "NEEDS_RECOVERY",
                                                        {"manual_resolution": {}})])
         self.http = FakeHttp()
-        s = A.Settings(control_url="http://ctl", agent_key=KEY, worker_url="http://w",
-                       bot_url="http://b", bot_token="t" * 32, connect_url="http://c",
-                       cutover_db=self.db)
-        self.t = [0.0]
-        self.agent = A.Agent(s, http=self.http, clock=lambda: self.t[0])
-        self.worker_status = {"state": "RUNNING", "target": "onprem_return", "rate_per_second": 1.0,
-                              "queue_length": 0, "generation_enabled": True, "max_generated": None,
-                              "store_counts": {"committed": 5}}
-        self.http.routes[("GET", "http://w/status")] = lambda b, h: dict(self.worker_status)
+        s = A.Settings(control_url="http://ctl", agent_key=KEY, bot_url="http://b",
+                       bot_token="t" * 32, ingress_url="http://i", ingress_token="q" * 32,
+                       connect_url="http://c", cutover_db=self.db)
+        self.agent = A.Agent(s, http=self.http)
         self.http.routes[("GET", "http://c/connectors")] = []
         self.bot_state = {"generation": "stopped", "pending": 0, "committed": 3, "rate_per_second": 1}
         self.http.routes[("GET", "http://b/control")] = lambda b, h: dict(self.bot_state)
+        self.http.routes[("GET", "http://i/status")] = \
+            {"target": "onprem", "epoch": "5", "mode": "running", "in_flight": 0}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -75,41 +72,48 @@ class SignatureTest(unittest.TestCase):
 
 
 class SummaryTest(unittest.TestCase):
-    def test_budget_mode_is_display_only(self):
-        s = A.summarize_worker({"max_generated": 200, "generation_limit": 100, "generated_total": 40,
-                                "generation_enabled": True})
-        self.assertEqual((s["mode"], s["controllable"], s["generation"]), ("budget", False, None))
-
-    def test_old_worker_is_unsupported(self):
-        s = A.summarize_worker({"state": "RUNNING", "max_generated": None})
-        self.assertEqual((s["mode"], s["controllable"]), ("unsupported", False))
-
     def test_bot_without_token_is_not_controllable(self):
         s = A.summarize_bot({"generation": "running"}, token_present=False)
         self.assertFalse(s["controllable"])
         self.assertIn("BOT_CONTROL_TOKEN", s["reason"])
 
+    def test_unknown_bot_answer_is_unsupported(self):
+        s = A.summarize_bot({"status": "ok"}, token_present=True)
+        self.assertEqual((s["mode"], s["controllable"]), ("unsupported", False))
+
+
+class ObserveTest(Base):
+    def test_old_bot_without_control_route(self):
+        del self.http.routes[("GET", "http://b/control")]
+        bot = self.agent.bot()
+        self.assertEqual((bot["reachable"], bot["error"]), (False, "NOT_SUPPORTED"))
+
+    def test_route_reads_ingress_with_token_and_never_locks(self):
+        self.assertEqual(self.agent.route(), {"known": True, "target": "onprem", "mode": "running"})
+        _, _, _, headers = self.http.calls[-1]
+        self.assertEqual(headers["Authorization"], "Bearer " + "q" * 32)
+        self.http.routes[("GET", "http://i/status")] = A.HttpError("HTTP_401", 401)
+        self.assertEqual(self.agent.route(), {"known": False, "error": "HTTP_401"})
+        self.assertFalse(self.agent.lock()["locked"], "route is display only")
+
 
 class LockTest(Base):
     def test_unlocked_when_quiet(self):
-        self.assertEqual(self.agent.lock(self.agent.worker()), {"locked": False, "reasons": []})
+        self.assertEqual(self.agent.lock(), {"locked": False, "reasons": []})
 
-    def test_connectors_open_jobs_switching_and_unknowns_lock(self):
+    def test_connectors_open_jobs_and_unknowns_lock(self):
         self.http.routes[("GET", "http://c/connectors")] = ["rf-source"]
         make_db(self.db, [("live", "CATCHING_UP", {})])
-        self.worker_status["state"] = "SWITCHING"
-        lock = self.agent.lock(self.agent.worker(force=True))
+        lock = self.agent.lock()
         self.assertTrue(lock["locked"])
-        self.assertEqual(len(lock["reasons"]), 3)
+        self.assertEqual(len(lock["reasons"]), 2)
         self.http.routes[("GET", "http://c/connectors")] = A.HttpError("URLError")
         self.agent.settings.cutover_db = os.path.join(self.tmp.name, "missing.sqlite3")
-        self.worker_status["state"] = "RUNNING"
-        lock = self.agent.lock(self.agent.worker(force=True))
-        self.assertTrue(lock["locked"], "unknown state must fail closed")
+        self.assertTrue(self.agent.lock()["locked"], "unknown state must fail closed")
 
     def test_unresolved_needs_recovery_locks(self):
         make_db(self.db, [("x", "NEEDS_RECOVERY", {})])
-        self.assertTrue(self.agent.lock(self.agent.worker())["locked"])
+        self.assertTrue(self.agent.lock()["locked"])
 
 
 class CommandTest(Base):
@@ -121,26 +125,16 @@ class CommandTest(Base):
         self.assertEqual(body, {"enabled": True})
         self.assertEqual(headers["Authorization"], "Bearer " + "t" * 32)
 
-    def test_worker_stop(self):
-        self.http.routes[("POST", "http://w/generation")] = {"generation_enabled": False}
-        self.assertTrue(self.agent.execute({"id": "2", "target": "worker", "action": "stop"})["ok"])
-        self.assertIn(("POST", "http://w/generation", {"enabled": False}, None), self.http.calls)
-
-    def test_refuses_during_cutover_without_calling_bots(self):
+    def test_refuses_during_cutover_without_calling_the_bot(self):
         self.http.routes[("GET", "http://c/connectors")] = ["x-sink"]
         out = self.agent.execute({"id": "3", "target": "bot", "action": "stop"})
         self.assertFalse(out["ok"])
         self.assertTrue(out["error"].startswith("CUTOVER_LOCK"))
         self.assertFalse(any(c[0] == "POST" for c in self.http.calls))
 
-    def test_budget_worker_refused(self):
-        self.worker_status.update(max_generated=200, generation_limit=100)
-        out = self.agent.execute({"id": "4", "target": "worker", "action": "stop"})
-        self.assertEqual(out["error"], "WORKER_NOT_CONTROLLABLE:budget")
-
-    def test_invalid_command(self):
-        self.assertEqual(self.agent.execute({"id": "5", "target": "db", "action": "drop"})["error"],
-                         "INVALID_COMMAND")
+    def test_retired_worker_and_unknown_commands_are_invalid(self):
+        for command in ({"target": "worker", "action": "stop"}, {"target": "db", "action": "drop"}):
+            self.assertEqual(self.agent.execute({"id": "5", **command})["error"], "INVALID_COMMAND")
 
 
 class StepTest(Base):
@@ -156,18 +150,10 @@ class StepTest(Base):
         self.agent.step()
         first, second = reports
         self.assertTrue(first[1]["X-Demo-Auth"].startswith("agent."))
+        self.assertEqual(sorted(first[0]["bots"]), ["bot"])
+        self.assertEqual(first[0]["route"]["target"], "onprem")
         self.assertEqual(first[0]["results"], [])
         self.assertEqual(second[0]["results"], [{"id": "c1", "ok": True}])
-
-    def test_worker_status_is_rate_limited(self):
-        self.agent.worker()
-        self.agent.worker()
-        self.t[0] = 9.9
-        self.agent.worker()
-        self.assertEqual(sum(1 for c in self.http.calls if c[1] == "http://w/status"), 1)
-        self.t[0] = 10.1
-        self.agent.worker()
-        self.assertEqual(sum(1 for c in self.http.calls if c[1] == "http://w/status"), 2)
 
 
 if __name__ == "__main__":

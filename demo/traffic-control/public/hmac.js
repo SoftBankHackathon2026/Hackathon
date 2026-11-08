@@ -1,6 +1,7 @@
 'use strict';
 // 브라우저용 SHA-256·HMAC-SHA256 (lib/auth.js 와 같은 서명 규칙).
-// 평문 HTTP 페이지에서는 crypto.subtle 을 쓸 수 없어 직접 구현한다. 키는 이 탭 밖으로 나가지 않는다.
+// crypto.subtle 은 HTTPS·localhost 에서만 쓸 수 있어, 어떤 주소로 열어도 돌게 직접 구현한다.
+// 키는 이 탭 밖으로 나가지 않는다.
 (function (root) {
   const K = new Uint32Array([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

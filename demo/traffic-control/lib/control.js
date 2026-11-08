@@ -3,7 +3,8 @@
 // 서버는 에이전트의 마지막 보고를 보여 주며 사람이 누른 명령만 전달한다.
 const crypto = require('node:crypto');
 
-const TARGETS = ['worker', 'bot'];
+// INSERT 워커는 2026-11-08 퇴역했다(gitops #75). 제어 대상은 traffic-bot 하나다.
+const TARGETS = ['bot'];
 const ACTIONS = ['start', 'stop'];
 const DEFAULTS = {
   staleMillis: 15000,      // 보고가 이보다 오래되면 버튼을 잠근다
@@ -29,20 +30,21 @@ function cleanBot(raw) {
     reachable: raw.reachable === true,
     controllable: raw.controllable === true,
     generation: ['running', 'stopped'].includes(raw.generation) ? raw.generation : null,
-    mode: ['continuous', 'budget', 'unsupported'].includes(raw.mode) ? raw.mode : null,
-    state: text(raw.state),
-    target: text(raw.target),
+    mode: ['continuous', 'unsupported'].includes(raw.mode) ? raw.mode : null,
     rate_per_second: finite(raw.rate_per_second),
     pending: finite(raw.pending),
     committed: finite(raw.committed),
     failed: finite(raw.failed),
-    generated_total: finite(raw.generated_total),
-    generation_limit: finite(raw.generation_limit),
-    max_generated: finite(raw.max_generated),
     reason: text(raw.reason),
     error: text(raw.error),
     observed_at: text(raw.observed_at),
   };
+}
+
+/** 접수 큐가 지금 요청을 넘기는 대상(표시용). */
+function cleanRoute(raw) {
+  if (!raw || raw.known !== true) return {known: false};
+  return {known: true, target: text(raw.target), mode: text(raw.mode)};
 }
 
 function cleanLock(raw) {
@@ -54,7 +56,7 @@ function cleanLock(raw) {
 function createControl(options = {}) {
   const cfg = {...DEFAULTS, ...options};
   const now = cfg.now ?? (() => Date.now());
-  let report = null;          // {at, bots, lock, agent}
+  let report = null;          // {at, bots, route, lock, agent}
   const commands = [];
 
   function expire() {
@@ -116,7 +118,8 @@ function createControl(options = {}) {
     const t = now();
     report = {
       at: t,
-      bots: {worker: cleanBot(raw.bots?.worker), bot: cleanBot(raw.bots?.bot)},
+      bots: {bot: cleanBot(raw.bots?.bot)},
+      route: cleanRoute(raw.route),
       lock: cleanLock(raw.lock),
       agent: {version: text(raw.agent?.version), host: text(raw.agent?.host)},
     };
@@ -146,7 +149,8 @@ function createControl(options = {}) {
         age_seconds: Math.round((t - report.at) / 100) / 10, ...report.agent} :
         {fresh: false, last_report_at: null},
       lock: report ? report.lock : {locked: true, reasons: ['에이전트 보고 없음']},
-      bots: report ? report.bots : {worker: cleanBot(null), bot: cleanBot(null)},
+      bots: report ? report.bots : {bot: cleanBot(null)},
+      route: report ? report.route : {known: false},
       blocked: Object.fromEntries(TARGETS.map((x) => [x, blockReason(x)])),
       commands: commands.slice(-20).reverse().map(view),
     };
