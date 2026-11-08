@@ -83,7 +83,6 @@ class _HttpEnvironment(BaseSettings):
 class SecuritySettings(BaseSettings):
     """보안 탭 점검 기준값. ONEPORT_SECURITY_* 환경변수로 바꾼다.
 
-    k8s_min_minor 는 EKS/GKE 표준 지원 일정에 맞춰 운영자가 올려야 한다(2026-11 기준 1.34).
     k8s_max_node_skew 는 컨트롤플레인과 각 노드 kubelet 의 마이너 버전 차이 허용값이다.
     """
 
@@ -97,7 +96,12 @@ class SecuritySettings(BaseSettings):
             "asia-northeast2",
         ]
     )
-    k8s_min_minor: str = Field(default="1.34", pattern=r"^\d+\.\d+$")
+    # 지원 하한 마이너 버전. 근거(2026-11-08 확인):
+    # - 업스트림 1.34 EOL 2026-10-27 (https://kubernetes.io/releases/)
+    # - EKS 1.34 표준 지원 종료 2026-12-02, 1.35 이상은 표준 지원 중
+    #   (https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html)
+    # 다음 갱신: EKS 1.35 표준 지원 종료일 전. 위 EKS 달력에서 날짜를 확인해 올린다.
+    k8s_min_minor: str = Field(default="1.35", pattern=r"^\d+\.\d+$")
     k8s_max_node_skew: int = Field(default=1, ge=0, le=3)
 
     @field_validator("japan_regions", mode="before")
