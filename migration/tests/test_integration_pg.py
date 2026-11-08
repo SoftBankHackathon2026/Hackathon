@@ -13,7 +13,7 @@ import pytest
 from migration import db as dbmod
 from migration import init_db, seed, verify
 from migration.cdc import drop_slot, prepare_source
-from migration.config import parse_config
+from migration.config import parse_config, ConfigError
 from migration.cutover import PgAdminPort
 from migration.loadgen import Outcome, PgBackend
 from migration.state import RequestRecord, RequestStore
@@ -85,11 +85,11 @@ def test_init_db_is_idempotent_and_roles_are_minimal(patched_env):
         assert dbmod.server_identity(conn).user == "migration_app"
 
 
-@pytest.mark.parametrize('count', [800, 1000])
-def test_seed_default_demo_and_legacy_counts_and_rerun(patched_env, state_dir, count):
+def test_seed_is_always_800_and_rerun_is_idempotent(patched_env, state_dir):
     config = patched_env
-    if count == 800:
-        config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000))
+    count = 800
+    with pytest.raises(ConfigError):
+        seed.run(config, "onprem", state_dir=state_dir, count=1000)
     assert seed.run(config, "onprem", state_dir=state_dir) == 0
     assert seed.run(config, "onprem", state_dir=state_dir) == 0
     with dbmod.connect(config.connection("onprem", "verify")) as conn:
@@ -145,15 +145,19 @@ def test_prepare_publication_and_slot_idempotent(patched_env):
 
 def test_verify_detects_missing_rows_between_two_dbs(patched_env, state_dir, tmp_path):
     config = patched_env
-    seed.run(config, "onprem", state_dir=state_dir, count=1000)
+    seed.run(config, "onprem", state_dir=state_dir, count=800)
     init_db.run(config, "aws", sql_path=Path(__file__).resolve().parent.parent / "sql" / "001_demo.sql", app_write="allow")
-    seed.run(config, "aws", state_dir=None, count=999)
+    # seed 도구는 800건만 넣으므로 대상에서 한 행을 지워 "빠진 행" 을 만든다
+    seed.run(config, "aws", state_dir=None, count=800)
+    with dbmod.connect(config.connection("aws", "admin")) as conn:
+        conn.execute("DELETE FROM public.migration_demo WHERE request_no = 800 AND phase = 'seed'")
+        conn.commit()
     cmp = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
                      report_path=tmp_path / "r.json")
     assert not cmp.passed
     assert cmp.counts["B_minus_T"] >= 1 and cmp.counts["S_minus_T"] >= 1
     assert (tmp_path / "r.json").exists()
-    seed.run(config, "aws", state_dir=None, count=1000)
+    seed.run(config, "aws", state_dir=None, count=800)
     # 원본에는 live 행이 더 있어 B-T 가 남지만, 전부 복사된 seed 는 필드까지 일치
     cmp2 = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre", report_path=None)
     assert cmp2.counts["field_mismatch"] == 0 and cmp2.counts["T_minus_B"] == 0
@@ -169,8 +173,8 @@ def test_watermark_scoped_verify_and_digest_on_real_postgres(patched_env, state_
     sql_path = Path(__file__).resolve().parent.parent / "sql" / "001_demo.sql"
     init_db.run(config, "onprem", sql_path=sql_path, app_write="allow")
     init_db.run(config, "aws", sql_path=sql_path, app_write="allow")
-    seed.run(config, "onprem", state_dir=state_dir, count=1000)
-    seed.run(config, "aws", state_dir=None, count=1000)
+    seed.run(config, "onprem", state_dir=state_dir, count=800)
+    seed.run(config, "aws", state_dir=None, count=800)
     # 앞 테스트가 같은 DB 에 남긴 행이 있을 수 있으므로 먼저 대상을 원본과 같게 맞춘다 (T = B)
     with dbmod.connect(config.connection("onprem", "admin")) as sconn, \
             dbmod.connect(config.connection("aws", "admin")) as tconn:
@@ -188,14 +192,14 @@ def test_watermark_scoped_verify_and_digest_on_real_postgres(patched_env, state_
     try:
         wm = port.max_created_at("onprem")
         assert wm is not None and wm.endswith("+00:00")
-        assert port.count_rows_in_scope("onprem", upto=wm) >= 1000
+        assert port.count_rows_in_scope("onprem", upto=wm) >= 800
         assert port.count_rows_in_scope("onprem", since=wm) == 0
 
-        # 1) 스냅샷 집합: digest 가 모두 같으면 행을 읽지 않고 통과. S(ledger 의 seed 1000건) 도 묶음 조회로 확인.
+        # 1) 스냅샷 집합: digest 가 모두 같으면 행을 읽지 않고 통과. S(ledger 의 seed 800건) 도 묶음 조회로 확인.
         snap = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
                           report_path=tmp_path / "snap.json", upto=wm, method="digest")
         assert snap.passed and snap.method == "digest" and snap.mismatched_buckets == []
-        assert snap.committed_count >= 1000 and snap.source_count == snap.target_count >= 1000
+        assert snap.committed_count >= 800 and snap.source_count == snap.target_count >= 800
         report = (tmp_path / "snap.json").read_text()
         assert '"method": "digest"' in report and all(pw not in report for pw in PASSWORDS.values())
 

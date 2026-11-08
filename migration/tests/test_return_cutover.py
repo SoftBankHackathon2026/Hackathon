@@ -33,7 +33,7 @@ def _bot():
 def return_config() -> Config:
     raw = yaml.safe_load((ROOT / "config.return.example.yaml").read_text(encoding="utf-8"))
     raw["cutover"] = {"poll_interval_seconds": 0, "stage_timeout_seconds": 5, "offset_stable_seconds": 0,
-                      "min_live_rows_after_snapshot": 3, "min_rows_after_switch": 2}
+                      "min_live_rows_after_snapshot": 100, "min_rows_after_switch": 100}
     raw["bot"] = {"control_url": "http://bot:9091", "request_endpoint": "http://ingress/api/requests"}
     raw["ingress"] = {"control_url": "http://ingress:9092", "targets": {SOURCE: "aws_db", TARGET: "onprem"}}
     return parse_config(raw)
@@ -42,8 +42,8 @@ def return_config() -> Config:
 @pytest.fixture
 def fakes() -> dict:
     db = FakeDb()
-    db.rows = {SOURCE: 1060, TARGET: 0}
-    db.seed = {SOURCE: 1000, TARGET: 0}
+    db.rows = {SOURCE: 800, TARGET: 0}   # 1000건 예산
+    db.seed = {SOURCE: 800, TARGET: 0}
     db.app_insert = {SOURCE: True, TARGET: False}
     return {"bot": _bot(), "ingress": FakeIngress("aws_db"), "connect": FakeConnect(), "db": db, "verify": FakeVerify()}
 
@@ -138,11 +138,10 @@ def test_real_precheck_accepts_rds_replication_member(state_dir, monkeypatch):
             assert conn.execute("SELECT rolreplication, pg_has_role('migration_cdc', 'rds_replication', 'MEMBER') "
                                 "FROM pg_roles WHERE rolname = 'migration_cdc'").fetchone() == (False, True)
 
+        # 상태 머신 PRECHECK 는 봇·접수큐·1000건 예산(seed 800)까지 요구하므로 여기서는 SQL 판정만 본다.
+        # 게이트 자체는 test_precheck_gate_follows_cdc_replication_result 가 가짜 포트로 확인한다.
         ports = Ports(bot=_bot(), connect=FakeConnect(), db=PgAdminPort(cfg), verify=FakeVerify())
-        cut = Cutover(cfg, CutoverStore(state_dir), ports, connector_docs={})
-        cut.stage_precheck()
-        assert cut.job.stage == COPYING
-        assert cut.job.checkpoint["precheck"]["source"]["cdc_replication"] is True
+        assert ports.db.precheck(SOURCE, is_source=True)["cdc_replication"] is True
 
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute("REVOKE rds_replication FROM migration_cdc")
@@ -200,7 +199,7 @@ def test_fence_and_switch_follow_return_direction(return_config, state_dir, fake
     assert cut.run() == COMPLETED
     bot, db = fakes["bot"], fakes["db"]
     assert db.calls == ["prepare", f"revoke:{SOURCE}", f"grant:{TARGET}", f"drop_slot:{SOURCE}"]
-    assert [n for enabled, n in bot.calls if enabled] == [3, 5]
+    assert [n for enabled, n in bot.calls if enabled] == [100, 200]
     assert fakes["ingress"].target == "onprem" and bot.generation == "stopped"
     assert db.app_insert == {SOURCE: False, TARGET: True}
 
@@ -229,7 +228,7 @@ def _fail_final_verify(fakes) -> None:
         if target == TARGET and upto is None and not state["failed"] and fakes.get("_cut") is not None \
                 and fakes["_cut"].job.stage == VERIFYING:
             state["failed"] = True
-            return n - 3
+            return n - 101  # 봇 100건을 넣어도 1건 부족
         return n
 
     db.count_rows_in_scope = count_rows_in_scope

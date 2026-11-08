@@ -109,11 +109,13 @@ python -m migration.init_db --config config.yaml --target aws
    `allow` / `deny` 로 강제할 수 있다.
 7. `wal_level`, `ssl` 등 서버 설정과 역할별 테이블 권한을 로그로 남긴다.
 
-### 총 1,000건 시연
+### 총 1,000건 예산 (고정)
 
-`config.example.yaml`은 `cutover.demo_total_rows: 1000`을 사용한다.
-새 원본 DB의 seed 800건 + 트래픽봇의 원본 요청 100건 + 대상 요청 100건이다.
-최종 원본 900건·대상 1,000건이어야 성공한다. 새 봇 run_id·빈 원장과
+데이터 예산은 옵션이 아니라 고정이다(2026-11-08 결정, 옛 `demo_total_rows` 키는 설정 오류).
+새 원본 DB의 seed 800건 + 트래픽봇의 원본 요청 100건 + 대상 요청 100건 = 1,000건.
+PRECHECK 는 원본이 seed 800건뿐이고 대상이 비어 있으며 봇이 아무것도 만들지 않은 정지 상태인지 확인하고,
+COPYING 끝에 원본 800건, CATCHING_UP 끝에 900건, VERIFYING 에서 원본 900건·대상 1,000건이 아니면 실패한다.
+`min_live_rows_after_snapshot`·`min_rows_after_switch` 는 100 으로 고정이다. 새 봇 run_id·빈 원장과
 `BOT_GENERATION=stopped`로 준비한다. 기존 DB와 원장을 자동으로 초기화하지 않는다.
 
 러너는 트래픽봇의 `POST /control/generation`으로 절대 생성 상한을 저장한다.
@@ -152,7 +154,7 @@ python -m migration.seed --config config.yaml --target onprem --state-dir /var/l
 ```
 
 `request_id = uuid5(고정 namespace, "seed-{n}")`, `request_no 1..count`, `phase=seed`, `created_at = 2026-01-01T00:00:00Z + n초`.
-기본 seed는 1,000건이며, 총 1,000건 시연 모드에서는 800건이다.
+seed 는 항상 800건이다(총 1,000건 예산의 일부). `--count` 에 다른 값을 주면 접속 전에 거절한다.
 `ON CONFLICT DO NOTHING` 으로 넣고 phase=seed 행이 정확히 지정 건수이며 모든 필드가 기대와 같은지 확인한다.
 `--state-dir` 를 주면 요청 기록에도 committed 로 남겨 verify 의 S 집합에 포함된다.
 

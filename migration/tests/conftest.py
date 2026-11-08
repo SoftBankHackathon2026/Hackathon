@@ -29,7 +29,7 @@ RAW_CONFIG = {
                 "app_checks": {"onprem": {"url": "http://app", "environment": "onprem", "database": "migration_demo"},
                                "aws": {"url": "http://app-aws", "environment": "aws", "database": "migration_demo"}}},
     "cutover": {"poll_interval_seconds": 0, "stage_timeout_seconds": 5, "offset_stable_seconds": 0,
-                "min_live_rows_after_snapshot": 3, "min_rows_after_switch": 2},
+                "min_live_rows_after_snapshot": 100, "min_rows_after_switch": 100},
 }
 
 
