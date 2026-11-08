@@ -98,8 +98,8 @@ def test_cloud_and_plain_kubernetes_kinds_and_unknown_node_counts():
     assert target_role.role == "target"
 
 
-def test_disconnected_registrations_stay_visible_with_a_warning():
-    env = registered_environment(snapshot(tunnel="CLOSED", workloads=None))
+def test_temporarily_disconnected_registrations_stay_visible_with_a_warning():
+    env = registered_environment(snapshot(tunnel="DEGRADED", workloads=None))
     assert env.connected is False
     assert [issue.title for issue in env.issues] == ["보안 연결이 끊겼어요"]
     assert env.components == []
@@ -145,12 +145,18 @@ def test_fleet_endpoint_lists_registered_environments_after_the_fixed_ones(monke
     app = create_app(auth_mode="demo")
     client = TestClient(app, headers=ORIGIN)
     before = [env["id"] for env in client.get("/api/v1/fleet").json()["environments"]]
+    registered = snapshot()
     duplicate = snapshot(environmentId=before[0])
     app.state.container = replace(
-        app.state.container, connections=connections([snapshot(), duplicate], [])
+        app.state.container, connections=connections([registered, duplicate], [])
     )
     environments = client.get("/api/v1/fleet").json()["environments"]
     assert [env["id"] for env in environments] == [*before, ENV_ID]
     added = environments[-1]
     assert (added["registered"], added["project"], added["kind"]) == (True, "billing", "k3s")
     assert all(env["registered"] is False for env in environments[:-1])
+
+    # Revocation leaves the registered ID and inventory in the connection record.
+    registered.update(device="REVOKED", tunnel="NONE", workloads=None)
+    environments = client.get("/api/v1/fleet").json()["environments"]
+    assert [env["id"] for env in environments] == before

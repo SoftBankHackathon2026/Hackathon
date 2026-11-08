@@ -62,6 +62,8 @@ def _components(workloads: Any) -> list[ComponentView]:
 
 
 def registered_environment(snapshot: dict[str, Any]) -> EnvironmentView | None:
+    if snapshot.get("device") != "APPROVED":
+        return None
     env_id, target = snapshot.get("environmentId"), snapshot.get("target")
     collected = snapshot.get("collected") or []
     if not env_id or not isinstance(target, dict) or not collected:
@@ -72,7 +74,7 @@ def registered_environment(snapshot: dict[str, Any]) -> EnvironmentView | None:
     facts = {fact["label"]: fact["value"] for fact in collected[0].get("facts", [])}
     version = facts.get(VERSION)
     nodes = facts.get(NODES, "")
-    connected = snapshot.get("device") == "APPROVED" and snapshot.get("tunnel") == "READY"
+    connected = snapshot.get("tunnel") == "READY"
     return EnvironmentView(
         id=env_id,
         name=target.get("name") or env_id,
