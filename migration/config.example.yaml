@@ -73,10 +73,9 @@ bot:
   timeout_seconds: 15
 
 cutover:
-  # 시연 전체 1,000건: seed 800 + 복제 중 100 + 전환 후 100.
-  # 새 DB/상태 디렉터리에서 사용. 지속 부하 시연은 이 줄을 지우거나 null로 설정.
-  demo_total_rows: 1000
   state_dir: /var/lib/worker
+  # 데이터 예산은 항상 총 1,000건이다(옵션 아님): seed 800 + 복제 중 봇 요청 100 + 전환 후 봇 요청 100.
+  # 아래 두 값은 100 으로 고정이며 다른 값은 설정 오류다. 끝나면 원본 900건·대상 1,000건이어야 성공한다.
   min_live_rows_after_snapshot: 100
   min_rows_after_switch: 100
   offset_stable_seconds: 10

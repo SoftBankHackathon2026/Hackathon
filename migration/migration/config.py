@@ -168,13 +168,20 @@ class BotConfig:
             raise ConfigError("bot: token_env 와 양수 timeout_seconds 필요")
 
 
+# 시연 데이터 예산은 고정이다. 옵션이 아니다: seed 800 + 복제 중 봇 요청 100 + 전환 후 봇 요청 100 = 1000.
+# 끝나면 원본 900건·대상 1000건이어야 성공이다. 다른 건수는 설정 단계에서 거절한다.
+SEED_ROWS = 800
+LIVE_ROWS = 100
+POST_SWITCH_ROWS = 100
+TOTAL_ROWS = SEED_ROWS + LIVE_ROWS + POST_SWITCH_ROWS
+
+
 @dataclass(frozen=True)
 class CutoverConfig:
-    demo_total_rows: int | None = None  # opt-in: 800 seed + 100 CDC + 100 target
     state_dir: str = "/var/lib/worker"
     drop_source_slot_on_complete: bool = True   # COMPLETED 직전에 원본 slot·publication 제거 (WAL 축적 방지)
-    min_live_rows_after_snapshot: int = 100
-    min_rows_after_switch: int = 100
+    min_live_rows_after_snapshot: int = LIVE_ROWS   # 고정값. 다른 값은 ConfigError
+    min_rows_after_switch: int = POST_SWITCH_ROWS   # 고정값. 다른 값은 ConfigError
     offset_stable_seconds: float = 10.0
     poll_interval_seconds: float = 5.0
     stage_timeout_seconds: float = 1800.0
@@ -183,11 +190,11 @@ class CutoverConfig:
     snapshot_compare: str = "digest"
 
     def __post_init__(self) -> None:
-        if self.demo_total_rows is not None and (
-            type(self.demo_total_rows) is not int or self.demo_total_rows != 1000
-            or self.min_live_rows_after_snapshot != 100 or self.min_rows_after_switch != 100
-        ):
-            raise ConfigError("demo_total_rows requires 1000 total and 100/100 live rows")
+        if (type(self.min_live_rows_after_snapshot) is not int or self.min_live_rows_after_snapshot != LIVE_ROWS
+                or type(self.min_rows_after_switch) is not int or self.min_rows_after_switch != POST_SWITCH_ROWS):
+            raise ConfigError(f"cutover 는 항상 {TOTAL_ROWS}건 예산(seed {SEED_ROWS} + 복제 중 {LIVE_ROWS} + 전환 후 "
+                              f"{POST_SWITCH_ROWS})만 허용한다: min_live_rows_after_snapshot={LIVE_ROWS}, "
+                              f"min_rows_after_switch={POST_SWITCH_ROWS} 이어야 한다")
         if self.snapshot_compare not in ("digest", "rows"):
             raise ConfigError(f"cutover.snapshot_compare 는 digest|rows 중 하나다: {self.snapshot_compare}")
 

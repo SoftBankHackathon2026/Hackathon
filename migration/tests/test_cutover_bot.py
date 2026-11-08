@@ -8,7 +8,7 @@ import pytest
 
 from migration.bot_client import HttpBotClient, BotClientError
 from migration.config import BotConfig, ConfigError
-from migration.cutover import ABORTED, COMPLETED, NEEDS_RECOVERY, VERIFYING, CutoverError
+from migration.cutover import ABORTED, COMPLETED, NEEDS_RECOVERY, PRECHECK, VERIFYING, CutoverError
 from tests.test_cutover import fakes, _build, _simulate_replication
 
 
@@ -26,7 +26,8 @@ def test_unconfirmed_request_blocks_fencing(config, state_dir, fakes):
     _simulate_replication(fakes)
     cut = _build(config, state_dir, fakes, approve='test')
     original = fakes['bot'].status
-    fakes['bot'].status = lambda: {**original(), 'pending': 1}
+    # PRECHECK 는 새 봇(pending 0)을 요구하므로 그 뒤부터 미확정 요청이 하나 남는 상황을 만든다
+    fakes['bot'].status = lambda: {**original(), 'pending': 1} if cut.job.stage != PRECHECK else original()
     with pytest.raises(CutoverError, match='traffic_bot_settled'): cut.run()
     assert 'revoke:onprem' not in fakes['db'].calls
 
@@ -57,7 +58,7 @@ def test_stop_failure_never_marks_completed(config, state_dir, fakes):
     assert cut.job.checkpoint['bot_stop_error'] == 'BOT_STOP_FAILED'
     fakes['bot'].set_generation = original
     assert _build(config, state_dir, fakes, approve='test').run(force_retry=True) == COMPLETED
-    assert fakes['bot'].generated == 5
+    assert fakes['bot'].generated == 200
 
 
 def test_verifying_retry_finishes_saved_batch_not_new_batch(config, state_dir, fakes):
@@ -67,7 +68,7 @@ def test_verifying_retry_finishes_saved_batch_not_new_batch(config, state_dir, f
     interrupted = False
     def partial(enabled, **kwargs):
         nonlocal interrupted
-        if enabled and kwargs.get('limit') == 5 and not interrupted:
+        if enabled and kwargs.get('limit') == 200 and not interrupted:
             interrupted = True
             fakes['bot'].generated += 1
             fakes['bot'].on_batch(1)
@@ -78,10 +79,10 @@ def test_verifying_retry_finishes_saved_batch_not_new_batch(config, state_dir, f
         return original(enabled, **kwargs)
     fakes['bot'].set_generation = partial
     with pytest.raises(CutoverError, match='temporary'): cut.run()
-    assert cut.job.stage == NEEDS_RECOVERY and fakes['bot'].generated == 4
+    assert cut.job.stage == NEEDS_RECOVERY and fakes['bot'].generated == 101
     fakes['bot'].set_generation = original
     assert _build(config, state_dir, fakes, approve='test').run(force_retry=True) == COMPLETED
-    assert fakes['bot'].generated == 5 and fakes['db'].rows['aws'] == fakes['db'].rows['onprem'] + 2
+    assert fakes['bot'].generated == 200 and fakes['db'].rows == {'onprem': 900, 'aws': 1000}
 
 
 def test_old_failed_job_rejection_preserves_checkpoint(config, state_dir, fakes):
@@ -137,7 +138,7 @@ def test_queue_restart_after_resume_reconciles_before_releasing_bot(config, stat
     before = fakes['ingress'].calls.count('resume@1')
     assert _build(config, state_dir, fakes, approve='test').run(force_retry=True) == COMPLETED
     assert fakes['ingress'].calls.count('resume@1') == before + 1
-    assert fakes['bot'].generated == 5
+    assert fakes['bot'].generated == 200
 
 
 def test_snapshot_adapter_never_opens_retired_worker_ledger(config, state_dir, monkeypatch):

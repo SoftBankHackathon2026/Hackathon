@@ -20,7 +20,7 @@ from . import db as dbmod
 from . import verify as verifymod
 from .cdc import ConnectClient, ConnectError, load_connector_template_pair, mask_config, prepare_source, \
     sink_kafka_offsets, template_variables
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, LIVE_ROWS, load_config, POST_SWITCH_ROWS, SEED_ROWS, TOTAL_ROWS
 from .state import CutoverJob, CutoverStore
 from .cutover_policy import CutoverPolicyGate
 from .ingress_client import HttpIngressClient, IngressClientError, check_app_ready
@@ -545,12 +545,14 @@ class Cutover:
         if self.p.bot is None or self.ingress is None:
             raise CutoverError("트래픽봇과 접수 큐 제어 설정이 모두 필요하다")
         bs = self._bot_snapshot()
-        if self.cc.demo_total_rows is not None:
-            if (src.get("row_count") != 800 or tgt.get("row_count") != 0
-                    or self.p.db.count_rows(self.source, "seed") != 800):
-                problems.append("1000-row demo requires source=800 seed rows and an empty target")
-            if bs["generation"] != "stopped" or bs["generated_total"] != 0 or bs["pending"] or bs["failed"]:
-                problems.append("1000-row demo requires a fresh stopped traffic bot")
+        # 1000건 예산은 고정이다: 원본은 seed 800건뿐, 대상은 비어 있고, 봇은 아직 아무것도 만들지 않은 정지 상태여야 한다.
+        seed_rows = self.p.db.count_rows(self.source, "seed") if src.get("table_exists") else None
+        if src.get("row_count") != SEED_ROWS or tgt.get("row_count") != 0 or seed_rows != SEED_ROWS:
+            problems.append(f"1000건 예산: 원본은 seed {SEED_ROWS}건만, 대상은 0건이어야 한다 "
+                            f"(원본 {src.get('row_count')}건, seed {seed_rows}건, 대상 {tgt.get('row_count')}건)")
+        if bs["generation"] != "stopped" or bs["generated_total"] != 0 or bs["pending"] or bs["failed"]:
+            problems.append(f"1000건 예산: 생성 정지된 새 트래픽봇이어야 한다 (generation={bs['generation']}, "
+                            f"generated_total={bs['generated_total']}, pending={bs['pending']}, failed={bs['failed']})")
         connectors = self.p.connect.list_connectors()
         ingress_info: dict[str, Any] | None = None
         if self.ingress is not None:
@@ -607,8 +609,8 @@ class Cutover:
 
         info = self._wait("snapshot", snapshot_done)
         copy_count = self.p.db.count_rows(self.source)
-        if self.cc.demo_total_rows is not None and copy_count != 800:
-            raise CutoverError("demo source changed before live generation: expected 800 rows")
+        if copy_count != SEED_ROWS:
+            raise CutoverError(f"복사 중 원본이 바뀌었다: seed {SEED_ROWS}건이어야 하는데 {copy_count}건")
         self._save(CATCHING_UP, copying=info, source_count_at_copy=copy_count)
 
     def stage_catching_up(self) -> None:
@@ -641,10 +643,9 @@ class Cutover:
 
         info = self._wait("catching_up", caught_up)
         self._wait_bot_batch("source")
-        if self.cc.demo_total_rows is not None:
-            info["source"] = self.p.db.count_rows(self.source)
-            if info["source"] != 900:
-                raise CutoverError("demo source must contain exactly 900 rows")
+        info["source"] = self.p.db.count_rows(self.source)
+        if info["source"] != SEED_ROWS + LIVE_ROWS:
+            raise CutoverError(f"복제 중 원본은 정확히 {SEED_ROWS + LIVE_ROWS}건이어야 한다: {info['source']}건")
         self._save(READY, catching_up=info)
 
     def stage_ready(self) -> None:
@@ -866,11 +867,11 @@ class Cutover:
         info = {"bot": bs, "target_rows_before": base, "target_rows": target_rows}
         if target_rows < base + self.cc.min_rows_after_switch:
             raise CutoverError(f"대상 신규 쓰기 부족: {info}")
-        if self.cc.demo_total_rows is not None:
-            source_rows = self.p.db.count_rows(self.source)
-            if source_rows != 900 or target_rows != 1000:
-                raise CutoverError(f"demo row budget mismatch: source={source_rows}, target={target_rows}")
-            info["demo_rows"] = {"source": source_rows, "target": target_rows}
+        source_rows = self.p.db.count_rows(self.source)
+        if source_rows != SEED_ROWS + LIVE_ROWS or target_rows != TOTAL_ROWS:
+            raise CutoverError(f"1000건 예산 불일치: 원본 {source_rows}건(기대 {SEED_ROWS + LIVE_ROWS}), "
+                               f"대상 {target_rows}건(기대 {TOTAL_ROWS})")
+        info["rows"] = {"source": source_rows, "target": target_rows, "budget": TOTAL_ROWS}
         if self.p.db.app_can_insert(self.source):
             raise CutoverError("원본 앱 쓰기가 다시 열려 있다")
         if self.ingress is not None:

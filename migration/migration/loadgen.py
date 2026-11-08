@@ -23,7 +23,7 @@ import psycopg
 from psycopg import sql
 
 from . import db as dbmod
-from .config import Config, ConnectionSpec, ConfigError, load_config, redact
+from .config import Config, ConnectionSpec, ConfigError, load_config, redact, SEED_ROWS, TOTAL_ROWS
 from .state import COMMITTED, PENDING, RequestRecord, RequestStore
 
 log = logging.getLogger("migration.loadgen")
@@ -840,7 +840,7 @@ def build_settings(args: argparse.Namespace, config: Config) -> WorkerSettings:
         rate_per_second=args.rate,
         state_dir=state_dir,
         known_targets=tuple(config.targets),
-        max_generated=200 if config.cutover.demo_total_rows is not None else None,
+        max_generated=TOTAL_ROWS - SEED_ROWS,  # 1000건 예산: 봇이 만들 수 있는 요청은 100 + 100 = 200 뿐
         max_queue=args.max_queue,
         max_queue_age_seconds=args.max_queue_age,
         max_consecutive_failures=args.max_consecutive_failures,

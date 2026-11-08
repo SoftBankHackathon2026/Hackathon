@@ -116,8 +116,8 @@ class FakeConnect:
 
 class FakeDb:
     def __init__(self) -> None:
-        self.rows = {"onprem": 1010, "aws": 0}
-        self.seed = {"onprem": 1000, "aws": 0}
+        self.rows = {"onprem": 800, "aws": 0}   # 1000건 예산: 원본은 seed 800건에서 시작한다
+        self.seed = {"onprem": 800, "aws": 0}
         self.app_insert = {"onprem": True, "aws": False}
         self.terminated = 0
         self.calls: list[str] = []
@@ -163,10 +163,10 @@ class FakeVerify:
             # policy-pre-grant, final) 순서를 뜻하므로 여기서는 소비하지 않고 snapshot_results 를 따로 쓴다.
             ok = self.snapshot_results.pop(0) if getattr(self, "snapshot_results", None) else True
             return {"passed": ok, "counts": {}, "report": f"/r/{label}.json", "method": method,
-                    "source_count": 1000, "target_count": 1000}
+                    "source_count": 800, "target_count": 800}
         ok = self.results.pop(0) if self.results else True
         return {"passed": ok, "counts": {}, "report": f"/r/{label}.json", "method": method,
-                "source_count": 1000 if upto is not None else 10, "target_count": 1000 if upto is not None else 10}
+                "source_count": 800 if upto is not None else 10, "target_count": 800 if upto is not None else 10}
 
 
 @pytest.fixture
@@ -229,7 +229,8 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     cut2 = _build(config, state_dir, fakes, approve="meeting-42")
     assert cut2.run() == COMPLETED
     w, db, connect, verify = fakes["bot"], fakes["db"], fakes["connect"], fakes["verify"]
-    assert [limit for enabled, limit in w.calls if enabled] == [3, 5]
+    assert [limit for enabled, limit in w.calls if enabled] == [100, 200]  # 복제 중 100, 전환 후 100
+    assert db.rows == {"onprem": 900, "aws": 1000}
     assert w.generation == "stopped" and w.pending == 0
     assert db.calls == ["prepare", "revoke:onprem", "grant:aws", "drop_slot:onprem"]
     assert cp_cleanup(cut2)["slot_dropped"] is True
@@ -240,7 +241,7 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     wm = fakes["db"].watermark
     assert verify.scopes == [("snapshot", None, wm, "digest")]
     assert cut.job.checkpoint["watermark"] == wm
-    assert cut.job.checkpoint["snapshot_set"]["passed"] and cut.job.checkpoint["snapshot_set"]["count"] == 1000
+    assert cut.job.checkpoint["snapshot_set"]["passed"] and cut.job.checkpoint["snapshot_set"]["count"] == 800
     # 순서: REVOKE 는 삭제 전에, GRANT 는 삭제·재검증 후에
     assert connect.connectors == {}
     cp = cut2.job.checkpoint
@@ -248,8 +249,9 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
     assert "sink_offsets" in cp["drained"]
     for key in ("counts_pre_stop", "counts_post_stop", "counts_pre_grant", "counts_final"):
         assert cp[key]["passed"] and cp[key]["method"] == "counts" and cp[key]["watermark"] == wm
-        assert cp[key]["delta_target"] == cp[key]["delta_source"] + (2 if key == "counts_final" else 0)
-        assert cp[key]["snapshot_source"] == cp[key]["snapshot_target"] == 1000
+        # 전환 후(final)에는 봇이 대상에 100건을 더 넣었으므로 대상 delta 가 100 많다
+        assert cp[key]["delta_target"] == cp[key]["delta_source"] + (100 if key == "counts_final" else 0)
+        assert cp[key]["snapshot_source"] == cp[key]["snapshot_target"] == 800
     steps = [s for s, _ in cut2.store.steps(config.job.job_id)]
     assert "grant_target_app_insert" in steps and "delete_source_connector" in steps
 
@@ -292,16 +294,6 @@ def test_slot_cleanup_can_be_disabled(state_dir, fakes):
     cut = _build(config, state_dir, fakes, approve="a")
     assert cut.run() == COMPLETED
     assert cp_cleanup(cut) == {"skipped": True} and "drop_slot:onprem" not in fakes["db"].calls
-
-
-def test_copying_accepts_empty_source_and_verifies_new_bot_requests(config, state_dir, fakes):
-    fakes["db"].seed = {"onprem": 0, "aws": 0}
-    fakes["db"].rows = {"onprem": 0, "aws": 0}
-    fakes["db"].watermark = None
-    _simulate_replication(fakes)
-    cut = _build(config, state_dir, fakes, approve="test")
-    assert cut.run() == COMPLETED
-    assert fakes["db"].rows == {"onprem": 3, "aws": 5}
 
 
 def test_rerun_does_not_repeat_external_steps(config, state_dir, fakes):
@@ -356,7 +348,7 @@ def test_failure_after_target_grant_is_needs_recovery(config, state_dir, fakes):
     def count_rows_in_scope(target, *, since=None, upto=None):
         n = orig(target, since=since, upto=upto)
         if target == "aws" and upto is None and cut.job.stage == VERIFYING:
-            return n - 3  # 전환 후 건수 확인에서 대상 delta 가 원본보다 모자란 상황
+            return n - 101  # 전환 후 건수 확인에서 대상 delta 가 원본보다 모자란 상황 (봇 100건을 넣어도 1건 부족)
         return n
     db.count_rows_in_scope = count_rows_in_scope
     with pytest.raises(CutoverError, match=NEEDS_RECOVERY):
@@ -465,7 +457,7 @@ def test_snapshot_set_is_verified_once_and_rechecked_only_when_its_count_changes
     assert cut.run() == COMPLETED
     labels = [label for _, label in verify.runs]
     assert labels == ["snapshot", "snapshot-recheck"]
-    assert cut.job.checkpoint["snapshot_recheck"]["needed"] and cut.job.checkpoint["snapshot_set"]["count"] == 1001
+    assert cut.job.checkpoint["snapshot_recheck"]["needed"] and cut.job.checkpoint["snapshot_set"]["count"] == 801
     assert cut.job.checkpoint["drained"]["delta_source"] == cut.job.checkpoint["drained"]["delta_target"]
 
 
@@ -494,20 +486,6 @@ def test_late_row_in_snapshot_set_that_never_reaches_target_aborts(config, state
         cut.run()
     assert cut.job.stage == ABORTED
 
-
-def test_empty_source_at_start_has_no_snapshot_set(config, state_dir, fakes):
-    """빈 테이블에서 시작하면 기준점이 None 이고 모든 행이 delta 라 스냅샷 digest 는 건너뛴다."""
-    _simulate_replication(fakes)
-    db, verify = fakes["db"], fakes["verify"]
-    db.watermark = None
-    db.seed = {"onprem": 1, "aws": 0}  # COPYING 게이트는 seed>0 을 요구한다
-    cut = _build(config, state_dir, fakes, approve="a")
-    _grow_target_commits(fakes)
-    assert cut.run() == COMPLETED
-    assert cut.job.checkpoint["watermark"] is None
-    assert verify.runs == []  # 스냅샷 집합이 없으니 digest 도 없다. 전환 구간은 건수만 센다
-    assert cut.job.checkpoint["snapshot_set"]["passed"] and cut.job.checkpoint["snapshot_set"].get("skipped")
-    assert cut.job.checkpoint["counts_final"]["watermark"] is None
 
 
 def test_job_without_watermark_compares_everything_as_delta(config, state_dir, fakes):
@@ -540,7 +518,7 @@ def test_final_count_check_allows_rows_written_on_target_after_switch(config, st
     db.count_rows_in_scope = count_rows_in_scope
     assert cut.run() == COMPLETED
     final = cut.job.checkpoint["counts_final"]
-    assert final["passed"] and final["delta_target"] == final["delta_source"] + 7
+    assert final["passed"] and final["delta_target"] == final["delta_source"] + 100 + 5
 
 
 def test_pre_stop_count_mismatch_aborts_before_connectors_are_deleted(config, state_dir, fakes):

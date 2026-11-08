@@ -15,7 +15,7 @@ import psycopg
 from psycopg import sql
 
 from . import db as dbmod
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, load_config, SEED_ROWS
 from .state import RequestRecord, RequestStore
 
 log = logging.getLogger("migration.seed")
@@ -24,7 +24,7 @@ log = logging.getLogger("migration.seed")
 SEED_NAMESPACE = uuid.UUID("5f3c1c2e-7b7a-4e3f-9f4e-2c1a0b9d8e7f")
 SEED_PHASE = "seed"
 SEED_RUN_ID = "seed"
-SEED_COUNT = 1000
+SEED_COUNT = SEED_ROWS  # 항상 800. 1000건 예산(seed 800 + 100 + 100)의 일부라 바꿀 수 없다
 # created_at 도 결정적으로: 기준 시각 + n초
 SEED_BASE_TIME = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
@@ -102,10 +102,9 @@ def verify_seed(conn: psycopg.Connection[Any], table: str, records: list[Request
 
 
 def run(config: Config, target: str, *, state_dir: Path | None, count: int | None = None) -> int:
-    demo = config.cutover.demo_total_rows is not None
-    count = (800 if demo else SEED_COUNT) if count is None else count
-    if demo and count != 800:
-        raise ConfigError("1000-row demo requires exactly 800 seed rows")
+    count = SEED_COUNT if count is None else count
+    if count != SEED_COUNT:
+        raise ConfigError(f"seed 는 항상 {SEED_COUNT}건이다 (1000건 예산: seed {SEED_COUNT} + 100 + 100): {count}")
     records = seed_records(count)
     spec = config.connection(target, "app", application_name="migration-seed")
     log.info("seed 삽입 대상 %s, %d건", spec, count)
@@ -137,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="seed 1,000건 결정적 삽입")
     p.add_argument("--config", default=os.environ.get("MIGRATION_CONFIG", "config.yaml"))
     p.add_argument("--target", default=None, help="기본: job.source")
-    p.add_argument("--count", type=int, default=None, help="기본 1000; demo_total_rows=1000이면 800")
+    p.add_argument("--count", type=int, default=None, help="항상 800 (1000건 예산). 다른 값은 거절한다")
     p.add_argument("--state-dir", default=os.environ.get("WORKER_STATE_DIR"),
                    help="지정하면 seed 를 요청 기록에도 committed 로 남긴다 (verify 의 S 집합에 포함)")
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))

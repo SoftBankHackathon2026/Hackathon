@@ -27,8 +27,7 @@ def test_seed_records_fields():
     assert seed_records(3) == recs
 
 
-def test_demo_wrong_seed_count_is_rejected_before_connecting(config):
-    config = replace(config, cutover=replace(config.cutover, demo_total_rows=1000,
-                     min_live_rows_after_snapshot=100, min_rows_after_switch=100))
-    with pytest.raises(ConfigError, match='800 seed'):
+def test_wrong_seed_count_is_rejected_before_connecting(config):
+    """seed 는 항상 800건(1000건 예산). 1000건을 요구하면 접속 전에 거절한다."""
+    with pytest.raises(ConfigError, match='항상 800건'):
         run(config, 'onprem', state_dir=None, count=1000)
