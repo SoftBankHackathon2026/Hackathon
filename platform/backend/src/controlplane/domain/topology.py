@@ -163,7 +163,7 @@ def _group_status(items: list[InventoryItem]) -> tuple[str, str]:
     return "degraded", f"{detail}, 준비 안 됨: {', '.join(lagging[:3])}"
 
 
-def _pod_view(pod: PodFact) -> PodView:
+def pod_view(pod: PodFact) -> PodView:
     return PodView(
         name=pod.name,
         phase=pod.phase,
@@ -180,7 +180,7 @@ def _group_pods(items: list[InventoryItem]) -> list[PodView] | None:
     listed = [item.pods for item in items if item.pods is not None]
     if not listed:
         return None
-    return sorted((_pod_view(pod) for pods in listed for pod in pods), key=lambda pod: pod.name)
+    return sorted((pod_view(pod) for pods in listed for pod in pods), key=lambda pod: pod.name)
 
 
 def _group_endpoints(items: list[InventoryItem]) -> list[EndpointView]:

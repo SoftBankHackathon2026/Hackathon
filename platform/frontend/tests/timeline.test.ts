@@ -144,6 +144,11 @@ test("lifetimeSpan runs from the first stage to the completion with padding", ()
     stage("COMPLETED", 30000, null),
   ]);
   assert.deepEqual(done, { from: T0 - 120000, to: T0 + 30000 + 120000 });
+  for (const end of ["ABORTED", "ROLLED_BACK"])
+    assert.deepEqual(
+      lifetimeSpan([stage("A", 0, 30000), stage(end, 30000, null)]),
+      { from: T0 - 120000, to: T0 + 30000 + 120000 },
+    );
 });
 
 test("lifetimeMinutes pads, rounds to five and caps at a day", () => {

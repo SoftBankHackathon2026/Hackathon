@@ -382,6 +382,30 @@ def test_service_overview_estimates_both_directions():
     assert back.dual_run_cost == 0
 
 
+def test_overview_keeps_tasks_on_directly_connected_environments():
+    connected = "connected-AbCdEfGhIjKlMnOpQrStUv"
+    fleet = FLEET.model_copy(deep=True)
+    fleet.migrations.append(
+        MigrationConfig.model_validate(
+            {
+                **fleet.migrations[0].model_dump(),
+                "job_id": "onprem_to_onprem_001",
+                "source_env": connected,
+                "target_env": "onprem",
+            }
+        )
+    )
+    service = CostService(
+        fleet, CostConfig(), {"onprem": SOURCE}.get, lambda provider, region: None
+    )
+    overview = service.overview()
+    task = next(m for m in overview.migrations if m.job_id == "onprem_to_onprem_001")
+    assert (task.source_env, task.target_env) == (connected, "onprem")
+    assert task.source_monthly is None and task.target_monthly_after is None
+    assert task.gaps == ["직접 연결한 환경은 아직 비용을 계산하지 않아요"]
+    assert {m.job_id for m in overview.migrations} >= {m.job_id for m in FLEET.migrations}
+
+
 def test_collect_inventory_records_gaps_instead_of_failing():
     def no_kube(env):
         raise ApiException(status=403)

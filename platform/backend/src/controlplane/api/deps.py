@@ -182,11 +182,15 @@ BuildsDep = Annotated[BuildService, Depends(get_builds)]
 RunsDep = Annotated[DemoRunService, Depends(get_runs)]
 
 
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 def check_browser_origin(request: Request, container: Container, *, required: bool) -> None:
     origin = request.headers.get("origin")
     if origin and origin not in container.http.allowed_origins:
         raise AccessDenied("허용되지 않은 요청 출처입니다.")
-    if required and request.method == "POST" and not origin:
+    # POST 뿐 아니라 DELETE 같은 다른 변경 요청도 화면 Origin 이 있어야 한다.
+    if required and request.method not in SAFE_METHODS and not origin:
         raise AccessDenied("등록된 플랫폼 화면에서 실행하세요.")
 
 
@@ -312,6 +316,24 @@ def require_cutover_operator(
 
 EnrollerIdentity = Annotated[Identity | None, Depends(require_enroller)]
 CutoverOperatorIdentity = Annotated[Identity | None, Depends(require_cutover_operator)]
+
+
+def cutover_permitted(
+    request: Request, container: ContainerDep, authorization: str = Header(default="")
+) -> bool:
+    """조회 응답에 화면 조작(작업 삭제 등) 단추를 보일지. 실제 요청은 require_cutover_operator 가 막는다."""
+    if container.auth_mode == AuthMode.OPERATOR:
+        if container.operator_token is None:
+            return False
+        expected = "Bearer " + container.operator_token.get_secret_value()
+        return secrets.compare_digest(authorization.encode(), expected.encode())
+    if container.auth_mode != AuthMode.LOGIN:
+        return True
+    identity = session_identity(request, container)
+    return identity is not None and identity.can_deploy
+
+
+CutoverPermitted = Annotated[bool, Depends(cutover_permitted)]
 
 
 def require_login_mode(request: Request, container: ContainerDep) -> AuthService:

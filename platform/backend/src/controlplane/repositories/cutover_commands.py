@@ -17,6 +17,8 @@ from controlplane.schemas.migrations import ACTIVE_COMMAND_STATUSES, CommandStat
 COMMAND_IN_PROGRESS = (
     "이 작업에 아직 끝나지 않은 명령이 있습니다. 결과를 기다린 뒤 다시 요청하세요."
 )
+# 지운(숨긴) 작업의 명령은 다른 프로세스가 아직 작업을 들고 있어도 러너에게 넘기지 않는다.
+NOT_HIDDEN = "job_id NOT IN (SELECT job_id FROM fleet_migration_tasks WHERE hidden_at IS NOT NULL)"
 COLUMNS = (
     "id, job_id, action, approval_id, note, requested_by, requested_at, status, "
     "started_at, finished_at, exit_code, stage, log_tail"
@@ -113,7 +115,7 @@ class CutoverCommandJournal:
             row = conn.execute(
                 "UPDATE fleet_cutover_commands SET status='running', started_at=%s "
                 "WHERE id = (SELECT id FROM fleet_cutover_commands "
-                "WHERE job_id = ANY(%s) AND status='pending' "
+                f"WHERE job_id = ANY(%s) AND status='pending' AND {NOT_HIDDEN} "
                 "ORDER BY requested_at LIMIT 1 FOR UPDATE SKIP LOCKED) "
                 f"RETURNING {COLUMNS}",
                 (started_at, list(job_ids)),
@@ -124,7 +126,8 @@ class CutoverCommandJournal:
         with self.connect() as conn:
             row = conn.execute(
                 "UPDATE fleet_cutover_commands SET status='running', started_at=%s "
-                "WHERE id = (SELECT id FROM fleet_cutover_commands WHERE job_id=%s AND status='pending' "
+                "WHERE id = (SELECT id FROM fleet_cutover_commands "
+                f"WHERE job_id=%s AND status='pending' AND {NOT_HIDDEN} "
                 "ORDER BY requested_at LIMIT 1 FOR UPDATE SKIP LOCKED) "
                 f"RETURNING {COLUMNS}",
                 (started_at, job_id),

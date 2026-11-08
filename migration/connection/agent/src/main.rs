@@ -116,6 +116,7 @@ struct InventoryQuery<'a> {
     target: Option<&'a str>,
     provider: &'a str,
     context: Option<&'a str>,
+    observation: Option<&'a Value>,
 }
 
 impl InventoryQuery<'_> {
@@ -131,18 +132,20 @@ fn collect_raw(
     query: &InventoryQuery,
     valid: &std::sync::atomic::AtomicBool,
 ) -> Result<Value> {
-    if !matches!(query.operation, "discover" | "collect") {
+    if !matches!(query.operation, "discover" | "collect" | "observe") {
         return Err("operation denied".into());
     }
     let mut cmd = Command::new("/usr/bin/python3");
-    cmd.arg(asset(base, &c.collector_archive)?).arg(query.operation).args([
-        "--request-id",
-        &s.request_id,
-        "--device-id",
-        s.device_id.as_deref().ok_or("device missing")?,
-        "--epoch",
-        &s.epoch.to_string(),
-    ]);
+    cmd.arg(asset(base, &c.collector_archive)?)
+        .arg(query.operation)
+        .args([
+            "--request-id",
+            &s.request_id,
+            "--device-id",
+            s.device_id.as_deref().ok_or("device missing")?,
+            "--epoch",
+            &s.epoch.to_string(),
+        ]);
     if query.cloud() {
         cmd.args(["--provider", query.provider]);
         if let Some(context) = query.context {
@@ -151,6 +154,19 @@ fn collect_raw(
     }
     if let Some(t) = query.target {
         cmd.args(["--target-id", t]);
+    }
+    if let Some(scope) = query.observation {
+        let uid = scope["namespace_uid"]
+            .as_str()
+            .ok_or("missing cluster identity")?;
+        let namespaces = scope["namespaces"]
+            .as_array()
+            .ok_or("missing namespace scope")?
+            .iter()
+            .map(|value| value.as_str().ok_or("invalid namespace scope"))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        cmd.arg(format!("--namespace-uid={uid}"))
+            .arg(format!("--namespaces={}", namespaces.join(",")));
     }
     let mut child = cmd
         .stdin(Stdio::null())
@@ -168,7 +184,9 @@ fn collect_raw(
         if let Some(status) = child.try_wait()? {
             let (result, b) = reader.join().map_err(|_| "collector reader")?;
             result?;
-            if (!status.success() && !query.cloud()) || b.len() > 2_097_152 {
+            if (!status.success() && !query.cloud() && query.observation.is_none())
+                || b.len() > 2_097_152
+            {
                 return Err("environment collection failed".into());
             }
             return Ok(serde_json::from_slice(&b)?);
@@ -475,6 +493,7 @@ fn relay_discovery(
         target: None,
         provider,
         context: None,
+        observation: None,
     };
     let Some(found) = collect(c, base, state, &query, key, api_base)? else {
         return Ok(false);
@@ -572,12 +591,14 @@ fn serve_tunnel(
             &state.candidate_id,
             key,
             "poll",
-            json!({}),
+            json!({"observation_version": 1}),
         ) {
             Ok(value) => value,
             Err(_) => return Ok(SessionExit::Recover("job-poll")),
         };
-        let current_generation = response["snapshot"]["discoveryGeneration"].as_u64().unwrap_or(0);
+        let current_generation = response["snapshot"]["discoveryGeneration"]
+            .as_u64()
+            .unwrap_or(0);
         if current_generation != generation {
             if !relay_discovery(c, base, state, key, &api_base, provider, current_generation)? {
                 return Ok(SessionExit::Recover("discovery-relay"));
@@ -588,7 +609,7 @@ fn serve_tunnel(
         if !response["task"].is_null() {
             let task = &response["task"];
             let device = state.device_id.as_deref().ok_or("device missing")?;
-            let op = protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
+            let op = protocol::verify_job(task, &c.job_public_key, request, device, state.epoch)?;
             let job = task["payload"]["job_id"].as_str().ok_or("job id")?;
             if !completed.contains(job) {
                 let query = InventoryQuery {
@@ -596,28 +617,36 @@ fn serve_tunnel(
                     target: task["payload"]["target_id"].as_str(),
                     provider,
                     context: task["payload"]["cloud_context"].as_str(),
+                    observation: (op == "observe").then_some(&task["payload"]),
                 };
-                let Some(result) = collect(c, base, state, &query, key, &api_base)? else {
+                let collected = match collect(c, base, state, &query, key, &api_base) {
+                    Err(_) if op == "observe" && !service::stopping() => Some(Value::Null),
+                    result => result?,
+                };
+                let Some(result) = collected else {
                     return Ok(SessionExit::Recover("inventory-lease"));
                 };
-                protocol::verify_job(task, &c.job_public_key, device, state.epoch)?;
-                let (action, data) = if query.cloud() && result["report"].is_null() {
-                    ("inventory-failed", json!({
-                        "job_id": job,
-                        "reason": result["reason_code"].as_str().unwrap_or("LOOKUP_FAILED"),
-                    }))
+                protocol::verify_job(task, &c.job_public_key, request, device, state.epoch)?;
+                let (action, data) = if op == "observe" {
+                    (
+                        "observation",
+                        json!({"job_id": job, "report": result["report"]}),
+                    )
+                } else if query.cloud() && result["report"].is_null() {
+                    (
+                        "inventory-failed",
+                        json!({
+                            "job_id": job,
+                            "reason": result["reason_code"].as_str().unwrap_or("LOOKUP_FAILED"),
+                        }),
+                    )
                 } else {
-                    ("inventory", json!({"job_id": job, "report": result["report"]}))
+                    (
+                        "inventory",
+                        json!({"job_id": job, "report": result["report"]}),
+                    )
                 };
-                if api::device(
-                    &api_base,
-                    request,
-                    &state.candidate_id,
-                    key,
-                    action,
-                    data,
-                )
-                .is_err()
+                if api::device(&api_base, request, &state.candidate_id, key, action, data).is_err()
                 {
                     return Ok(SessionExit::Recover("inventory-relay"));
                 }

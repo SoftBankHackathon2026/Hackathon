@@ -243,7 +243,8 @@ class SimulatedFleet:
     ) -> tuple[VerifyReport | None, VerifyReport | None]:
         if job.direction != "forward":
             return None, None
-        worker = self._worker(job)
+        # 검증은 이 작업의 데이터 이름으로 센다. 첫 작업과 이름이 다른 등록 작업(예: 온프렘 → GCP)도 읽힌다.
+        worker = WorkerModel(source=job.data_source, target=job.data_target)
         pre_at, post_at = 1518, 1695
         pre = None
         post = None

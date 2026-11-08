@@ -60,9 +60,19 @@ def pod_requests(pod: KubeObject) -> Resources:
     running = Resources(0, 0)
     for container in items_at(pod, "spec", "containers"):
         running = _add(running, requested(container))
+    sidecars = Resources(0, 0)
+    init_peak = Resources(0, 0)
     for container in items_at(pod, "spec", "initContainers"):
-        running = _larger(running, requested(container))
-    return running
+        resources = requested(container)
+        if container.get("restartPolicy") == "Always":
+            sidecars = _add(sidecars, resources)
+            init_peak = _larger(init_peak, sidecars)
+        else:
+            init_peak = _larger(init_peak, _add(sidecars, resources))
+    return _add(
+        _larger(_add(running, sidecars), init_peak),
+        resources_of(mapping_at(pod, "spec", "overhead")),
+    )
 
 
 def load_by_node(pods: list[KubeObject]) -> dict[str, tuple[Resources, int]]:

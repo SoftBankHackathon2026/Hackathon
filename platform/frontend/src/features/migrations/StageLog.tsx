@@ -65,7 +65,7 @@ export function StageLog({ stages }: { stages: StageInfo[] }) {
                   </td>
                   <td className="num">
                     {durations[i] !== null ? (
-                      <BarCell value={durations[i]} max={max}>
+                      <BarCell value={durations[i] ?? 0} max={max}>
                         {formatSeconds(durations[i])}
                       </BarCell>
                     ) : (

@@ -79,8 +79,10 @@ function ResourceMeter({ row }: { row: ResourceRow }) {
 
 function Resources({
   source,
+  namespaces,
 }: {
   source: Pick<ClusterNode, "allocatable" | "requests" | "usage">;
+  namespaces?: string[];
 }) {
   const rows = resourceRows(source);
   return (
@@ -88,9 +90,14 @@ function Resources({
       {rows.map((row) => (
         <ResourceMeter key={row.key} row={row} />
       ))}
-      {source.usage === null && (
+      {source.requests !== null && namespaces && (
         <p className="fp-muted cl-note">
-          실사용량은 metrics-server 가 있어야 보여요. 막대는 요청량 기준이에요.
+          요청량 집계 범위 {namespaces.join(", ")}
+        </p>
+      )}
+      {source.usage === null && source.requests !== null && (
+        <p className="fp-muted cl-note">
+          실사용량을 읽지 못했어요. 막대는 요청량 기준이에요.
         </p>
       )}
     </>
@@ -309,7 +316,7 @@ export function ClusterPanel({
         }
       >
         <PanelGroup label="자원">
-          <Resources source={node} />
+          <Resources source={node} namespaces={env.observed_namespaces} />
         </PanelGroup>
         <PanelGroup label="파드">
           <p className="cl-lead">
@@ -388,7 +395,7 @@ export function ClusterPanel({
       ) : (
         <>
           <PanelGroup label="자원">
-            <Resources source={cluster} />
+            <Resources source={cluster} namespaces={env.observed_namespaces} />
           </PanelGroup>
           <PanelGroup label="노드" wide>
             {cluster.nodes.length === 0 ? (

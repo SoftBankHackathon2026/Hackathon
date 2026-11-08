@@ -8,6 +8,7 @@ import type {
   EnvironmentCost,
   MigrationCost,
 } from "../../api/costs.ts";
+import type { FleetEnvironment } from "../../api/migrations.ts";
 import { byCategory } from "./model.ts";
 
 /** 온프렘인데 장비비·전기료가 없으면 같은 사양 AWS 가격(cloud_equivalent)으로 본다. */
@@ -160,4 +161,25 @@ export function sortedChanges(changes: CostChange[]) {
 
 export function lineLabel(line: CostLine) {
   return line.item;
+}
+
+const DISCONNECTED = "연결 해제된 환경";
+
+export type EnvLabel = { name: string; provider: string | undefined };
+
+/** 이전 작업의 환경 이름. 비용을 계산한 환경이 먼저고, 직접 연결한 환경은 환경 목록 이름을 쓴다. */
+export function envLabels(
+  overview: CostOverview,
+  fleet: readonly FleetEnvironment[] | undefined,
+): (id: string) => EnvLabel {
+  const labels = new Map<string, EnvLabel>();
+  for (const env of fleet ?? [])
+    labels.set(env.id, { name: env.name, provider: env.provider });
+  for (const env of overview.environments)
+    labels.set(env.env_id, { name: env.name, provider: env.provider });
+  return (id) =>
+    labels.get(id) ?? {
+      name: id.startsWith("connected-") ? DISCONNECTED : id,
+      provider: undefined,
+    };
 }

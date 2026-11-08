@@ -115,6 +115,7 @@ test("buildLanes shares one time axis and marks the write pause", () => {
           stage("FENCING", 60000, 90000),
           stage("VERIFYING", 90000, 120000, "failed"),
           stage("COMPLETED", 120000, null),
+          stage("ROLLED_BACK", 120000, null),
         ],
       },
       { jobId: "b", stages: [stage("COPYING", 300000, null, "current")] },

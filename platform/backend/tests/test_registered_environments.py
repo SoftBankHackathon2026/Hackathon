@@ -113,7 +113,7 @@ def test_unfinished_or_unknown_registrations_are_left_out():
 
 
 def connections(rows, seen):
-    def listing(actor):
+    def listing(actor, *, include_observations):
         seen.append((actor.team, actor.can_write))
         return rows
 
@@ -133,7 +133,7 @@ def test_registered_environments_use_the_viewer_team_or_the_demo_tenant():
 
 
 def test_a_failing_connection_service_does_not_hide_the_fleet():
-    def broken(actor):
+    def broken(actor, *, include_observations):
         raise RuntimeError("store down")
 
     service = SimpleNamespace(runtime_tenant_id="demo-team", list=broken)
@@ -160,3 +160,93 @@ def test_fleet_endpoint_lists_registered_environments_after_the_fixed_ones(monke
     registered.update(device="REVOKED", tunnel="NONE", workloads=None)
     environments = client.get("/api/v1/fleet").json()["environments"]
     assert [env["id"] for env in environments] == before
+
+
+def test_observed_fleet_uses_controller_uid_and_scoped_requests_when_metrics_are_missing():
+    def owner(kind, uid):
+        return {"controller": True, "kind": kind, "uid": uid}
+
+    pod = {
+        "metadata": {"name": "web-pod", "ownerReferences": [owner("ReplicaSet", "rs-1")]},
+        "spec": {
+            "nodeName": "node-1",
+            "containers": [{"name": "web", "resources": {"requests": {"cpu": "250m"}}}],
+        },
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {
+                    "name": "web",
+                    "restartCount": 3,
+                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                }
+            ],
+        },
+    }
+    report = {
+        "version": "v1.34.1+k3s1",
+        "nodes": [
+            {
+                "metadata": {"name": "node-1"},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "allocatable": {"cpu": "2", "memory": "4Gi"},
+                },
+            }
+        ],
+        "metrics": None,
+        "namespaces": [
+            {
+                "name": "shop",
+                "pods": [pod],
+                "replica_sets": [
+                    {
+                        "metadata": {
+                            "name": "arbitrary-rs",
+                            "uid": "rs-1",
+                            "ownerReferences": [owner("Deployment", "dep-1")],
+                        }
+                    }
+                ],
+                "workloads": [
+                    {
+                        "kind": "Deployment",
+                        "metadata": {"name": "new-web", "uid": "dep-1"},
+                        "spec": {"replicas": 2},
+                        "status": {"readyReplicas": 1},
+                    }
+                ],
+                "rollouts": None,
+            }
+        ],
+    }
+    state = {
+        "latest": {"at": 1_795_000_000_000, "epoch": 2, "report": report},
+        "fresh": True,
+        "failed": False,
+        "scopeLimited": False,
+    }
+    env = registered_environment(snapshot(observation=state))
+    assert env.observation_state == "current"
+    assert env.observed_namespaces == ["shop"]
+    assert env.cluster.version == report["version"]
+    assert env.cluster.ready_nodes == 1 and env.cluster.usage is None
+    assert env.cluster.requests.cpu_millicores == 250
+    [app] = env.components
+    assert app.name == "new-web" and app.status == "degraded" and "준비 1/2" in app.detail
+    [shown_pod] = app.pods
+    assert (shown_pod.name, shown_pod.node, shown_pod.reason, shown_pod.restarts) == (
+        "web-pod",
+        "node-1",
+        "CrashLoopBackOff",
+        3,
+    )
+    stale = registered_environment(
+        snapshot(tunnel="DEGRADED", observation={**state, "fresh": False})
+    )
+    assert stale.observation_state == "stale" and stale.observed_at == env.observed_at
+    assert stale.components == env.components
+    report["namespaces"][0]["pods"] = None
+    partial = registered_environment(snapshot(observation=state))
+    assert partial.observation_state == "partial" and partial.cluster.requests is None
+    assert partial.components[0].pods is None

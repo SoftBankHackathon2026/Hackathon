@@ -19,6 +19,7 @@ from migration_connection.contracts.protocol import (
     signed_bytes,
     unb64,
 )
+from migration_connection.control import observation
 from migration_connection.control.errors import ConnectionError
 from migration_connection.control.limits import LimitScope
 
@@ -324,8 +325,21 @@ class ConnectionService:
             )
         return result
 
-    def list(self, actor):
-        return [self.snapshot(row, actor) for row in self.store.list(actor.team)]
+    def list(self, actor, *, include_observations=False):
+        result = []
+        for row in self.store.list(
+            actor.team, include_observations=include_observations
+        ):
+            latest = row.pop("observation", None)
+            snapshot = self.snapshot(row, actor)
+            if include_observations and snapshot["device"] == "APPROVED":
+                value = observation.fleet_observation(
+                    row, latest, snapshot["tunnel"], self.clock()
+                )
+                if value is not None:
+                    snapshot["observation"] = value
+            result.append(snapshot)
+        return result
 
     def get(self, request_id, actor):
         row = self.store.get(identifier(request_id))
@@ -682,6 +696,12 @@ class ConnectionService:
                     "payload": task,
                     "signature": self.crypto.sign(signed_bytes("job", task)),
                 }
+                if (
+                    row.get("environment_id")
+                    and row.get("provider", "kubernetes") == "kubernetes"
+                    and not row.get("observation_scope")
+                ):
+                    row["observation_scope"] = observation.registration_scope(row)
                 row["collection"] = "WAITING"
                 row["collected"] = []
                 row.pop("inventory_digest", None)
@@ -717,6 +737,8 @@ class ConnectionService:
                 row["target"] = deepcopy(target)
                 row["environment_id"] = "connected-" + row["id"]
                 row["registered_at"] = self.clock()
+                if target["kind"] == "kubernetes":
+                    row["observation_scope"] = observation.registration_scope(row)
             else:
                 raise ConnectionError("UNSUPPORTED_ACTION", 422)
             self._touch(
@@ -853,7 +875,15 @@ class ConnectionService:
                             "환경정보 수집 기한이 끝났습니다. 다시 요청하세요."
                         )
                         task = None
+                    if (
+                        task is None
+                        and type(data.get("observation_version")) is int
+                        and data["observation_version"] == 1
+                    ):
+                        task = observation.schedule(row, self.clock(), self.crypto.sign)
                     return {"snapshot": self.snapshot(row, actor), "task": task}
+                if action == "observation":
+                    return observation.receive(row, self.clock(), data)
                 if action == "discovered":
                     provider = row.get("provider", "kubernetes")
                     cloud = provider in CLOUD_PROVIDERS
