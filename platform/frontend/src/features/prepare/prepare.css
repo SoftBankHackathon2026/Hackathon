@@ -168,6 +168,9 @@
 .connection-environments li:hover {
   background: var(--surface-subtle);
 }
+.connection-environments li.is-static:hover {
+  background: transparent;
+}
 .connection-environments li:has([aria-current]) {
   background: var(--accent-soft);
   border-color: var(--accent-line);
@@ -778,12 +781,12 @@
     margin: 12px 0 0;
   }
   .connection-environments {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
     gap: 8px;
-    overflow-x: auto;
   }
   .connection-environments li {
-    min-width: 170px;
+    min-width: 0;
   }
   .connection-main {
     padding: 20px;

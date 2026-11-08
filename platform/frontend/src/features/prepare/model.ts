@@ -1,3 +1,4 @@
+import type { FleetEnvironment } from "../../api/migrations.ts";
 import type {
   ConnectionSnapshot,
   ConnectionTarget,
@@ -152,4 +153,33 @@ export function formatTime(value: number | undefined) {
         hour12: false,
       }).format(value)
     : "미확인";
+}
+
+const FLEET_PROVIDERS: Record<FleetEnvironment["provider"], string> = {
+  onprem: "온프레미스",
+  aws: "AWS",
+  gcp: "GCP",
+};
+
+export type ExistingEnvironment = {
+  id: string;
+  name: string;
+  detail: string;
+  label: string;
+  tone: "ok" | "idle";
+};
+
+/** 플랫폼에 처음부터 등록된 환경. 직접 연결로 등록한 환경은 연결 목록에 따로 나온다. */
+export function existingEnvironments(
+  environments: readonly FleetEnvironment[] | undefined,
+): ExistingEnvironment[] {
+  return (environments ?? [])
+    .filter((env) => !env.registered)
+    .map((env) => ({
+      id: env.id,
+      name: env.name,
+      detail: FLEET_PROVIDERS[env.provider] ?? env.provider,
+      label: env.connected ? "연결됨" : "상태 정보 없음",
+      tone: env.connected ? "ok" : "idle",
+    }));
 }
