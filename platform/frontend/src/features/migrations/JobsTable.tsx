@@ -14,6 +14,7 @@ import { DIRECTION_LABELS, envShortName } from "./fleetView";
 import { PhaseChevrons } from "./PhaseChevrons";
 import { statusTone, STATUS_LABELS } from "./stages";
 import { failedWrites } from "./summary";
+import { confirmDeleteTask, useDeleteTask } from "./useDeleteTask";
 
 /** 작업 표: 열을 눌러 정렬, 행(또는 이름)을 누르면 작업 상세 화면. */
 export function JobsTable({
@@ -64,6 +65,9 @@ export function JobsTable({
             {th("failed", "실패", "num")}
             {th("pause", "쓰기 중단", "num")}
             {th("updated", "갱신", "num")}
+            <th>
+              <span className="sr-only">관리</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -125,12 +129,38 @@ export function JobsTable({
                   {formatSeconds(m.downtime.write_pause_seconds)}
                 </td>
                 <td className="num sub">{formatAgo(m.updated_at)}</td>
+                <td className="job-actions">
+                  {m.removable && <DeleteRowButton jobId={m.job_id} />}
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function DeleteRowButton({ jobId }: { jobId: string }) {
+  const remove = useDeleteTask(jobId);
+  return (
+    <button
+      type="button"
+      className="secondary"
+      disabled={remove.isPending}
+      title={
+        remove.isError
+          ? "작업을 지우지 못했어요. 다시 시도해 주세요."
+          : undefined
+      }
+      onClick={(event) => {
+        event.stopPropagation();
+        if (confirmDeleteTask(jobId)) remove.mutate();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {remove.isPending ? "지우는 중…" : remove.isError ? "다시 삭제" : "삭제"}
+    </button>
   );
 }
 

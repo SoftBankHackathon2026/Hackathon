@@ -176,6 +176,7 @@ export type MigrationSummary = {
     p95_latency_seconds: number | null;
   };
   verify_mismatch: number | null;
+  removable?: boolean;
 };
 export type Fleet = {
   generated_at: string;

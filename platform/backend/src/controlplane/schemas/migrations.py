@@ -159,6 +159,7 @@ class MigrationSummary(BaseModel):
     writes: WriteCounts
     downtime: DowntimeEvidence
     verify_mismatch: int | None = None
+    removable: bool = False
 
 
 class Fleet(BaseModel):
@@ -353,6 +354,7 @@ class PlanRoute(BaseModel):
 
 class TaskPlan(BaseModel):
     job_id: str
+    removable: bool = False
     route: PlanRoute
     phases: list[PlanPhaseView]
 

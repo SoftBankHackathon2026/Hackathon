@@ -123,6 +123,9 @@ class CutoverCommandService:
     def events(self, job_id: str) -> list[MigrationEvent]:
         return command_events(self._store.list(job_id))
 
+    def has_active(self, job_id: str) -> bool:
+        return self._store.active(job_id) is not None
+
     def claim(self, job_id: str) -> CutoverCommand | None:
         self._check_job(job_id)
         return self._store.claim(job_id, self._now())
