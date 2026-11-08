@@ -282,6 +282,14 @@ def post_result(
 
 
 def execute_once(args: argparse.Namespace, token: str) -> bool:
+    if os.environ.get("DEMO_RESET_ENABLED") == "true":
+        from migration.demo_reset import command_lease
+        with command_lease(Path(args.state_dir)) as allowed:
+            return _execute_once(args, token) if allowed else False
+    return _execute_once(args, token)
+
+
+def _execute_once(args: argparse.Namespace, token: str) -> bool:
     """대기 중인 명령 하나를 가져가 실행하고 결과를 올린다. 실행한 것이 있으면 True."""
     command = claim_command(args, token)
     if command is None:
@@ -392,6 +400,14 @@ def policy_env(claimed: dict, state_dir: Path) -> dict[str, str]:
 
 
 def execute_any(args: argparse.Namespace, token: str) -> bool:
+    if os.environ.get("DEMO_RESET_ENABLED") == "true":
+        from migration.demo_reset import command_lease
+        with command_lease(Path(args.state_dir)) as allowed:
+            return _execute_any(args, token) if allowed else False
+    return _execute_any(args, token)
+
+
+def _execute_any(args: argparse.Namespace, token: str) -> bool:
     claimed = claim_any_command(args, token)
     if claimed is None:
         return False
