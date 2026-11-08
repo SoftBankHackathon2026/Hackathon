@@ -205,3 +205,28 @@ test('HTTP: routes stay closed without keys', async () => {
     await new Promise((r) => server.close(r));
   }
 });
+
+test('start is refused while the receipt queue does not deliver; stop stays allowed', () => {
+  const c = createControl();
+  c.acceptReport(report({route: {known: true, target: 'onprem', mode: 'paused'}}));
+  assert.equal(c.submit({target: 'bot', action: 'start'}).code, 'INGRESS_PAUSED');
+  assert.equal(c.state().start_blocked.bot, 'INGRESS_PAUSED');
+  assert.equal(c.state().blocked.bot, null);
+  assert.equal(c.submit({target: 'bot', action: 'stop'}).status, 202);
+
+  const unknown = createControl();
+  unknown.acceptReport(report({route: {known: false}}));
+  assert.equal(unknown.submit({target: 'bot', action: 'start'}).code, 'ROUTE_UNKNOWN');
+
+  const running = createControl();
+  running.acceptReport(report());
+  assert.equal(running.state().start_blocked.bot, null);
+  assert.equal(running.submit({target: 'bot', action: 'start'}).status, 202);
+});
+
+test('the cutover lock still wins over the queue state for start', () => {
+  const c = createControl();
+  c.acceptReport(report({lock: {locked: true, reasons: ['x']},
+    route: {known: true, target: 'onprem', mode: 'paused'}}));
+  assert.equal(c.submit({target: 'bot', action: 'start'}).code, 'CUTOVER_LOCK');
+});

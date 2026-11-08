@@ -23,7 +23,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-VERSION = "2"
+VERSION = "3"
 TERMINAL = {"COMPLETED", "ABORTED", "ROLLED_BACK"}
 
 
@@ -223,6 +223,12 @@ class Agent:
             return {**result, "error": "CUTOVER_LOCK: " + "; ".join(lock["reasons"])[:150]}
         if not self.settings.bot_token:
             return {**result, "error": "BOT_CONTROL_TOKEN_MISSING"}
+        if action == "start":
+            # 접수 큐가 전달하지 않으면 켜도 요청이 쌓이기만 하고, 다음 전환이 큐를 열 때 한꺼번에 들어가
+            # 그 전환의 건수 예산을 깬다(반복 시연, 2026-11-08). 멈춤은 쌓임을 줄이므로 막지 않는다.
+            route = self.route()
+            if not route.get("known") or route.get("mode") != "running":
+                return {**result, "error": f"INGRESS_NOT_RUNNING:{route.get('mode') or route.get('error')}"}
         try:
             self.http("POST", f"{self.settings.bot_url}/control/generation",
                       body={"enabled": action == "start"},

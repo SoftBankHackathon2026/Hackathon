@@ -18,6 +18,8 @@
     CUTOVER_LOCK: 'DB 이전이 진행 중이라 잠겨 있습니다',
     TARGET_NOT_CONTROLLABLE: '봇이 아직 켜고 끄기를 지원하지 않습니다',
     COMMAND_IN_PROGRESS: '앞의 명령을 처리하는 중입니다',
+    INGRESS_PAUSED: '접수 큐가 멈춰 있어 지금 켜면 요청이 쌓이기만 합니다. 다음 전환이 시작될 때 전환 도구가 엽니다',
+    ROUTE_UNKNOWN: '접수 큐 상태를 알 수 없어 시작할 수 없습니다',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -70,7 +72,7 @@
     const [name, note] = ROUTES[route.target] ?? [route.target ?? '알 수 없음', ''];
     $('where').textContent = name;
     $('where-note').textContent = route.mode === 'paused' ?
-      '접수 큐가 잠시 대기 중 (요청은 계속 받고 전환 뒤 저장)' : note;
+      '접수 큐가 멈춰 있음 · 받은 요청은 큐에 쌓였다가 다음 전환이 시작될 때 저장' : note;
   }
 
   function renderBot() {
@@ -98,12 +100,16 @@
     $('failed').textContent = fmt(b.failed);
 
     const blocked = latest?.blocked?.bot;
+    const startBlocked = latest?.start_blocked?.bot;
     for (const [id, action] of [['start', 'start'], ['stop', 'stop']]) {
       const already = (action === 'start' && b.generation === 'running') ||
         (action === 'stop' && b.generation === 'stopped');
-      $(id).disabled = sending || !latest || Boolean(blocked) || !keyInput.value || already;
+      const reason = action === 'start' ? startBlocked : blocked;
+      $(id).disabled = sending || !latest || Boolean(reason) || !keyInput.value || already;
     }
-    $('button-note').textContent = blocked ? (BLOCKED[blocked] ?? blocked) :
+    // The start reason includes the general one; show it while starting is the useful action.
+    const shown = blocked || (b.generation !== 'running' ? startBlocked : null);
+    $('button-note').textContent = shown ? (BLOCKED[shown] ?? shown) :
       (keyInput.value ? '' : '버튼은 운영자만 누를 수 있습니다 (아래 "운영자 전용")');
   }
 

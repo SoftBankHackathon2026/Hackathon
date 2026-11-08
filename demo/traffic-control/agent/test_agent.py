@@ -125,6 +125,17 @@ class CommandTest(Base):
         self.assertEqual(body, {"enabled": True})
         self.assertEqual(headers["Authorization"], "Bearer " + "t" * 32)
 
+    def test_start_refused_while_queue_paused_but_stop_allowed(self):
+        self.http.routes[("GET", "http://i/status")] = {"target": "onprem", "mode": "paused"}
+        self.http.routes[("POST", "http://b/control/generation")] = {}
+        out = self.agent.execute({"id": "p1", "target": "bot", "action": "start"})
+        self.assertEqual(out["error"], "INGRESS_NOT_RUNNING:paused")
+        self.assertFalse(any(c[0] == "POST" for c in self.http.calls))
+        self.assertTrue(self.agent.execute({"id": "p2", "target": "bot", "action": "stop"})["ok"])
+        self.http.routes[("GET", "http://i/status")] = A.HttpError("HTTP_401", 401)
+        self.assertEqual(self.agent.execute({"id": "p3", "target": "bot", "action": "start"})["error"],
+                         "INGRESS_NOT_RUNNING:HTTP_401")
+
     def test_refuses_during_cutover_without_calling_the_bot(self):
         self.http.routes[("GET", "http://c/connectors")] = ["x-sink"]
         out = self.agent.execute({"id": "3", "target": "bot", "action": "stop"})
