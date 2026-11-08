@@ -165,11 +165,12 @@ services:
       - "51820:51820/udp"
     extra_hosts:
       - "${ONEPORT_DOMAIN:-localhost}:host-gateway"
+    environment:
+      ONEPORT_BROKER_CONFIG_REVISION: ${ONEPORT_CONNECTION_CONFIG_HASH:-none}
     volumes:
       - ./connection/broker:/etc/migration-connector:ro
     mem_limit: 64m
     depends_on:
-      oneport-api: {condition: service_healthy}
       redis: {condition: service_healthy}
 
 volumes:

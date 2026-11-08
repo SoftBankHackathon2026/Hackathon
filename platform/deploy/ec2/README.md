@@ -273,3 +273,21 @@ python3 platform/deploy/ec2/connection.py --dir ~/.oneport-connection --domain <
 
 - 단말은 Ubuntu 24.04(amd64, arm64)만 받아요. 온프렘 노드(22.04)에서는 설치 스크립트가 멈춰요.
 - 중계는 한 번에 단말 하나와 터널을 열어요.
+
+### 배포 때 연결이 어떻게 다뤄지나
+
+| 바뀐 것 | 자동으로 | 직접 할 일 |
+|---|---|---|
+| `control`·`platform_bridge`·플랫폼 백엔드 | API 이미지가 다시 만들어져 배포돼요 | 없음 |
+| 중계 소스(`agent`)·`broker.Dockerfile`·공개 검증키 | 중계 이미지가 다시 만들어져 배포돼요 | 없음 |
+| 단말에 내려가는 파일(`inventory`, 단말 프로그램) | 안 돼요 | 서명키로 새 `conn-N` 을 서명해서 올리고 `server.env`·`broker.json` 을 새 버전·해시로 바꿔요 |
+| `broker/` 폴더의 파일(`broker.json`, 인증서, 정책) | 다음 배포 때 중계가 다시 떠요 | 없음 |
+
+- **배포 뒤 연결 확인**: 연결을 켠 배포는 `/healthz` 뒤에 [`check-connection.sh`](check-connection.sh)로 아래를 확인해요(최대 120초 기다려요).
+  - API 가 연결 기능을 `available: true` 로 안내하는지
+  - 안내하는 버전이 `server.env` 와 같은지
+  - `broker.json` 의 버전·해시가 `server.env` 와 같은지
+  - 내려가는 `bootstrap.sh` 의 SHA-384 가 설정과 같은지
+- 이 배포 **전에는** 연결을 쓸 수 있었는데 **뒤에** 못 쓰면 직전 버전으로 되돌리고 실패로 끝나요. 이 배포 전에도 못 쓰던 상태면 경고만 남기고 넘어가요. 배포와 상관없는 문제(서명 기한 만료 등)로 플랫폼 배포가 막히지 않게 해요.
+- **중계는 배포 때마다 다시 뜨지 않아요.** compose 는 의존하는 컨테이너가 새로 만들어지면 그것에 의존하는 컨테이너를 다시 시작해요(v2.29.7 에서 확인, `restart: false` 를 줘도 같아요). 중계가 API 에 의존하면 API 이미지가 바뀌는 배포마다 중계가 다시 시작돼 터널이 모두 끊겨서, 중계는 Redis 에만 의존해요. 배포 중 API 가 잠깐 안 떠 있으면 중계 로그에 `BROKER_HEALTH_LEASE_UNAVAILABLE` 이 한두 줄 찍히지만, 중계는 죽지 않고 이어져요(11-07 배포 로그에서 확인).
+- `broker/` 폴더 파일은 컨테이너 설정에 잡히지 않아서, 파일 해시를 `.env` 의 `ONEPORT_CONNECTION_CONFIG_HASH` 로 남기고 중계에 환경변수(`ONEPORT_BROKER_CONFIG_REVISION`)로 넘겨요. 해시가 바뀔 때만 중계가 다시 떠요.
