@@ -20,6 +20,8 @@ from controlplane.schemas.agent import (
     CommandAccepted,
     CommandAck,
     DecisionAccepted,
+    RunDeletion,
+    RunDeletionResult,
     RunDetail,
     RunList,
     RunReport,
@@ -97,9 +99,17 @@ def rerun(agent_id: AgentId, service: AgentDep, identity: DeployerIdentity) -> C
 def runs(
     service: AgentDep,
     identity: ViewerIdentity,
+    permitted: DeployPermitted,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> RunList:
-    return service.runs(limit)
+    return service.runs(limit, permitted)
+
+
+@router.post("/agent/runs/delete")
+def delete_runs(
+    body: RunDeletion, service: AgentDep, identity: DeployerIdentity
+) -> RunDeletionResult:
+    return service.delete(body, identity)
 
 
 @router.get("/agent/runs/{run_id}")

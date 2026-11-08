@@ -509,3 +509,49 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.pk-table .agent-check-cell {
+  width: 28px;
+  padding-right: var(--sp-2);
+}
+.agent-check {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  cursor: pointer;
+}
+.agent-check:has(input:disabled) {
+  cursor: not-allowed;
+}
+.agent-bulk {
+  display: grid;
+  gap: var(--sp-3);
+  margin: 0;
+}
+.agent-bulk .agent-bulk-row {
+  align-items: center;
+  gap: var(--sp-3) var(--sp-4);
+}
+.agent-bulk-count {
+  font: var(--type-strong);
+}
+.agent-bulk .ctl-actions {
+  margin: 0;
+}
+.agent-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+.agent-panel-actions > .agent-decide {
+  flex: 1 1 100%;
+}
+.agent-panel-actions > .agent-decide:empty {
+  display: none;
+}
+.agent-panel-actions .agent-rerun {
+  margin-left: 0;
+}
+.agent-panel-actions .ctl-actions {
+  margin: 0;
+}
