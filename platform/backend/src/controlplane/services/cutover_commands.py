@@ -123,8 +123,9 @@ class CutoverCommandService:
     def events(self, job_id: str) -> list[MigrationEvent]:
         return command_events(self._store.list(job_id))
 
-    def has_active(self, job_id: str) -> bool:
-        return self._store.active(job_id) is not None
+    def active_jobs(self, job_ids: set[str]) -> set[str]:
+        """대기 중이거나 러너가 가져가 실행 중인 명령이 있는 작업."""
+        return {job_id for job_id in job_ids if self._store.active(job_id) is not None}
 
     def claim(self, job_id: str) -> CutoverCommand | None:
         self._check_job(job_id)

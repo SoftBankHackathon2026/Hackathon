@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from controlplane.domain.migration import Direction, MigrationStatus, StageProgress
 from controlplane.domain.task_plan import PlanPhase, StepId, StepStatus
@@ -165,7 +165,9 @@ class MigrationSummary(BaseModel):
     writes: WriteCounts
     downtime: DowntimeEvidence
     verify_mismatch: int | None = None
-    removable: bool = False
+    # 화면이나 생성 API 로 등록한 작업. 설정 파일 작업은 False 이고 지울 수 없다.
+    registered: bool = False
+    can_delete: bool = False
 
 
 class Fleet(BaseModel):
@@ -173,6 +175,7 @@ class Fleet(BaseModel):
     source: DataSource
     environments: list[EnvironmentView]
     migrations: list[MigrationSummary]
+    can_delete: bool = False
 
 
 class StageView(BaseModel):
@@ -360,7 +363,6 @@ class PlanRoute(BaseModel):
 
 class TaskPlan(BaseModel):
     job_id: str
-    removable: bool = False
     route: PlanRoute
     phases: list[PlanPhaseView]
 
@@ -378,6 +380,33 @@ class MigrationCreate(BaseModel):
 class MigrationCreated(BaseModel):
     job_id: str
     label: str
+
+
+TASK_DELETE_LIMIT = 200
+JobIdValue = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+
+
+class TaskDeletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_ids: list[JobIdValue] = Field(min_length=1, max_length=TASK_DELETE_LIMIT)
+
+    @field_validator("job_ids")
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("job ids must be unique")
+        return value
+
+
+class SkippedTask(BaseModel):
+    job_id: str
+    reason: str
+
+
+class TaskDeletionResult(BaseModel):
+    deleted: list[str]
+    skipped: list[SkippedTask]
 
 
 class ClaimedCommand(BaseModel):

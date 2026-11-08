@@ -1,6 +1,6 @@
 import { migrationHash } from "../../app/routes";
 import { useQueries, useSuspenseQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AttentionStrip } from "../../components/AttentionStrip";
 import {
   FilterSelect,
@@ -10,6 +10,7 @@ import {
 } from "../../components/PageKit";
 import { PageActions } from "../../components/PageSlots";
 import { RefreshStatus } from "../../components/RefreshStatus";
+import { carriedNotice, dropNotice } from "./deletion";
 import { AppMatrix } from "./EnvironmentTables";
 import { appProblems, attentionItems } from "./flow";
 import { JobsTable } from "./JobsTable";
@@ -39,6 +40,8 @@ export function FleetPage({
   const [envId, setEnvId] = useState("all");
   const [status, setStatus] = useState<StatusChoice>("all");
   const rows = filterJobs(fleet.migrations, envId, status);
+  const [notice, setNotice] = useState<string | null>(carriedNotice);
+  useEffect(dropNotice, []);
   const scoped = fleet.environments.filter(
     (e) => envId === "all" || e.id === envId,
   );
@@ -111,6 +114,9 @@ export function FleetPage({
           fleet={fleet}
           rows={rows}
           onOpen={(jobId) => onNavigate(migrationHash(jobId))}
+          notice={notice}
+          onPick={() => setNotice(null)}
+          onDeleted={(_ids, text) => setNotice(text)}
         />
       </Section>
       <Section

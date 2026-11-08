@@ -3787,6 +3787,41 @@ body {
   outline: none;
 }
 
+/* ── 작업 지우기(작업 표 선택 칸, 확인 한 번) ─────────── */
+.pk-table .task-check-cell {
+  width: 28px;
+  padding-right: var(--sp-2);
+}
+.task-check {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  cursor: pointer;
+}
+.task-check:has(input:disabled) {
+  cursor: not-allowed;
+}
+.task-bulk,
+.task-confirm,
+.task-detail-delete {
+  display: grid;
+  gap: var(--sp-3);
+}
+.task-bulk {
+  margin: 0 0 var(--sp-3);
+}
+.task-bulk .ctl-actions,
+.task-confirm .ctl-actions {
+  align-items: center;
+  margin: 0;
+}
+.task-bulk-count {
+  font: var(--type-strong);
+}
+.task-detail-delete {
+  margin: 0 0 var(--sp-4);
+}
+
 /* ── 전환 제어(시작·승인 버튼) ───────────────────────── */
 .ctl-actions {
   display: flex;
@@ -3987,33 +4022,6 @@ body {
   font-size: var(--fs-xs);
 }
 
-.plan-delete {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  margin-top: 14px;
-  color: var(--ink-2);
-  font-size: var(--fs-sm);
-}
-.plan-delete button {
-  margin-left: auto;
-}
-.plan-delete [role="alert"] {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--danger);
-}
-.job-actions {
-  width: 1%;
-  text-align: right;
-  white-space: nowrap;
-}
-.job-actions button {
-  min-height: 28px;
-  padding: 0 10px;
-  font-size: var(--fs-xs);
-}
 /* 파드 로그: 사이드 패널을 넓혀 위 도구 줄은 고정, 아래 로그만 스크롤 */
 .fp.fp-wide {
   width: min(980px, 96vw);

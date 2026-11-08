@@ -21,7 +21,6 @@ export type PlanPhase = {
 
 export type TaskPlan = {
   job_id: string;
-  removable: boolean;
   route: {
     source_env: string;
     target_env: string;
@@ -52,11 +51,5 @@ export function createMigration(body: MigrationCreate) {
   return request<{ job_id: string; label: string }>("migrations", {
     method: "POST",
     body,
-  });
-}
-
-export function deleteMigration(jobId: string) {
-  return request<null>(`migrations/${encodeURIComponent(jobId)}`, {
-    method: "DELETE",
   });
 }
