@@ -3,7 +3,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from itertools import count
 
-from controlplane.core.errors import InvalidRequest
+from pydantic import ValidationError
+
+from controlplane.core.errors import InvalidRequest, OperationNotFound, RequestConflict
 from controlplane.domain.fleet import FleetConfig, MigrationConfig
 from controlplane.domain.migration import Direction
 from controlplane.domain.task_plan import ONPREM, route_label
@@ -24,6 +26,14 @@ SCREEN_REQUESTER = "운영 화면"
 TASK_ACTIVE = "진행 중인 작업"
 TASK_FIXED = "설정 파일 작업"
 TASK_MISSING = "없는 작업"
+# 한 작업만 지우는 DELETE 경로가 건너뛴 사유를 오류로 돌려줄 때 쓴다.
+SKIP_ERRORS = {
+    TASK_MISSING: lambda: OperationNotFound("등록된 마이그레이션 작업이 없어요."),
+    TASK_FIXED: lambda: InvalidRequest(
+        "설정 파일(fleet.json)에 적힌 작업은 화면에서 지울 수 없어요."
+    ),
+    TASK_ACTIVE: lambda: RequestConflict("진행 중인 작업은 지울 수 없어요."),
+}
 
 # 작업 ID 묶음을 받아 그중 진행 중인 것(전환 단계, CDC 커넥터, 대기/실행 중 명령)을 돌려준다.
 BusyJobs = Callable[[set[str]], set[str]]
@@ -110,6 +120,16 @@ class MigrationTaskService:
                 if job_id in reasons
             ],
         )
+
+    def delete_one(self, job_id: str, identity: Identity | None, busy_jobs: BusyJobs) -> None:
+        """한 작업을 같은 규칙으로 숨긴다. 건너뛰면 사유에 맞는 오류(404, 422, 409)를 낸다."""
+        try:
+            deletion = TaskDeletion(job_ids=[job_id])
+        except ValidationError:
+            raise SKIP_ERRORS[TASK_MISSING]() from None
+        result = self.delete(deletion, identity, busy_jobs)
+        if not result.deleted:
+            raise SKIP_ERRORS[result.skipped[0].reason]()
 
     def _with_defaults(self, task: MigrationConfig) -> MigrationConfig:
         defaults = self._config.task_defaults

@@ -364,6 +364,37 @@ def test_db_only_job_config_preserves_platform_target_without_full_remapping(tmp
     assert yaml.safe_load(path.read_text())["job"]["source"] == "onprem"
 
 
+ALIASED_CONFIG = BASE_CONFIG + "platform_data_targets: {onprem: onprem_return, aws: aws}\n"
+
+
+@pytest.mark.parametrize(
+    "override, expected",
+    [
+        (
+            {
+                "source_env": "aws",
+                "target_env": "onprem",
+                "data_source": "aws",
+                "data_target": "onprem",
+            },
+            ("aws", "onprem_return"),
+        ),
+        ({"data_source": "onprem"}, ("onprem_return", "aws")),
+        ({"data_source": "onprem_return"}, ("onprem_return", "aws")),
+        ({"source_env": "rehearsal", "data_source": "onprem"}, ("onprem", "aws")),
+    ],
+)
+def test_job_config_maps_environment_ids_to_runner_targets(tmp_path, override, expected):
+    import yaml
+
+    base = tmp_path / "config.yaml"
+    base.write_text(ALIASED_CONFIG)
+    path = reporter.job_config(str(base), {**CLAIMED, **override}, tmp_path / "jobs")
+    job = yaml.safe_load(path.read_text())["job"]
+    assert (job["source"], job["target"]) == expected
+    assert job["live_phase_after"] == f"{expected[1]}_live"
+
+
 def test_execute_any_runs_the_claimed_task_with_its_own_config(tmp_path, monkeypatch):
     base = tmp_path / "config.yaml"
     base.write_text(BASE_CONFIG)

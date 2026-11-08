@@ -182,11 +182,15 @@ BuildsDep = Annotated[BuildService, Depends(get_builds)]
 RunsDep = Annotated[DemoRunService, Depends(get_runs)]
 
 
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 def check_browser_origin(request: Request, container: Container, *, required: bool) -> None:
     origin = request.headers.get("origin")
     if origin and origin not in container.http.allowed_origins:
         raise AccessDenied("허용되지 않은 요청 출처입니다.")
-    if required and request.method == "POST" and not origin:
+    # POST 뿐 아니라 DELETE 같은 다른 변경 요청도 화면 Origin 이 있어야 한다.
+    if required and request.method not in SAFE_METHODS and not origin:
         raise AccessDenied("등록된 플랫폼 화면에서 실행하세요.")
 
 

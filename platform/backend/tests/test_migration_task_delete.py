@@ -372,3 +372,27 @@ def test_in_progress_follows_the_stage_and_the_cdc_connectors(status, connector,
         else []
     )
     assert in_progress(MigrationStatus(status), connectors) is busy
+
+
+def test_the_single_delete_path_uses_the_same_soft_delete(demo):
+    done, waiting = create(demo), create(demo, RETURN)
+    one = "/api/v1/migrations/{}"
+    assert demo.delete(one.format(done)).status_code == 403
+    assert (
+        demo.delete(one.format(done), headers={"Origin": "https://evil.example"}).status_code == 403
+    )
+    assert demo.delete(one.format(done), headers=ORIGIN).status_code == 204
+    assert done not in fleet_rows(demo)
+    assert demo.get(one.format(done)).status_code == 404
+    assert demo.delete(one.format(done), headers=ORIGIN).status_code == 404
+    assert demo.delete(one.format(STATIC), headers=ORIGIN).status_code == 422
+    assert demo.delete(one.format(waiting), headers=ORIGIN).status_code == 409
+    assert demo.delete(one.format("Not-A-Task"), headers=ORIGIN).status_code == 404
+    assert waiting in fleet_rows(demo) and STATIC in fleet_rows(demo)
+    assert create(demo) != done
+
+
+def test_plan_no_longer_carries_a_second_delete_flag(demo):
+    job_id = create(demo)
+    assert "removable" not in demo.get(f"/api/v1/migrations/{job_id}/plan").json()
+    assert "removable" not in fleet_rows(demo)[job_id]

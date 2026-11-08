@@ -24,6 +24,7 @@ from controlplane.cost.prices import PriceSheet, load_sheet
 from controlplane.domain.fleet import EnvironmentConfig, FleetConfig, MigrationConfig
 
 InventoryLookup = Callable[[str], CostInventory | None]
+UNPRICED_ENVIRONMENT = "직접 연결한 환경은 아직 비용을 계산하지 않아요"
 
 
 class CostService:
@@ -188,10 +189,29 @@ class CostService:
             gaps=gaps,
         )
 
+    def _unpriced_migration(self, job: MigrationConfig) -> MigrationCost:
+        return MigrationCost(
+            job_id=job.job_id,
+            source_env=job.source_env,
+            target_env=job.target_env,
+            source_monthly=None,
+            target_monthly_now=None,
+            target_monthly_after=None,
+            added=None,
+            dual_run_days=self._config.migration(job.job_id).dual_run_days,
+            dual_run_cost=None,
+            gaps=[UNPRICED_ENVIRONMENT],
+        )
+
     def overview(self) -> CostOverview:
         costs = {env.id: self.environment_cost(env) for env in self._fleet.environments}
         return CostOverview(
             generated_at=datetime.now(UTC),
             environments=list(costs.values()),
-            migrations=[self.migration_cost(job, costs) for job in self._fleet.migrations],
+            migrations=[
+                self.migration_cost(job, costs)
+                if job.source_env in costs and job.target_env in costs
+                else self._unpriced_migration(job)
+                for job in self._fleet.migrations
+            ],
         )

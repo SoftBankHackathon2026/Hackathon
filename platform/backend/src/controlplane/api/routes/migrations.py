@@ -121,6 +121,19 @@ def delete_migrations(
     return tasks.delete(body, identity, _busy(migrations, commands))
 
 
+# 한 작업만 지우는 경로. 위와 같은 규칙으로 숨기고, 건너뛰면 404(없음), 422(설정 파일), 409(진행 중).
+@router.delete("/migrations/{job_id}", status_code=204)
+def delete_migration(
+    job_id: str,
+    tasks: TasksDep,
+    migrations: MigrationsDep,
+    commands: CutoverCommandsDep,
+    identity: CutoverOperatorIdentity,
+) -> Response:
+    tasks.delete_one(job_id, identity, _busy(migrations, commands))
+    return Response(status_code=204)
+
+
 @router.post("/migrations", status_code=201)
 def create_migration(
     body: MigrationCreate,
