@@ -1,4 +1,4 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type {
   CostBreakdown,
@@ -14,6 +14,7 @@ import { Segmented } from "../../components/Segmented";
 import { useSort } from "../../components/SortableTable";
 import { Widget } from "../../components/Widget";
 import { formatAgo } from "../../lib/format";
+import { fleetQueryOptions } from "../migrations/queries";
 import {
   CHANGE_KIND_LABELS,
   categoryMatrix,
@@ -24,6 +25,8 @@ import {
   pickJob,
   sortedChanges,
   topResources,
+  envLabels,
+  type EnvLabel,
 } from "./costView";
 import {
   BASIS_LABELS,
@@ -159,13 +162,13 @@ function TotalWidget({
 
 function MovesWidget({
   overview,
+  label,
   onMigration,
 }: {
   overview: CostOverview;
+  label: (id: string) => EnvLabel;
   onMigration: (jobId: string) => void;
 }) {
-  const env = (id: string) =>
-    overview.environments.find((e) => e.env_id === id);
   return (
     <Widget
       title="이전 작업별 월 비용 변화"
@@ -211,13 +214,13 @@ function MovesWidget({
                   >
                     <td>
                       <span className="cost-route">
-                        <ProviderLogo provider={env(m.source_env)?.provider} />
-                        {shortName(env(m.source_env)?.name ?? m.source_env)}
+                        <ProviderLogo provider={label(m.source_env).provider} />
+                        {shortName(label(m.source_env).name)}
                         <span className="cost-route-arrow" aria-hidden="true">
                           →
                         </span>
-                        <ProviderLogo provider={env(m.target_env)?.provider} />
-                        {shortName(env(m.target_env)?.name ?? m.target_env)}
+                        <ProviderLogo provider={label(m.target_env).provider} />
+                        {shortName(label(m.target_env).name)}
                       </span>
                     </td>
                     <td className="num">{usd(total.now)}</td>
@@ -395,9 +398,11 @@ function BasisWidget({ overview }: { overview: CostOverview }) {
 function CompareTable({
   migration,
   overview,
+  label,
 }: {
   migration: MigrationCost;
   overview: CostOverview;
+  label: (id: string) => EnvLabel;
 }) {
   const { rows, total } = compareRows(migration, estimateOf(overview));
   const pct = percent(total.change, total.now);
@@ -425,9 +430,9 @@ function CompareTable({
               <tr key={r.role}>
                 <td>
                   <span className="cost-env-cell">
-                    <ProviderLogo provider={env?.provider} />
+                    <ProviderLogo provider={label(r.env).provider} />
                     <span className="rule-text">
-                      <span className="rule-title">{env?.name ?? r.env}</span>
+                      <span className="rule-title">{label(r.env).name}</span>
                       <span className="rule-sub">
                         {r.role}
                         {estimated ? ", AWS 가격으로 환산" : ""}
@@ -560,15 +565,16 @@ function ChangesTable({ migration }: { migration: MigrationCost }) {
 
 function MigrationTab({
   overview,
+  label,
   jobId,
   onJob,
 }: {
   overview: CostOverview;
+  label: (id: string) => EnvLabel;
   jobId: string;
   onJob: (id: string) => void;
 }) {
-  const name = (id: string) =>
-    overview.environments.find((e) => e.env_id === id)?.name ?? id;
+  const name = (id: string) => label(id).name;
   const migration = overview.migrations.find((m) => m.job_id === jobId);
   if (overview.migrations.length === 0)
     return (
@@ -596,7 +602,11 @@ function MigrationTab({
         <>
           <Section title="월 비용 비교">
             <div className="compare-wrap">
-              <CompareTable migration={migration} overview={overview} />
+              <CompareTable
+                migration={migration}
+                overview={overview}
+                label={label}
+              />
               <CompareFacts migration={migration} />
             </div>
           </Section>
@@ -808,6 +818,8 @@ const TABS: Tab[] = ["overview", "migration", "environments"];
 
 export function CostsPage({ tab: initial }: { tab?: string } = {}) {
   const { data: overview } = useSuspenseQuery(costsQueryOptions());
+  const fleet = useQuery(fleetQueryOptions());
+  const label = envLabels(overview, fleet.data?.environments);
   // 탭은 주소(#costs/<탭>)가 정한다. 같은 화면에서 주소만 바뀌어도(뒤로 가기, 링크) 따라간다.
   const tab: Tab = TABS.includes(initial as Tab)
     ? (initial as Tab)
@@ -843,6 +855,7 @@ export function CostsPage({ tab: initial }: { tab?: string } = {}) {
           <CategoryWidget overview={overview} />
           <MovesWidget
             overview={overview}
+            label={label}
             onMigration={(id) => {
               setJobId(id);
               setTab("migration");
@@ -853,7 +866,12 @@ export function CostsPage({ tab: initial }: { tab?: string } = {}) {
         </div>
       )}
       {tab === "migration" && (
-        <MigrationTab overview={overview} jobId={jobId} onJob={setJobId} />
+        <MigrationTab
+          overview={overview}
+          label={label}
+          jobId={jobId}
+          onJob={setJobId}
+        />
       )}
       {tab === "environments" && (
         <Section title="환경별 월 비용" meta={`합계 ${usd(totals.total)}/월`}>
