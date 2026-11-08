@@ -84,7 +84,7 @@ def _configmap_names(pod_spec: KubeObject, containers: list[KubeObject]) -> list
     return sorted(name for name in names if name)
 
 
-def _replicas(kind: str, obj: KubeObject) -> tuple[int, int]:
+def replica_counts(kind: str, obj: KubeObject) -> tuple[int, int]:
     if kind == "daemonset":
         ready = field_at(obj, "status", "numberReady") or 0
         return ready, field_at(obj, "status", "desiredNumberScheduled") or 0
@@ -186,7 +186,7 @@ class WorkloadSpec:
         pod_spec = mapping_at(obj, "spec", "template", "spec")
         containers = [*items_at(pod_spec, "initContainers"), *items_at(pod_spec, "containers")]
         labels = mapping_at(obj, "metadata", "labels")
-        ready, desired = _replicas(kind, obj)
+        ready, desired = replica_counts(kind, obj)
         return cls(
             namespace=field_at(obj, "metadata", "namespace") or "",
             kind=kind,

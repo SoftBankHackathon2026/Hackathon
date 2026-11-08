@@ -127,6 +127,12 @@ class EnvironmentView(BaseModel):
     cluster: ClusterView | None = None
     registered: bool = False
     project: str | None = None
+    observation_state: (
+        Literal["registered", "current", "partial", "stale", "unavailable"] | None
+    ) = Field(default=None, exclude_if=lambda state: state is None)
+    observed_namespaces: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class WriteCounts(BaseModel):

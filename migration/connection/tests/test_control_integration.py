@@ -35,12 +35,11 @@ def pg_store():
         )
 
     with connect() as conn:
-        conn.execute(
-            (
-                Path(__file__).parents[3]
-                / "platform/backend/src/controlplane/migrations/014_connections.sql"
-            ).read_text()
+        migrations = (
+            Path(__file__).parents[3] / "platform/backend/src/controlplane/migrations"
         )
+        for filename in ("014_connections.sql", "019_connection_observations.sql"):
+            conn.execute((migrations / filename).read_text())
     try:
         yield PostgresStore(connect)
     finally:

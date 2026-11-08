@@ -163,7 +163,12 @@ export function registeredRailRow(
     label: "출처",
     value: env.project ? `직접 등록, ${env.project}` : "직접 등록",
     href: `#prepare/${encodeURIComponent(env.id.replace(/^connected-/, ""))}`,
-    title: "등록할 때 수집한 정보예요. 준비 화면에서 연결 상태를 볼 수 있어요.",
+    title:
+      env.observation_state === "current" ||
+      env.observation_state === "partial" ||
+      env.observation_state === "stale"
+        ? "준비 화면에서 연결 상태를 볼 수 있어요."
+        : "등록할 때 수집한 정보예요. 준비 화면에서 연결 상태를 볼 수 있어요.",
   };
 }
 
@@ -173,16 +178,30 @@ export function envRailRows(
 ): RailRow[] {
   const summary = envSummary(env);
   const { line } = envSummaryLine(env);
+  const observationLabel = {
+    registered: "등록 당시 정보",
+    current: "최근 관측",
+    partial: "일부만 관측",
+    stale: "마지막 관측",
+    unavailable: "등록 당시 정보",
+  };
+  const observation = formatAgo(env.observed_at, now);
   const kinds: string[] = [];
   for (const c of env.components)
     if (c.layer === "data" && !kinds.includes(kindLabel(c.kind)))
       kinds.push(kindLabel(c.kind));
   return [
-    {
-      label: "상태",
-      value: line.text,
-      tone: line.tone === "none" ? undefined : line.tone,
-    },
+    env.observation_state
+      ? {
+          label: "보안 연결",
+          value: env.connected ? "연결됨" : "연결 끊김",
+          tone: env.connected ? "ok" : "warn",
+        }
+      : {
+          label: "상태",
+          value: line.text,
+          tone: line.tone === "none" ? undefined : line.tone,
+        },
     { label: "구성 요소", value: `${summary.healthy} / ${summary.total} 정상` },
     { label: "플랫폼", value: `${PLATFORM_LABELS[env.kind]}, ${env.region}` },
     {
@@ -190,7 +209,18 @@ export function envRailRows(
       value: String(env.components.filter((c) => c.layer === "app").length),
     },
     { label: "데이터", value: kinds.length > 0 ? kinds.join(", ") : "-" },
-    { label: "관측", value: formatAgo(env.observed_at, now) },
+    {
+      label: "관측",
+      value: env.observation_state
+        ? `${observationLabel[env.observation_state]}, ${observation}`
+        : observation,
+      tone:
+        env.observation_state === "stale" ||
+        env.observation_state === "partial" ||
+        env.observation_state === "unavailable"
+          ? "warn"
+          : undefined,
+    },
   ];
 }
 

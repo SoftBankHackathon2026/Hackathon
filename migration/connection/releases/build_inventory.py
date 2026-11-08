@@ -13,7 +13,14 @@ def build(destination: Path) -> None:
         "migration_connection/__init__.py": b"",
         "__main__.py": b"from migration_connection.inventory.__main__ import main\nraise SystemExit(main())\n",
     }
-    for name in ("__init__.py", "__main__.py", "cloud.py", "collector.py", "schema.py"):
+    for name in (
+        "__init__.py",
+        "__main__.py",
+        "cloud.py",
+        "collector.py",
+        "observation.py",
+        "schema.py",
+    ):
         files["migration_connection/inventory/" + name] = (source / name).read_bytes()
     with (
         destination.open("xb") as output,

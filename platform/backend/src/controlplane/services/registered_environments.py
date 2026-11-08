@@ -1,5 +1,4 @@
 import logging
-import re
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -12,6 +11,11 @@ from controlplane.schemas.migrations import (
     EnvironmentIssue,
     EnvironmentView,
 )
+from controlplane.services.registered_observation import (
+    component_id,
+    observed_cluster,
+    observed_components,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ NODES = "노드 수"
 DISCONNECTED = EnvironmentIssue(
     severity="warning",
     title="보안 연결이 끊겼어요",
-    detail="등록할 때 수집한 정보만 보여요. 준비 화면에서 다시 연결하세요.",
+    detail="준비 화면에서 연결을 확인해 주세요.",
 )
 
 
@@ -38,24 +42,22 @@ def _kind(target_kind: str, version: str | None) -> str:
     return "k3s" if version and "k3s" in version else "kubernetes"
 
 
-def _component_id(item: dict[str, Any]) -> str:
-    raw = f"{item['namespace']}-{item['kind']}-{item['name']}".lower()
-    return re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
-
-
-def _components(workloads: Any) -> list[ComponentView]:
+def _components(workloads: Any) -> list[tuple[str, ComponentView]]:
     if not isinstance(workloads, dict):
         return []
     return [
-        ComponentView(
-            id=_component_id(item),
-            name=item["name"],
-            layer="app",
-            kind="app",
-            managed=False,
-            status="unknown",
-            detail=f"{item['kind']}, 복제본 {item['replicas']}개 (등록 때 수집)",
-            namespace=item["namespace"],
+        (
+            item["kind"],
+            ComponentView(
+                id=component_id(item["namespace"], item["kind"], item["name"]),
+                name=item["name"],
+                layer="app",
+                kind="app",
+                managed=False,
+                status="unknown",
+                detail=f"{item['kind']}, 복제본 {item['replicas']}개 (등록 때 수집)",
+                namespace=item["namespace"],
+            ),
         )
         for item in workloads.get("items", [])
     ]
@@ -75,18 +77,58 @@ def registered_environment(snapshot: dict[str, Any]) -> EnvironmentView | None:
     version = facts.get(VERSION)
     nodes = facts.get(NODES, "")
     connected = snapshot.get("tunnel") == "READY"
+    baseline = _components(snapshot.get("workloads"))
+    components = [component for _, component in baseline]
+    observed_at = _observed_at(snapshot.get("collectedAt"))
+    cluster = ClusterView(version=version, node_count=int(nodes) if nodes.isdigit() else None)
+    issues = [] if connected else [DISCONNECTED]
+    observation_state = "registered" if provider == "onprem" else None
+    observed_namespaces = None
+    observation = snapshot.get("observation") if provider == "onprem" else None
+    if observation:
+        latest = observation["latest"]
+        if latest:
+            report = latest["report"]
+            observed_at = _observed_at(latest["at"])
+            cluster = observed_cluster(report, observed_at)
+            components = observed_components(report, baseline)
+            scopes = report["namespaces"]
+            observed_namespaces = [scope["name"] for scope in scopes]
+            partial = (
+                report["nodes"] is None
+                or observation["scopeLimited"]
+                or any(
+                    any(scope[key] is None for key in ("workloads", "pods", "replica_sets"))
+                    for scope in scopes
+                )
+            )
+            observation_state = (
+                "stale" if not observation["fresh"] else "partial" if partial else "current"
+            )
+        else:
+            observation_state = "unavailable"
+        if connected and observation_state in ("stale", "unavailable"):
+            issues.append(
+                EnvironmentIssue(
+                    severity="warning",
+                    title="최신 클러스터 정보를 읽지 못했어요",
+                    detail="단말에서 Kubernetes 접속 설정과 읽기 권한을 확인해 주세요.",
+                )
+            )
     return EnvironmentView(
         id=env_id,
         name=target.get("name") or env_id,
-        kind=_kind(target["kind"], version),
+        kind=_kind(target["kind"], cluster.version),
         provider=provider,
         region=target.get("region") or "-",
         role="legacy" if target.get("role") == "source" else "target",
         connected=connected,
-        observed_at=_observed_at(snapshot.get("collectedAt")),
-        components=_components(snapshot.get("workloads")),
-        issues=[] if connected else [DISCONNECTED],
-        cluster=ClusterView(version=version, node_count=int(nodes) if nodes.isdigit() else None),
+        observed_at=observed_at,
+        components=components,
+        issues=issues,
+        cluster=cluster,
+        observation_state=observation_state,
+        observed_namespaces=observed_namespaces,
         registered=True,
         project=target.get("project"),
     )
@@ -104,7 +146,7 @@ def registered_environments(
     else:
         return []
     try:
-        snapshots = connections.list(actor)
+        snapshots = connections.list(actor, include_observations=True)
     except Exception as exc:  # noqa: BLE001
         LOG.warning("registered environments unavailable: %s", type(exc).__name__)
         return []
