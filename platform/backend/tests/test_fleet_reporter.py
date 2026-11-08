@@ -289,16 +289,20 @@ def test_job_config_rejects_targets_the_runner_does_not_know(tmp_path):
         reporter.job_config(str(base), unknown, tmp_path / "jobs")
 
 
-FULL_CONFIG = BASE_CONFIG + """
+FULL_CONFIG = (
+    BASE_CONFIG
+    + """
 full_migration: {destination_target: aws_eks}
 platform_data_targets: {onprem: onprem_return, aws: aws}
 platform_apps: [sample-app, hackathon/Deployment/sample-app, hackathon/Rollout/sample-app]
 """
+)
 
 
 @pytest.mark.parametrize("source", ["onprem", "onprem_return"])
-@pytest.mark.parametrize("app", ["sample-app", "hackathon/Deployment/sample-app",
-                                  "hackathon/Rollout/sample-app"])
+@pytest.mark.parametrize(
+    "app", ["sample-app", "hackathon/Deployment/sample-app", "hackathon/Rollout/sample-app"]
+)
 def test_full_job_config_resolves_only_explicit_platform_aliases(tmp_path, source, app):
     import yaml
 
@@ -311,18 +315,25 @@ def test_full_job_config_resolves_only_explicit_platform_aliases(tmp_path, sourc
     assert config["full_migration"] == {"destination_target": "aws_eks"}
 
 
-@pytest.mark.parametrize("override", [
-    {"data_source": "aws"},
-    {"data_target": "onprem_return"},
-    {"source_env": "connected-7"},
-    {"source_env": "aws", "target_env": "onprem", "data_source": "aws",
-     "data_target": "onprem_return"},
-    {"apps": []},
-    {"apps": ["other-app"]},
-    {"apps": ["sample-app", "other-app"]},
-    {"apps": ["sample-app", "sample-app"]},
-    {"apps": ["other-namespace/Deployment/sample-app"]},
-])
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"data_source": "aws"},
+        {"data_target": "onprem_return"},
+        {"source_env": "connected-7"},
+        {
+            "source_env": "aws",
+            "target_env": "onprem",
+            "data_source": "aws",
+            "data_target": "onprem_return",
+        },
+        {"apps": []},
+        {"apps": ["other-app"]},
+        {"apps": ["sample-app", "other-app"]},
+        {"apps": ["sample-app", "sample-app"]},
+        {"apps": ["other-namespace/Deployment/sample-app"]},
+    ],
+)
 def test_full_job_config_rejects_wrong_database_direction_or_apps(tmp_path, override):
     base = tmp_path / "config.yaml"
     base.write_text(FULL_CONFIG)
