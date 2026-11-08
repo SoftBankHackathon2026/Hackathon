@@ -24,6 +24,7 @@ export function buildLanes(
       if (stage.started_at === null) return [];
       if (stage.name.toUpperCase() === "COMPLETED") return [];
       const from = Date.parse(stage.started_at);
+      if (stage.finished_at === null && stage.status !== "current") return [];
       const to =
         stage.finished_at === null ? now : Date.parse(stage.finished_at);
       if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return [];

@@ -57,13 +57,15 @@ export function writeRuns(points: SeriesPoint[]): WriteRun[] {
 const PADDING_MS = 2 * 60 * 1000;
 const MAX_MINUTES = 1440;
 
+const FINAL_STAGES = new Set(["COMPLETED", "ABORTED", "ROLLED_BACK"]);
+
 export function lifetimeSpan(stages: StageInfo[]) {
   const starts = stages.flatMap((s) =>
     s.started_at === null ? [] : [Date.parse(s.started_at)],
   );
   if (starts.length === 0) return null;
   const done = stages.find(
-    (s) => s.name.toUpperCase() === "COMPLETED" && s.started_at !== null,
+    (s) => FINAL_STAGES.has(s.name.toUpperCase()) && s.started_at !== null,
   );
   const finished = done?.finished_at ?? done?.started_at ?? null;
   return {

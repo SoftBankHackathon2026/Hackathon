@@ -50,7 +50,10 @@ test("stageSummaryText names the approval wait explicitly", () => {
 test("stage durations use the clock only while a stage is open", () => {
   const now = Date.parse("2026-11-05T00:01:00Z");
   assert.equal(
-    stageDurationSeconds({ started_at: null, finished_at: null }, now),
+    stageDurationSeconds(
+      { started_at: null, finished_at: null, status: "pending" },
+      now,
+    ),
     null,
   );
   assert.equal(
@@ -58,6 +61,7 @@ test("stage durations use the clock only while a stage is open", () => {
       {
         started_at: "2026-11-05T00:00:00Z",
         finished_at: "2026-11-05T00:00:30Z",
+        status: "done",
       },
       now,
     ),
@@ -65,10 +69,21 @@ test("stage durations use the clock only while a stage is open", () => {
   );
   assert.equal(
     stageDurationSeconds(
-      { started_at: "2026-11-05T00:00:00Z", finished_at: null },
+      {
+        started_at: "2026-11-05T00:00:00Z",
+        finished_at: null,
+        status: "current",
+      },
       now,
     ),
     60,
+  );
+  assert.equal(
+    stageDurationSeconds(
+      { started_at: "2026-11-05T00:00:00Z", finished_at: null, status: "done" },
+      now + 3_600_000,
+    ),
+    null,
   );
 });
 

@@ -21,8 +21,8 @@ import {
 export function StageLog({ stages }: { stages: StageInfo[] }) {
   const { isOpen, toggle } = useToggleSet();
   const now = Date.now();
-  const durations = stages.map((s) => stageDurationSeconds(s, now) ?? 0);
-  const max = Math.max(0, ...durations);
+  const durations = stages.map((s) => stageDurationSeconds(s, now));
+  const max = Math.max(0, ...durations.map((d) => d ?? 0));
   if (stages.length === 0)
     return <p className="empty-line">단계 정보가 없어요.</p>;
   return (
@@ -64,8 +64,8 @@ export function StageLog({ stages }: { stages: StageInfo[] }) {
                     {stage.started_at ? formatDateTime(stage.started_at) : "-"}
                   </td>
                   <td className="num">
-                    {stage.started_at ? (
-                      <BarCell value={durations[i]} max={max}>
+                    {durations[i] !== null ? (
+                      <BarCell value={durations[i] ?? 0} max={max}>
                         {formatSeconds(durations[i])}
                       </BarCell>
                     ) : (

@@ -129,11 +129,13 @@ export const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
   skipped: "건너뜀",
 };
 
+/** 끝난 시각이 없으면 진행 중인 단계만 지금까지 센다. 완료처럼 끝 시각이 없는 마지막 단계는 시간이 흐르지 않는다. */
 export function stageDurationSeconds(
-  stage: Pick<StageInfo, "started_at" | "finished_at">,
+  stage: Pick<StageInfo, "started_at" | "finished_at" | "status">,
   now: number,
 ) {
   if (stage.started_at === null) return null;
+  if (stage.finished_at === null && stage.status !== "current") return null;
   const start = Date.parse(stage.started_at);
   const end = stage.finished_at === null ? now : Date.parse(stage.finished_at);
   if (Number.isNaN(start) || Number.isNaN(end)) return null;
