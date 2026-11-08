@@ -6,45 +6,84 @@ from typing import Any
 
 import pytest
 
-from migration.cutover import (ABORTED, CATCHING_UP, COMPLETED, COPYING, FENCING, NEEDS_RECOVERY, PRECHECK, READY,
-                               ROLLED_BACK, SWITCHING, VERIFYING, ApprovalRequired, Cutover, CutoverError, Ports)
+from migration.cutover import (ABORTED, CATCHING_UP, COMPLETED, COPYING, DRAINING, FENCING, NEEDS_RECOVERY, PRECHECK, READY,
+                               ROLLED_BACK, SWITCHING, SYNC_CONFIRMED, VERIFYING, ApprovalRequired, Cutover, CutoverError, Ports)
 from migration.state import CutoverStore
 
 
-class FakeWorker:
-    def __init__(self, source: str) -> None:
-        self.state = "RUNNING"
-        self.target = source
-        self.phase = "onprem_live"
-        self.committed = {source: 1010}
-        self.calls: list[str] = []
-        self.last_switch: dict[str, Any] | None = None
-        self.known_targets = ["onprem", "aws"]
+class FakeBot:
+    def __init__(self, source="onprem"):
+        self.generation = "stopped"
+        self.generated = 0
+        self.limit = None
+        self.pending = 0
+        self.failed = 0
+        self.fatal = None
+        self.paused = False
+        self.run_id = "test-run"
+        self.ledger_id = "test-ledger"
+        self.calls = []
+        self.on_batch = lambda count: None
 
-    def status(self) -> dict[str, Any]:
-        return {"state": self.state, "target": self.target, "phase": self.phase, "in_flight": None,
-                "known_targets": list(self.known_targets),
-                "queue_length": 2, "counters": {"mismatch": 0}, "committed_by_target": dict(self.committed),
-                "last_switch": self.last_switch, "last_error": None}
+    def status(self):
+        return {"generation": self.generation, "generated_total": self.generated,
+                "generation_limit": self.limit, "pending": self.pending, "committed": max(0, self.generated - self.pending),
+                "failed": self.failed, "unknown": 0, "paused": self.paused, "fatal": self.fatal,
+                "run_id": self.run_id, "ledger_id": self.ledger_id, "control_enabled": True,
+                "request_endpoint": "http://ingress/api/requests"}
+
+    def set_generation(self, enabled, *, expected_run_id, expected_ledger_id, limit=None):
+        assert expected_run_id == self.run_id and expected_ledger_id == self.ledger_id
+        self.calls.append((enabled, limit))
+        if limit is not None:
+            assert limit >= self.generated
+            self.limit = limit
+        self.generation = "running" if enabled else "stopped"
+        if enabled:
+            count = self.limit - self.generated
+            self.generated = self.limit
+            self.on_batch(count)
+            self.generation = "stopped"
+        return self.status()
+
+
+class FakeIngress:
+    def __init__(self, target="onprem"):
+        self.mode = "running"
+        self.target = target
+        self.epoch = 0
+        self.in_flight = 0
+        self.calls = []
+        self.settled = True
+        self.app_ready_after = 0
+        self.app_checks = 0
+
+    def status(self):
+        return {"mode": self.mode, "target": self.target, "epoch": str(self.epoch), "in_flight": self.in_flight,
+                "last_error": None}
 
     def pause(self):
-        self.calls.append("pause"); self.state = "PAUSED"; return self.status()
+        self.calls.append("pause")
+        self.mode = "paused"
+        return {**self.status(), "settled": self.settled}
 
-    def resume(self):
-        self.calls.append("resume"); self.state = "RUNNING"; return self.status()
-
-    def drain(self, timeout: float = 60.0):
-        self.calls.append("drain")
-        return {"settled": True, "queue_length": 2, "last_committed": {"request_id": "last-1", "target": self.target}}
-
-    def switch_target(self, target: str, phase: str | None = None):
-        self.calls.append(f"switch:{target}")
-        assert self.state == "PAUSED"
+    def set_target(self, target, expected_epoch):
+        self.calls.append(f"target:{target}@{expected_epoch}")
+        assert self.mode == "paused" and expected_epoch == str(self.epoch)
         self.target = target
-        self.phase = phase or self.phase
-        self.last_switch = {"identity": {"database": "migration_demo"}}
-        self.committed.setdefault(target, 0)
+        self.epoch += 1
         return self.status()
+
+    def resume(self, expected_epoch):
+        self.calls.append(f"resume@{expected_epoch}")
+        assert expected_epoch == str(self.epoch)
+        self.mode = "running"
+        return self.status()
+
+    def check_app(self, target):
+        self.app_checks += 1
+        self.calls.append(f"check_app:{target}")
+        return {"ok": self.app_checks > self.app_ready_after}
 
 
 class FakeConnect:
@@ -84,6 +123,7 @@ class FakeDb:
         self.calls: list[str] = []
         self.target_rows: set[str] = set()
         self.fence_works = True
+        self.watermark: str | None = "2026-01-01T00:00:00+00:00"  # seed 행은 기준점 이전, 그 뒤 워커 행은 delta
 
     def precheck(self, target, *, is_source):
         return {"table_exists": True, "app_insert": self.app_insert[target], "wal_level": "logical",
@@ -94,8 +134,14 @@ class FakeDb:
     def terminate_app_sessions(self, target): self.terminated += 1; return 1
     def test_insert_rejected(self, target, request_id): return self.fence_works and not self.app_insert[target]
     def count_rows(self, target, phase=None): return self.seed[target] if phase == "seed" else self.rows[target]
+    def max_created_at(self, target): return self.watermark
+    def count_rows_in_scope(self, target, *, since=None, upto=None):
+        # 기준점 이전 = seed 집합, 기준점 이후 = 나머지. count_rows 는 테스트가 바꿔치기할 수 있어 self 로 부른다.
+        if upto is not None:
+            return self.seed[target]
+        return self.count_rows(target) - self.seed[target]
     def row_exists(self, target, request_id): return request_id in self.target_rows or request_id.startswith("src-")
-    def latest_ids(self, target, n): return [f"src-{i}" for i in range(n)]
+    def latest_ids(self, target, n, *, since=None): return [f"src-{i}" for i in range(n)]
     def prepare_source(self, target): self.calls.append("prepare"); return {"publication_created": True}
     def drop_source_slot(self, target):
         self.calls.append(f"drop_slot:{target}")
@@ -109,19 +155,27 @@ class FakeVerify:
         self.results: list[bool] = []
         self.runs: list[tuple[str, str]] = []
 
-    def run(self, mode, label):
+    def run(self, mode, label, *, since=None, upto=None, method="rows"):
         self.runs.append((mode, label))
+        self.scopes = getattr(self, "scopes", []) + [(label, since, upto, method)]
+        if upto is not None:
+            # 기준점 이전(스냅샷) 집합 digest 검증. 기존 테스트의 results 는 delta 검증(pre-stop, post-stop,
+            # policy-pre-grant, final) 순서를 뜻하므로 여기서는 소비하지 않고 snapshot_results 를 따로 쓴다.
+            ok = self.snapshot_results.pop(0) if getattr(self, "snapshot_results", None) else True
+            return {"passed": ok, "counts": {}, "report": f"/r/{label}.json", "method": method,
+                    "source_count": 1000, "target_count": 1000}
         ok = self.results.pop(0) if self.results else True
-        return {"passed": ok, "counts": {}, "report": f"/r/{label}.json"}
+        return {"passed": ok, "counts": {}, "report": f"/r/{label}.json", "method": method,
+                "source_count": 1000 if upto is not None else 10, "target_count": 1000 if upto is not None else 10}
 
 
 @pytest.fixture
 def fakes(config):
-    return {"worker": FakeWorker(config.job.source), "connect": FakeConnect(), "db": FakeDb(), "verify": FakeVerify()}
+    return {"bot": FakeBot(config.job.source), "ingress": FakeIngress(), "connect": FakeConnect(), "db": FakeDb(), "verify": FakeVerify()}
 
 
 def _build(config, state_dir, fakes, approve=None, clock=None):
-    ports = Ports(worker=fakes["worker"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"])
+    ports = Ports(bot=fakes["bot"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"], ingress=fakes["ingress"])
     docs = {"source": {"name": config.job.source_connector, "config": {"a": "1"}},
             "sink": {"name": config.job.sink_connector, "config": {"b": "2"}}}
     ticks = {"t": 0.0}
@@ -136,30 +190,28 @@ def _build(config, state_dir, fakes, approve=None, clock=None):
 
 
 def _grow_target_commits(fakes):
-    """전환 후 워커가 대상에 커밋하는 것을 흉내: status 조회마다 1건 증가."""
-    w = fakes["worker"]
-    orig_status = w.status
-
-    def status():
-        if w.target == "aws" and w.state == "RUNNING":
-            w.committed["aws"] += 1
-        return orig_status()
-
-    w.status = status
+    # New bot batches update the real target-count port through the queue route.
+    pass
 
 
 def _simulate_replication(fakes):
-    """snapshot 과 CDC 를 흉내: 호출될 때마다 대상 행 수가 원본을 따라간다."""
     db, connect = fakes["db"], fakes["connect"]
+    ingress = fakes["ingress"]
     orig_count = db.count_rows
+
+    def deliver(count):
+        assert ingress.mode == "running"
+        target = "aws" if ingress.target == "aws_db" else "onprem"
+        assert db.app_insert[target]
+        db.rows[target] += count
+
+    fakes["bot"].on_batch = deliver
 
     def count_rows(target, phase=None):
         if connect.connectors:
             db.seed["aws"] = db.seed["onprem"]
             db.rows["aws"] = db.rows["onprem"]
             db.target_rows.add("last-1")
-        if target == "onprem" and phase is None and fakes["worker"].state == "RUNNING" and fakes["worker"].target == "onprem":
-            db.rows["onprem"] += 1
         return orig_count(target, phase)
 
     db.count_rows = count_rows
@@ -176,18 +228,28 @@ def test_full_run_stops_at_ready_then_completes_with_approval(config, state_dir,
 
     cut2 = _build(config, state_dir, fakes, approve="meeting-42")
     assert cut2.run() == COMPLETED
-    w, db, connect, verify = fakes["worker"], fakes["db"], fakes["connect"], fakes["verify"]
-    assert w.calls == ["pause", "drain", "switch:aws", "resume"]
+    w, db, connect, verify = fakes["bot"], fakes["db"], fakes["connect"], fakes["verify"]
+    assert [limit for enabled, limit in w.calls if enabled] == [3, 5]
+    assert w.generation == "stopped" and w.pending == 0
     assert db.calls == ["prepare", "revoke:onprem", "grant:aws", "drop_slot:onprem"]
     assert cp_cleanup(cut2)["slot_dropped"] is True
     assert db.terminated == 1
     assert connect.deletes == [config.job.source_connector, config.job.sink_connector]
-    assert [m for m, _ in verify.runs] == ["pre", "pre", "pre", "post"]
+    # 행 비교는 CATCHING_UP 의 스냅샷 집합 digest 한 번뿐이다. 전환 구간(DRAINING 이후)은 건수만 센다.
+    assert verify.runs == [("pre", "snapshot")]
+    wm = fakes["db"].watermark
+    assert verify.scopes == [("snapshot", None, wm, "digest")]
+    assert cut.job.checkpoint["watermark"] == wm
+    assert cut.job.checkpoint["snapshot_set"]["passed"] and cut.job.checkpoint["snapshot_set"]["count"] == 1000
     # 순서: REVOKE 는 삭제 전에, GRANT 는 삭제·재검증 후에
     assert connect.connectors == {}
     cp = cut2.job.checkpoint
-    assert cp["approval"]["id"] == "meeting-42" and cp["fenced"]["last_committed"]["request_id"] == "last-1"
-    assert cp["verify_final"]["passed"] and "sink_offsets" in cp["drained"]
+    assert cp["approval"]["id"] == "meeting-42" and cp["fenced"]["last_committed"]["request_id"] == "src-0"
+    assert "sink_offsets" in cp["drained"]
+    for key in ("counts_pre_stop", "counts_post_stop", "counts_pre_grant", "counts_final"):
+        assert cp[key]["passed"] and cp[key]["method"] == "counts" and cp[key]["watermark"] == wm
+        assert cp[key]["delta_target"] == cp[key]["delta_source"] + (2 if key == "counts_final" else 0)
+        assert cp[key]["snapshot_source"] == cp[key]["snapshot_target"] == 1000
     steps = [s for s, _ in cut2.store.steps(config.job.job_id)]
     assert "grant_target_app_insert" in steps and "delete_source_connector" in steps
 
@@ -196,19 +258,16 @@ def cp_cleanup(cut):
     return cut.job.checkpoint["source_cleanup"]
 
 
-def test_precheck_fails_when_worker_does_not_know_target(config, state_dir, fakes):
-    """워커 ConfigMap 에 대상 target 이 없으면 SWITCHING 에서 터지기 전에 PRECHECK 가 막는다 (귀환 onprem_return 사례)."""
-    fakes["worker"].known_targets = ["onprem"]
+def test_precheck_fails_when_bot_control_is_unavailable(config, state_dir, fakes):
+    original = fakes["bot"].status
+    fakes["bot"].status = lambda: {**original(), "control_enabled": False}
     cut = _build(config, state_dir, fakes)
-    with pytest.raises(CutoverError, match="워커 설정에 target aws"):
+    with pytest.raises(CutoverError, match="생성 제어"):
         cut.run()
-    assert cut.job.stage == ABORTED and cut.job.checkpoint["failed_stage"] == PRECHECK
+    assert cut.job.stage == ABORTED and not fakes["db"].calls
 
 
-def test_old_worker_without_known_targets_still_passes_precheck(config, state_dir, fakes):
-    w = fakes["worker"]
-    orig = w.status
-    w.status = lambda: {k: v for k, v in orig().items() if k != "known_targets"}
+def test_bot_does_not_need_database_target_list(config, state_dir, fakes):
     _simulate_replication(fakes)
     with pytest.raises(ApprovalRequired):
         _build(config, state_dir, fakes).run()
@@ -235,25 +294,14 @@ def test_slot_cleanup_can_be_disabled(state_dir, fakes):
     assert cp_cleanup(cut) == {"skipped": True} and "drop_slot:onprem" not in fakes["db"].calls
 
 
-def test_copying_sees_seed_inserted_after_stage_start(config, state_dir, fakes):
-    """seed 를 COPYING 시작 뒤에 넣어도 스냅샷 게이트가 열린다 (리허설에서 겪은 타임아웃 재현)."""
-    db = fakes["db"]
-    db.seed = {"onprem": 0, "aws": 0}
-    polls = {"n": 0}
-    orig = db.count_rows
-
-    def count_rows(target, phase=None):
-        if phase == "seed":
-            polls["n"] += 1
-            if polls["n"] > 2:  # 두 번째 폴링 뒤에 seed 가 양쪽에 들어온 상황
-                db.seed = {"onprem": 1000, "aws": 1000}
-        return orig(target, phase)
-
-    db.count_rows = count_rows
+def test_copying_accepts_empty_source_and_verifies_new_bot_requests(config, state_dir, fakes):
+    fakes["db"].seed = {"onprem": 0, "aws": 0}
+    fakes["db"].rows = {"onprem": 0, "aws": 0}
+    fakes["db"].watermark = None
     _simulate_replication(fakes)
-    with pytest.raises(ApprovalRequired):
-        _build(config, state_dir, fakes).run()
-    assert polls["n"] > 2
+    cut = _build(config, state_dir, fakes, approve="test")
+    assert cut.run() == COMPLETED
+    assert fakes["db"].rows == {"onprem": 3, "aws": 5}
 
 
 def test_rerun_does_not_repeat_external_steps(config, state_dir, fakes):
@@ -261,10 +309,10 @@ def test_rerun_does_not_repeat_external_steps(config, state_dir, fakes):
     cut = _build(config, state_dir, fakes, approve="a")
     _grow_target_commits(fakes)
     assert cut.run() == COMPLETED
-    puts, deletes, calls = list(fakes["connect"].puts), list(fakes["connect"].deletes), list(fakes["worker"].calls)
+    puts, deletes, calls = list(fakes["connect"].puts), list(fakes["connect"].deletes), list(fakes["bot"].calls)
     cut2 = _build(config, state_dir, fakes, approve="a")
     assert cut2.run() == COMPLETED
-    assert fakes["connect"].puts == puts and fakes["connect"].deletes == deletes and fakes["worker"].calls == calls
+    assert fakes["connect"].puts == puts and fakes["connect"].deletes == deletes and fakes["bot"].calls == calls
 
 
 def test_precheck_fails_when_target_app_writable(config, state_dir, fakes):
@@ -294,16 +342,23 @@ def test_fence_failure_aborts_before_target_write(config, state_dir, fakes):
     assert fakes["db"].app_insert["aws"] is False and "grant:aws" not in fakes["db"].calls
     # 원복: 커넥터 삭제, 원본 앱 INSERT 복구, 워커 재개 (target 은 여전히 원본)
     out = _build(config, state_dir, fakes).abort_rollback()
-    assert out["source_app_insert"] is True and out["worker"] == "RUNNING"
-    assert fakes["worker"].target == "onprem"
+    assert out["source_app_insert"] is True and out["bot"] == "stopped"
+    assert fakes["ingress"].target == "onprem"
     assert _build(config, state_dir, fakes).job.stage == ROLLED_BACK
 
 
 def test_failure_after_target_grant_is_needs_recovery(config, state_dir, fakes):
     _simulate_replication(fakes)
-    fakes["verify"].results = [True, True, True, False]  # 마지막 post 검증 실패
     _grow_target_commits(fakes)
     cut = _build(config, state_dir, fakes, approve="x")
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == "aws" and upto is None and cut.job.stage == VERIFYING:
+            return n - 3  # 전환 후 건수 확인에서 대상 delta 가 원본보다 모자란 상황
+        return n
+    db.count_rows_in_scope = count_rows_in_scope
     with pytest.raises(CutoverError, match=NEEDS_RECOVERY):
         cut.run()
     assert cut.job.stage == NEEDS_RECOVERY and cut.job.checkpoint["failed_stage"] == VERIFYING
@@ -358,7 +413,7 @@ def test_policy_hold_before_grant_restores_source(config, state_dir, fakes):
         cut.run()
     assert cut.job.stage == ROLLED_BACK
     assert fakes["db"].app_insert == {"onprem": True, "aws": False}
-    assert fakes["worker"].state == "RUNNING"
+    assert fakes["bot"].generation == "stopped"
     assert "grant:aws" not in fakes["db"].calls
 
 
@@ -386,6 +441,120 @@ def test_legacy_switching_failure_requires_manual_recovery(config, state_dir, fa
     cut.job.checkpoint.clear()
     cut._save(SWITCHING)
     cut.policy_gate = lambda *args: (_ for _ in ()).throw(RuntimeError("hold"))
-    with pytest.raises(CutoverError, match=NEEDS_RECOVERY):
+    with pytest.raises(CutoverError, match="옛 DB 워커 작업"):
         cut.run()
     assert "grant:onprem" not in fakes["db"].calls
+
+
+# ---- 기준점(watermark) 기반 판정 ------------------------------------------------
+
+
+def test_snapshot_set_is_verified_once_and_rechecked_only_when_its_count_changes(config, state_dir, fakes):
+    """CATCHING_UP 에서 스냅샷 집합을 digest 로 한 번 확정하고, DRAINING 에서 기준점 이전 건수가 변했을 때만 다시 본다."""
+    _simulate_replication(fakes)
+    db, verify = fakes["db"], fakes["verify"]
+    cut = _build(config, state_dir, fakes, approve="a")
+    _grow_target_commits(fakes)
+    # 스냅샷 집합 확정 뒤 늦게 커밋된 행이 기준점 이전 집합에 들어온 상황: DRAINING 의 건수 비교가 바뀐다
+    orig = db.count_rows_in_scope
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        if upto is not None and cut.job.stage == DRAINING:
+            return db.seed[target] + 1
+        return orig(target, since=since, upto=upto)
+    db.count_rows_in_scope = count_rows_in_scope
+    assert cut.run() == COMPLETED
+    labels = [label for _, label in verify.runs]
+    assert labels == ["snapshot", "snapshot-recheck"]
+    assert cut.job.checkpoint["snapshot_recheck"]["needed"] and cut.job.checkpoint["snapshot_set"]["count"] == 1001
+    assert cut.job.checkpoint["drained"]["delta_source"] == cut.job.checkpoint["drained"]["delta_target"]
+
+
+def test_snapshot_verify_waits_until_sink_applies_everything(config, state_dir, fakes):
+    """스냅샷 집합 digest 가 아직 안 맞으면(싱크 적용 중) 실패가 아니라 대기다."""
+    _simulate_replication(fakes)
+    verify = fakes["verify"]
+    verify.snapshot_results = [False, False, True]
+    with pytest.raises(ApprovalRequired):
+        _build(config, state_dir, fakes).run()
+    assert [label for _, label in verify.runs] == ["snapshot", "snapshot", "snapshot"]
+
+
+def test_late_row_in_snapshot_set_that_never_reaches_target_aborts(config, state_dir, fakes):
+    _simulate_replication(fakes)
+    db, verify = fakes["db"], fakes["verify"]
+    cut = _build(config, state_dir, fakes, approve="a")
+    orig = db.count_rows_in_scope
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        if upto is not None and cut.job.stage == DRAINING:
+            return db.seed[target] + 1
+        return orig(target, since=since, upto=upto)
+    db.count_rows_in_scope = count_rows_in_scope
+    verify.snapshot_results = [True, False]  # 최초 확정은 통과, 재확정 실패
+    with pytest.raises(CutoverError, match="늦게 들어온 행"):
+        cut.run()
+    assert cut.job.stage == ABORTED
+
+
+def test_empty_source_at_start_has_no_snapshot_set(config, state_dir, fakes):
+    """빈 테이블에서 시작하면 기준점이 None 이고 모든 행이 delta 라 스냅샷 digest 는 건너뛴다."""
+    _simulate_replication(fakes)
+    db, verify = fakes["db"], fakes["verify"]
+    db.watermark = None
+    db.seed = {"onprem": 1, "aws": 0}  # COPYING 게이트는 seed>0 을 요구한다
+    cut = _build(config, state_dir, fakes, approve="a")
+    _grow_target_commits(fakes)
+    assert cut.run() == COMPLETED
+    assert cut.job.checkpoint["watermark"] is None
+    assert verify.runs == []  # 스냅샷 집합이 없으니 digest 도 없다. 전환 구간은 건수만 센다
+    assert cut.job.checkpoint["snapshot_set"]["passed"] and cut.job.checkpoint["snapshot_set"].get("skipped")
+    assert cut.job.checkpoint["counts_final"]["watermark"] is None
+
+
+def test_job_without_watermark_compares_everything_as_delta(config, state_dir, fakes):
+    """기준점 도입 전 체크포인트를 이어서 실행하면 기준점 None 으로 전체 건수를 delta 로 센다."""
+    cut = _build(config, state_dir, fakes)
+    cut._save(FENCING, fence_started_at=1)
+    assert cut.watermark is None
+    fakes["db"].app_insert["onprem"] = False
+    fakes["db"].rows["aws"], fakes["db"].seed["aws"] = fakes["db"].rows["onprem"], fakes["db"].seed["onprem"]  # 복제 완료 상태
+    cut.stage_switching = lambda: None
+    cut.stage_sync_confirmed()
+    assert fakes["verify"].runs == []
+    for key in ("counts_pre_stop", "counts_post_stop"):
+        assert cut.job.checkpoint[key]["watermark"] is None and cut.job.checkpoint[key]["passed"]
+        assert cut.job.checkpoint[key]["snapshot_source"] == 0
+
+
+def test_final_count_check_allows_rows_written_on_target_after_switch(config, state_dir, fakes):
+    """전환 뒤 대상은 이미 쓰기 중이라 기준점 이후 건수가 원본보다 많아도 된다. 기준점 이전 건수는 같아야 한다."""
+    _simulate_replication(fakes)
+    _grow_target_commits(fakes)
+    cut = _build(config, state_dir, fakes, approve="a")
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == "aws" and upto is None and cut.job.stage == VERIFYING:
+            return n + 5
+        return n
+    db.count_rows_in_scope = count_rows_in_scope
+    assert cut.run() == COMPLETED
+    final = cut.job.checkpoint["counts_final"]
+    assert final["passed"] and final["delta_target"] == final["delta_source"] + 7
+
+
+def test_pre_stop_count_mismatch_aborts_before_connectors_are_deleted(config, state_dir, fakes):
+    _simulate_replication(fakes)
+    cut = _build(config, state_dir, fakes, approve="a")
+    db = fakes["db"]
+    orig = db.count_rows_in_scope
+    def count_rows_in_scope(target, *, since=None, upto=None):
+        n = orig(target, since=since, upto=upto)
+        if target == "aws" and upto is not None and cut.job.stage == SYNC_CONFIRMED:
+            return n - 1
+        return n
+    db.count_rows_in_scope = count_rows_in_scope
+    with pytest.raises(CutoverError, match="전환 전 건수 불일치"):
+        cut.run()
+    assert cut.job.stage == ABORTED and cut.job.checkpoint["failed_stage"] == SYNC_CONFIRMED
+    assert fakes["connect"].deletes == []

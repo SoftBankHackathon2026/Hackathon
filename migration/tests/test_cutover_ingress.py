@@ -12,56 +12,16 @@ from migration.cutover import ABORTED, COMPLETED, FENCING, ROLLED_BACK, SWITCHIN
 from migration.state import CutoverStore
 
 from tests.conftest import RAW_CONFIG
-from tests.test_cutover import FakeConnect, FakeDb, FakeVerify, FakeWorker, _grow_target_commits, _simulate_replication
+from tests.test_cutover import FakeConnect, FakeDb, FakeVerify, FakeBot, _grow_target_commits, _simulate_replication
 
 INGRESS_RAW = {
     "control_url": "http://durable-ingress-control:9092",
     "targets": {"onprem": "onprem", "aws": "aws_db"},
-    "app_checks": {"aws": {"url": "http://sample-app-rds", "environment": "aws", "database": "migration_demo"}},
+    "app_checks": {"onprem": {"url": "http://sample-app", "environment": "onprem", "database": "migration_demo"}, "aws": {"url": "http://sample-app-rds", "environment": "aws", "database": "migration_demo"}},
 }
 
 
-class FakeIngress:
-    """durable-ingress 제어 API 의 규칙(paused 일 때만 target, epoch 일치, 재시작은 paused)을 흉내 낸다."""
-
-    def __init__(self, target: str = "onprem") -> None:
-        self.mode = "running"
-        self.target = target
-        self.epoch = 0
-        self.in_flight = 0
-        self.calls: list[str] = []
-        self.settled = True
-        self.app_ready_after = 0   # check_app 이 ok 를 돌려주기까지 필요한 호출 수
-        self.app_checks = 0
-
-    def status(self) -> dict[str, Any]:
-        return {"mode": self.mode, "target": self.target, "epoch": str(self.epoch), "in_flight": self.in_flight,
-                "last_error": None}
-
-    def pause(self) -> dict[str, Any]:
-        self.calls.append("pause")
-        self.mode = "paused"
-        return {**self.status(), "settled": self.settled}
-
-    def set_target(self, target: str, expected_epoch: str) -> dict[str, Any]:
-        self.calls.append(f"target:{target}@{expected_epoch}")
-        assert self.mode == "paused", "PAUSE_REQUIRED"
-        assert expected_epoch == str(self.epoch), "EPOCH_CONFLICT"
-        self.target = target
-        self.epoch += 1
-        return self.status()
-
-    def resume(self, expected_epoch: str) -> dict[str, Any]:
-        self.calls.append(f"resume@{expected_epoch}")
-        assert expected_epoch == str(self.epoch), "EPOCH_CONFLICT"
-        self.mode = "running"
-        return self.status()
-
-    def check_app(self, job_target: str) -> dict[str, Any]:
-        self.app_checks += 1
-        self.calls.append(f"check_app:{job_target}")
-        ok = self.app_checks > self.app_ready_after
-        return {"ok": ok, "problems": [] if ok else ["writes_paused=true"], "url": "http://sample-app-rds"}
+from tests.test_cutover import FakeIngress
 
 
 @pytest.fixture
@@ -73,12 +33,12 @@ def iconfig():
 
 @pytest.fixture
 def ifakes(iconfig):
-    return {"worker": FakeWorker(iconfig.job.source), "connect": FakeConnect(), "db": FakeDb(), "verify": FakeVerify(),
+    return {"bot": FakeBot(iconfig.job.source), "connect": FakeConnect(), "db": FakeDb(), "verify": FakeVerify(),
             "ingress": FakeIngress()}
 
 
 def _build(config, state_dir, fakes, approve=None):
-    ports = Ports(worker=fakes["worker"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"],
+    ports = Ports(bot=fakes["bot"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"],
                   ingress=fakes["ingress"])
     docs = {"source": {"name": config.job.source_connector, "config": {"a": "1"}},
             "sink": {"name": config.job.sink_connector, "config": {"b": "2"}}}
@@ -110,7 +70,7 @@ def test_full_run_pauses_queue_before_fence_and_switches_after_grant(iconfig, st
     cut = _build(iconfig, state_dir, ifakes)
     with pytest.raises(Exception):  # READY: 승인 필요
         cut.run()
-    assert ing.mode == "running" and ing.calls == []   # 승인 전에는 큐를 건드리지 않는다
+    assert ing.mode == "running" and ing.calls == ["check_app:onprem"]   # 승인 전 source readiness만 조회
 
     cut = _build(iconfig, state_dir, ifakes, approve="ops-1")
     assert cut.run() == COMPLETED
@@ -151,13 +111,13 @@ def test_switch_waits_until_target_app_ready(iconfig, state_dir, ifakes):
     ifakes["ingress"].app_ready_after = 2       # 두 번은 writes_paused, 세 번째에 ok
     cut = _build(iconfig, state_dir, ifakes, approve="ops-1")
     assert cut.run() == COMPLETED
-    assert ifakes["ingress"].app_checks == 3
+    assert ifakes["ingress"].app_checks == 5
     assert ifakes["ingress"].target == "aws_db"
 
 
 def test_target_app_never_ready_is_needs_recovery_and_queue_stays_paused(iconfig, state_dir, ifakes):
     _simulate_replication(ifakes)
-    ifakes["ingress"].app_ready_after = 10_000
+    ifakes["ingress"].check_app = lambda target: {"ok": target == "onprem"}
     cut = _build(iconfig, state_dir, ifakes, approve="ops-1")
     with pytest.raises(CutoverError, match="target_app_ready"):
         cut.run()
@@ -198,32 +158,30 @@ def test_abort_rollback_refuses_when_queue_already_moved(iconfig, state_dir, ifa
         _build(iconfig, state_dir, ifakes).abort_rollback()
 
 
-def test_without_ingress_section_queue_is_untouched(config, state_dir, ifakes):
-    """ingress 절이 없으면 예전처럼 워커·DB 만 제어한다 (수동 운영)."""
+def test_without_ingress_runner_fails_closed(config, state_dir, ifakes):
+    """봇 전환은 접수 큐 제어 없이 실행할 수 없다."""
     _simulate_replication(ifakes)
     _grow_target_commits(ifakes)
-    ports = Ports(worker=ifakes["worker"], connect=ifakes["connect"], db=ifakes["db"], verify=ifakes["verify"])
+    ports = Ports(bot=ifakes["bot"], connect=ifakes["connect"], db=ifakes["db"], verify=ifakes["verify"])
     docs = {"source": {"name": config.job.source_connector, "config": {}}, "sink": {"name": config.job.sink_connector, "config": {}}}
     cut = Cutover(config, CutoverStore(state_dir), ports, connector_docs=docs, approve="ops-1", sleep=lambda s: None,
                   policy_gate=lambda stage, checks: {"plan_digest": "t", "execution_digest": "t"})
-    assert config.ingress.enabled is False
-    assert cut.run() == COMPLETED
+    with pytest.raises(CutoverError, match="접수 큐 제어 설정"):
+        cut.run()
     assert ifakes["ingress"].calls == []
 
 
-def test_plan_mentions_queue_only_when_configured(iconfig, config, state_dir, ifakes):
-    with_q = dict(_build(iconfig, state_dir, ifakes).plan())
-    assert "접수 큐" in with_q[FENCING] and "접수 큐" in with_q[SWITCHING]
-    ports = Ports(worker=ifakes["worker"], connect=ifakes["connect"], db=ifakes["db"], verify=ifakes["verify"])
-    without = dict(Cutover(config, CutoverStore(state_dir), ports, connector_docs={},
-                           policy_gate=lambda s, c: {}).plan())
-    assert "접수 큐" not in without[FENCING]
+def test_plan_mentions_bot_stop_and_queue(iconfig, state_dir, ifakes):
+    plan = dict(_build(iconfig, state_dir, ifakes).plan())
+    assert "트래픽봇" in plan[FENCING] and "접수 큐" in plan[SWITCHING]
+    assert "정지" in plan[COMPLETED]
+
 
 
 @pytest.mark.parametrize("ingress_raw, msg", [
     ({"control_url": "http://x:9092"}, "ingress.targets"),
     ({"control_url": "http://x:9092", "targets": {"onprem": "onprem", "gcp": "x"}}, "targets 에 없다"),
-    ({"targets": {"onprem": "onprem"}, "app_checks": {"aws": {"environment": "aws"}}}, "url"),
+    ({"targets": {"onprem": "onprem"}, "app_checks": {"onprem": {"url": "http://sample-app", "environment": "onprem", "database": "migration_demo"}, "aws": {"environment": "aws"}}}, "url"),
     ({"bogus": 1}, "알 수 없는 키"),
 ])
 def test_ingress_config_validation(ingress_raw, msg):

@@ -13,7 +13,7 @@
 반대 방향인 `python -m migration.identity_export`는 Keycloak의 사용자·그룹·역할을 운영자 대응표에 따라 AWS IAM Identity Center의 사용자·그룹·계정별 권한 세트 할당으로 옮깁니다. 비밀번호·MFA는 옮기지 않으며 사용자는 Identity Center 등록 절차를 마쳐야 합니다. [동작·필요 권한·제한](docs/identity-export/README.md)을 참고하십시오.
 
 `업무-아젠다/01-DB-이전-계획.md` 의 "구성과 INSERT 워커", "온프렘에서 AWS로", "전환과 복구", "데이터 검증" 절을 그대로 코드로 옮긴 것이다.
-INSERT 워커, Debezium CDC 제어, 전환 상태 머신, B/T/S 집합 검증을 한 디렉터리에 모았다.
+러너는 HTTP 트래픽봇·접수 큐로 이전을 제어한다. loadgen/worker_client는 이전 실험용 독립 도구로 남아 있으며 러너는 호출하지 않는다.
 
 Keycloak 인증 기반의 탐색·점검·호스트 설치는 독립 명령
 `python -m migration.keycloak_infra`로 제공한다.
@@ -45,7 +45,7 @@ migration/
   migration/cdc.py          Kafka Connect REST 클라이언트, publication/slot 준비, 템플릿 렌더링
   migration/cutover.py      전환 상태 머신
   migration/verify.py       B/T/S 집합 비교 보고서
-  migration/worker_client.py 워커 HTTP API 클라이언트 (cutover 가 사용)
+  migration/bot_client.py    트래픽봇 생성 제어 API 클라이언트 (cutover 가 사용)
   migration/ingress_client.py 접수 서비스(durable-ingress) 제어 API·대상 앱 readiness 클라이언트 (cutover 가 사용)
   tests/                    pytest (단위 + MIGRATION_TEST_DSN 있을 때 통합)
 ```
@@ -112,20 +112,24 @@ python -m migration.init_db --config config.yaml --target aws
 ### 총 1,000건 시연
 
 `config.example.yaml`은 `cutover.demo_total_rows: 1000`을 사용한다.
-seed 800건을 복사한 뒤 전환기가 워커 생성 상한을 100건으로 열고,
-대상 전환 후 누적 상한을 200건으로 연다. 최종 원본 900건·대상 1,000건이어야 성공한다.
-워커와 seed, 전환기에 **같은 설정 파일**을 사용한다. 배포 시 runner와 worker 양쪽 ConfigMap에
-이 값을 넣어야 하며, 한쪽만 새 버전이면 PRECHECK에서 멈춘다.
+새 원본 DB의 seed 800건 + 트래픽봇의 원본 요청 100건 + 대상 요청 100건이다.
+최종 원본 900건·대상 1,000건이어야 성공한다. 새 봇 run_id·빈 원장과
+`BOT_GENERATION=stopped`로 준비한다. 기존 DB와 원장을 자동으로 초기화하지 않는다.
 
-기존 시연 DB를 지우거나 재사용하지 말고 새 DB·job_id·상태 디렉터리로 준비한다.
-별도 traffic-bot과 수동 INSERT는 이 시연 동안 멈춰 둔다. 이 상한은 워커 생성 건수를 제어하며
-외부 클라이언트의 쓰기를 제한하지 않는다. 외부 요청이 섞여 최종 건수가 달라지면 성공으로 처리하지 않는다.
-durable-ingress를 통한 앱 요청 부하 시험은 별도로 수행한다.
+러너는 트래픽봇의 `POST /control/generation`으로 절대 생성 상한을 저장한다.
+재시도는 같은 상한의 남은 요청만 보낸다. 완료 시 생성은 정지하고, 접수한 요청의
+DB 커밋 확인과 상태 조회는 계속 가능하다. Pod를 삭제하거나 자동 재시작시키지 않는다.
+정지 상태는 봇 SQLite에 저장되어 재시작 후에도 유지된다.
+
+`bot`과 `ingress` 설정은 필수다. 양쪽 앱의 environment·database 이름을 확인한다.
+배포 설정은 gitops `apps/live-db-cutover/README.md`의 순서로 반영한다.
+다른 클라이언트의 쓰기는 이 한도로 제한되지 않으며, 총 건수가 다르면 실패한다.
+플랫폼 작업 생성 화면에는 건수 입력 기능이 없고 현재는 YAML로만 설정한다.
 
 ```sh
 # config.yaml의 연결·job_id·state_dir 및 기존 정책 승인 설정을 준비한 뒤:
 python -m migration.seed --config config.yaml --state-dir /var/lib/worker
-python -m migration.loadgen --config config.yaml --rate 10 --state-dir /var/lib/worker
+# traffic-bot은 BOT_GENERATION=stopped + 영속 원장 + 제어 Secret으로 먼저 배포한다
 # 다른 터미널에서 실행. READY에 도달하면 승인 ID로 재개한다.
 python -m migration.cutover --config config.yaml run
 python -m migration.cutover --config config.yaml run --approve "검토한-승인-ID"
@@ -211,43 +215,53 @@ python -m migration.cutover --config config.yaml --state-dir /var/lib/worker abo
 ```
 
 상태 전이 `PRECHECK → COPYING → CATCHING_UP → READY → FENCING → DRAINING → SYNC_CONFIRMED → SWITCHING → VERIFYING → COMPLETED`.
-단계·체크포인트는 `cutover.sqlite3` 에 저장되고, 외부 작업(커넥터 등록·삭제, REVOKE/GRANT, 워커 pause/drain/target/resume)은 `cutover_steps` 에 기록되어 같은 job_id 재실행 시 반복하지 않는다.
+단계·생성 상한·DB 건수 기준점은 `cutover.sqlite3`에 저장한다. 커넥터·DB 작업은 `cutover_steps`로 중복을 막는다. 봇 정지와 큐 재개는 저장 이력뿐 아니라 현재 상태를 읽고 재확인한다.
 
 | 단계 | 하는 일 (01 문서 11단계 대응) | 실패 시 |
 |---|---|---|
-| PRECHECK | 양쪽 테이블·권한(원본 앱 INSERT 가능, 대상 앱 INSERT 불가)·wal_level·CDC 계정 REPLICATION·워커 target·Connect 접근 (1) | ABORTED |
-| COPYING | publication/slot 준비, Source/Sink 등록, 커넥터 RUNNING + 대상 seed 건수 ≥ 원본 seed 건수 (3) | ABORTED |
-| CATCHING_UP | 원본에 snapshot 이후 `min_live_rows_after_snapshot`(100)건 추가, 최신 10건이 대상에 반영 (4) | ABORTED |
+| PRECHECK | 양쪽 테이블·권한(원본 앱 INSERT 가능, 대상 앱 INSERT 불가)·wal_level·CDC 계정 REPLICATION·트래픽봇 제어/원장 ID/접수 URL·Connect 접근 (1) | ABORTED |
+| COPYING | **기준점(원본 `max(created_at)`) 저장** → publication/slot 준비, Source/Sink 등록, 커넥터 RUNNING + 대상 seed 건수 ≥ 원본 seed 건수 (3) | ABORTED |
+| CATCHING_UP | 기준점 이전(스냅샷) 집합을 digest 로 한 번 확정(통과할 때까지 대기) → 기준점 이후 행이 `min_live_rows_after_snapshot`(100)건 이상, 그중 최신 10건이 대상에 반영 (4) | ABORTED |
 | READY | `--approve` 없으면 종료 코드 3 으로 멈춤 | - |
-| FENCING | 워커 `/pause` → `/drain` → (ingress 절이 있으면) 접수 큐 `/pause` settled·in_flight 0 확인 → 원본 `REVOKE INSERT` → 앱 계정 세션만 `pg_terminate_backend` → 앱 계정으로 시험 INSERT 가 거절되는지 실제 확인 (5, 6) | ABORTED |
-| DRAINING | 마지막 커밋 요청 ID 가 대상에 있고 원본·대상 건수가 같고 sink `/offsets` 가 `offset_stable_seconds` 동안 변하지 않음 (7) | ABORTED |
-| SYNC_CONFIRMED | verify(pre) 통과 → 커넥터 설정·상태·offset 증거 저장 → Source, Sink 삭제 → 대상 앱 쓰기가 아직 닫혀 있는지 확인 → verify(pre) 재실행 (7, 8) | ABORTED |
-| SWITCHING | 대상 `GRANT INSERT` → 워커 `/target {"target":"aws","phase":"aws_live"}` → 접속 DB 이름 확인 → `/resume` → (ingress 절이 있으면) 대상 앱 `/readyz`·`/api/info` 가 맞을 때까지 대기 → 접수 큐 `/target` → `/resume` (9) | **NEEDS_RECOVERY** |
-| VERIFYING | 대상에 `min_rows_after_switch`(100)건 신규 커밋, mismatch 0, 원본 앱 쓰기 여전히 차단, verify(post) 통과 (10) | NEEDS_RECOVERY |
+| FENCING | 트래픽봇 생성 정지·pending/unknown 0 확인 → 접수 큐 `/pause` settled·in_flight 0 확인 → 원본 `REVOKE INSERT` → 앱 계정 세션만 `pg_terminate_backend` → 앱 계정으로 시험 INSERT 가 거절되는지 실제 확인 (5, 6) | ABORTED |
+| DRAINING | 마지막 커밋 요청 ID 가 대상에 있고 **기준점 이후 건수**가 양쪽에서 같고(기준점 이전 건수도 같음) sink `/offsets` 가 `offset_stable_seconds` 동안 변하지 않음. 기준점 이전 건수가 CATCHING_UP 확정 때와 다르면(늦게 커밋된 행) 그 집합만 digest 재확정 (7) | ABORTED |
+| SYNC_CONFIRMED | 건수 확인(기준점 이후·이전 건수가 양쪽 같음) → 커넥터 설정·상태·offset 증거 저장 → Source, Sink 삭제 → 대상 앱 쓰기가 아직 닫혀 있는지 확인 → 건수 재확인 (7, 8) | ABORTED |
+| SWITCHING | 대상 DB 건수 기준점 저장 → `GRANT INSERT` → 대상 앱 `/readyz`·`/api/info` 가 맞을 때까지 대기 → 접수 큐 `/target` → `/resume` → 대상 봇 배치 생성 (9) | **NEEDS_RECOVERY** |
+| VERIFYING | 대상에 `min_rows_after_switch`(100)건 신규 DB 행, 봇 생성 정지·pending/unknown 0·새 failed 0, 원본 앱 쓰기 여전히 차단, 건수 확인(대상 기준점 이후 건수 ≥ 원본, 기준점 이전 건수 같음) (10) | NEEDS_RECOVERY |
 | COMPLETED | 체크포인트에 승인 ID·마지막 요청·offset·검증 결과 보관 (11) | - |
 
-- `ABORTED`: 대상에 앱 쓰기를 열기 전 실패. `run --retry` 로 실패 단계부터 재개하거나 `abort` 로 원복(커넥터 삭제, 원본 `GRANT INSERT`, 워커 `/resume`; 워커 target 이 원본일 때만).
+- `ABORTED`: 대상에 앱 쓰기를 열기 전 실패. `run --retry` 로 실패 단계부터 재개하거나 `abort` 로 원복(커넥터 삭제, 원본 `GRANT INSERT`, 원본 접수 큐 재개; 봇 생성은 정지 유지).
 - `NEEDS_RECOVERY`: 대상에 앱 쓰기를 연 뒤 실패. 자동 원복하지 않는다. 사람이 authoritative DB 를 확정한 뒤 `run --force-retry`.
 - Kafka offset `H+1` 비교: Connect `/connectors/<sink>/offsets` 로 sink 소비 위치를 읽어 정체 여부와 값을 기록한다.
   데이터 토픽의 end offset 은 Connect REST 로 알 수 없어 **H 자체는 계산하지 않고** DB 커밋 결과(마지막 요청 ID 존재·전체 비교)로 판정한다.
   `/offsets` 미지원(Connect < 3.6)이면 체크포인트 `offset_note` 와 로그에 fallback 을 명시한다.
 - 종료 코드: 0 완료, 1 실패, 2 설정 오류, 3 승인 대기.
-- 접수 큐(durable-ingress) 자동 제어: 설정에 `ingress` 절이 있으면 위 표대로 큐를 워커와 같은 순서로 제어한다(`migration/ingress_client.py`).
-  PRECHECK 에서 큐 target 이 원본인지 확인하고, 실패하면 큐는 paused 로 남는다. `abort` 는 큐 target 이 원본일 때만 큐를 resume 한다.
-  대상 앱 확인(`app_checks`)은 쓰기 열기(GitOps writes_paused 해제)가 끝나기를 `stage_timeout_seconds` 까지 기다린다.
-  `ingress` 절이 없으면 예전처럼 큐를 건드리지 않는다(운영자가 port-forward 로 수동 제어).
-  **실제 클러스터에서는 아직 실행하지 않았다.** 로컬 Redis + durable-ingress + sample-app 통합 시험(가짜 워커·CDC·DB)만 통과했다.
+- 트래픽봇·접수 큐 제어는 필수다. 재시작한 큐는 paused이므로 재시도 때 현재 epoch로 재개한다.
+- 작업에 저장한 봇 run_id/ledger_id와 다르면 자동 제어하지 않는다. 옛 DB봇 작업은 새 러너로 이어 실행하지 않는다.
+- 실패 시 봇 생성을 정지한다. 정지 API까지 실패하면 `bot_stop_error`를 남기고 완료 처리하지 않는다.
+- 이 변경의 로컬 테스트와 운영 통합 시험은 별개다. 실제 DB 전환은 가연의 통합 시험이 필요하다.
 
 ### verify — B/T/S 비교
 
 ```
-python -m migration.verify --config config.yaml --state-dir /var/lib/worker --mode pre  --report reports/pre.json
-python -m migration.verify --config config.yaml --state-dir /var/lib/worker --mode post --report reports/final.json
+# 기준점 이전(스냅샷) 집합: 서버측 버킷 digest 비교. 행을 전송하지 않고, 다른 버킷만 행을 읽어 ID 를 보고한다
+python -m migration.verify --config config.yaml --state-dir /var/lib/worker --mode pre  --upto  <기준점 ISO> --method digest --report reports/snapshot.json
+# 기준점 이후(delta) 집합: 행 단위 비교. 전환 구간의 판정은 전부 이 범위만 본다
+python -m migration.verify --config config.yaml --state-dir /var/lib/worker --mode pre  --since <기준점 ISO> --report reports/pre.json
+python -m migration.verify --config config.yaml --state-dir /var/lib/worker --mode post --since <기준점 ISO> --report reports/final.json
+# 범위를 주지 않으면 전체 행 비교(느림). 기준점은 cutover 체크포인트 `watermark` 에 있다
 ```
 
-원본 B, 대상 T 의 **전체 행**을 `migration_verify` 로 읽어 request_id 집합과 모든 필드(timestamptz 는 UTC 로 정규화)를 비교하고,
-SQLite 요청 기록의 committed 집합 S 와 대조한다. `B-T`, `T-B`, 필드 불일치, `S-T` 각 건수와 샘플 ID(최대 20)를 JSON 으로 남기며 모두 0 일 때만 종료 코드 0.
-`--mode post` 에서는 대상에서 커밋 확인된 요청(S 중 target=aws)만 `T-B` 에서 제외한다. 건수·checksum 만으로 통과시키지 않는다.
+원본 B, 대상 T 의 범위 안 행을 `migration_verify` 로 읽어 request_id 집합과 모든 필드(timestamptz 는 UTC 로 정규화)를 비교하고,
+SQLite 요청 기록의 committed 집합 S(같은 created_at 범위)와 대조한다. `B-T`, `T-B`, 필드 불일치, `S-T` 각 건수와 샘플 ID(최대 20)를 JSON 으로 남기며 모두 0 일 때만 종료 코드 0.
+`--mode post` 에서는 대상에서 커밋 확인된 요청(S 중 target=aws)만 `T-B` 에서 제외한다. 건수·lag 만으로 통과시키지 않는다.
+
+**기준점과 범위.** cutover 는 COPYING 시작 때 원본 `max(created_at)` 을 기준점으로 저장한다. 행이 INSERT 전용·불변(request_id·payload·created_at 고정, UPDATE/DELETE 없음)이라는 전제에서
+기준점 이전 집합은 CATCHING_UP 에서 한 번 확정하면 다시 읽지 않고, 전환 구간(DRAINING~VERIFYING)은 행을 읽지 않고 기준점 이후·이전 건수만 양쪽에서 센다(체크포인트 `counts_pre_stop`·`counts_post_stop`·`counts_pre_grant`·`counts_final`).
+그래서 전환 구간의 DB 작업은 인덱스 범위 count 네 쌍뿐이다. 행 단위 비교가 필요하면 전환이 끝난 뒤 `python -m migration.verify --mode post --since <watermark>` 를 따로 돌린다.
+`--method digest` 는 양쪽 서버에서 request_id 앞 두 자리로 256 버킷을 나눠, 행마다 모든 필드의 md5(32자)를 만들고 그 지문들을 request_id 순으로 이어 붙인 md5 를 버킷 digest 로 낸다(서버가 집계 중 드는 것은 행 수 × 32바이트, 행 원문은 전송도 적재도 안 함. 정렬은 uuid 바이트 순, created_at 은 UTC 마이크로초 문자열).
+digest 가 다른 버킷만 행을 읽어 B−T, 필드 불일치 ID 를 남긴다. S−T 는 ledger 를 request_id 순 5000건 페이지로 흘려 보내며 대상에 `= ANY(uuid[])` 로 물어 빠진 ID 만 남기므로 S 집합 전체를 메모리에 올리지 않는다. post 모드에서는 대상에 새 행이 있어 digest 를 쓰지 않는다.
+`sql/001_demo.sql` 의 `migration_demo_created_at_idx` 인덱스가 범위 조회를 받친다. 기존 DB 는 `init_db` 를 다시 실행해(재실행 안전) 인덱스를 만든다.
 
 ## 실행 절차 (온프렘 → AWS)
 
@@ -257,8 +271,7 @@ SQLite 요청 기록의 committed 집합 S 와 대조한다. `B-T`, `T-B`, 필�
 python -m migration.init_db --target onprem
 python -m migration.init_db --target aws
 python -m migration.seed --target onprem --state-dir /var/lib/worker
-# 2) 워커 시작 (k3s Deployment, 상태 디렉터리는 PVC)
-python -m migration.loadgen --target onprem --rate 1
+# 2) 정지된 traffic-bot 및 durable-ingress 배포, bot/ingress 제어 Secret 준비
 # 3~4) 복사·지속 복제, 5~8) 쓰기 차단·최종 반영·CDC 종료, 9~10) 전환·재개 — 전부 cutover 가 수행
 python -m migration.cutover run                   # READY 까지 진행 후 멈춤
 python -m migration.cutover run --approve <ID>    # FENCING 부터 COMPLETED 까지
@@ -306,7 +319,7 @@ ENTRYPOINT `["python", "-m"]`, 기본 CMD `["migration"]`, 사용자 `migration`
 ## 귀환(AWS→온프렘) 대비 보강 (2026-11-04)
 
 - `targets.<name>.kind: rds | self_managed` — `init_db` 가 REPLICATION 부여 방식을 고를 때 쓴다. 없으면 종전처럼 `job.source` 가 아닌 쪽을 RDS 로 추정한다. 귀환처럼 AWS 가 source 면 반드시 `kind: rds` 를 적는다.
-- cutover PRECHECK 가 워커 `/status.known_targets` 로 **원본·대상 target 이 워커 설정에 있는지** 확인한다. 없으면 SWITCHING(자동 원복 없음)에서 `/target` 이 실패해 NEEDS_RECOVERY 가 되므로 미리 막는다. 워커 ConfigMap(gitops `apps/db-insert-worker`)에 귀환 대상 `onprem_return` 이 들어 있어야 한다.
+- cutover PRECHECK는 봇 원장 ID·제어 API·접수 URL과 양쪽 앱 readiness 매핑을 확인한다.
 - COMPLETED 직전에 원본의 비활성 slot 과 publication 을 지운다(`cutover.drop_source_slot_on_complete`, 기본 true). 지우지 않으면 공용 Postgres 에 WAL 이 계속 쌓인다. 실패해도 전환 결과는 바꾸지 않고 경고만 남기니 그때는 `python -m migration.cdc drop-slot` 을 수동 실행한다.
 - 앱 세션 종료(`FENCING`)는 `datname = current_database()` 로 한정한다. 귀환 대상 `migration_demo_return` 이 정방향 원본과 같은 인스턴스에 있어도 서로의 세션을 끊지 않는다.
 

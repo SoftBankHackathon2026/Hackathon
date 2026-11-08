@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS public.migration_demo (
     created_at timestamptz NOT NULL
 );
 
+-- 기준점(created_at) 범위 조회용. 전환 도구가 기준점 이후 행만 세고 비교하므로 전체 스캔을 피한다. 재실행 안전.
+CREATE INDEX IF NOT EXISTS migration_demo_created_at_idx ON public.migration_demo (created_at, request_no);
+
 -- 2. 역할 4개. 비밀번호는 여기서 설정하지 않는다 (NOLOGIN 상태로 만든 뒤 init_db.py가 LOGIN + PASSWORD 설정).
 DO $$
 BEGIN

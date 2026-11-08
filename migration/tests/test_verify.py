@@ -71,3 +71,68 @@ def test_post_mode_tolerates_other_writers_but_pre_mode_does_not():
     assert post.passed and post.counts["T_minus_B"] == 0
     assert post.other_writer_in_target == ["app1"] and post.allowed_extra_in_target == ["w1"]
     assert post.as_report()["other_writer_in_target_count"] == 1
+
+
+# ---- 기준점(watermark) 범위·digest 방식 ------------------------------------------
+
+
+def test_parse_and_format_ts_round_trip():
+    from migration.verify import format_ts, parse_ts
+    assert parse_ts(None) is None and format_ts(None) is None
+    ts = parse_ts("2026-11-08T00:00:00+09:00")
+    assert format_ts(ts) == "2026-11-07T15:00:00.000000+00:00"
+    assert parse_ts(datetime(2026, 1, 1)) == datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def test_compare_digests_reports_only_different_buckets():
+    from migration.verify import compare_digests
+    src = {"0a": (10, "h1"), "0b": (5, "h2"), "0c": (1, "h3")}
+    tgt = {"0a": (10, "h1"), "0b": (5, "xx"), "0d": (1, "h4")}
+    assert compare_digests(src, tgt) == ["0b", "0c", "0d"]
+    assert compare_digests(src, dict(src)) == []
+
+
+def test_scope_clause_builds_half_open_range():
+    from migration import db as dbmod
+    from psycopg import sql
+    since, upto = datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc)
+    assert dbmod.scope_clause(None, None) == (sql.SQL(""), ())
+    where, params = dbmod.scope_clause(since, None)
+    assert params == (since,) and "created_at > %s" in where.as_string(None)
+    where, params = dbmod.scope_clause(since, upto)
+    assert params == (since, upto) and "created_at <= %s" in where.as_string(None)
+
+
+def test_committed_ids_in_scope_filters_by_created_at(tmp_path):
+    from migration.state import RequestRecord, RequestStore
+    store = RequestStore(tmp_path)
+    try:
+        for n, created in enumerate(("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:01.500000+00:00",
+                                     "2026-01-01T00:00:02+00:00")):
+            rec = RequestRecord(request_id=f"id{n}", run_id="r", phase="p", request_no=n, payload="x", created_at=created)
+            store.record_pending(rec)
+            store.mark_committed(rec.request_id, "onprem" if n < 2 else "aws", 1)
+        wm = datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc)
+        assert store.committed_ids_in_scope() == {"id0", "id1", "id2"}
+        assert store.committed_ids_in_scope(since=wm) == {"id1", "id2"}          # 기준점 이후만
+        assert store.committed_ids_in_scope(upto=wm) == {"id0"}                   # 기준점까지(포함)
+        assert store.committed_ids_in_scope("aws", since=wm) == {"id2"}
+        # 페이지 단위 스트리밍: batch=1 이면 세 페이지, 범위 밖 행만 있는 페이지는 건너뛴다. 전체를 모으지 않는다
+        assert list(store.iter_committed_ids_in_scope(batch=1)) == [["id0"], ["id1"], ["id2"]]
+        assert list(store.iter_committed_ids_in_scope(since=wm, batch=1)) == [["id1"], ["id2"]]
+        assert list(store.iter_committed_ids_in_scope(upto=wm, batch=2)) == [["id0"]]
+    finally:
+        store.close()
+
+
+def test_digest_mode_rejects_post(tmp_path, monkeypatch):
+    """post 모드에서는 대상에 새 행이 있어 digest 가 어긋나므로 설정 오류로 막는다."""
+    import pytest
+    from migration.config import ConfigError, parse_config
+    from migration.verify import run
+    from tests.conftest import RAW_CONFIG
+    config = parse_config(RAW_CONFIG)
+    with pytest.raises(ConfigError):
+        run(config, source="onprem", target="aws", state_dir=None, mode="post", report_path=None, method="digest")
+    with pytest.raises(ConfigError):
+        run(config, source="onprem", target="aws", state_dir=None, mode="pre", report_path=None, method="bogus")
