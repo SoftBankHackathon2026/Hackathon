@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart stuck port-forwards for the remote AI agent
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oneport-forward-check
