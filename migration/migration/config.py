@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -146,14 +148,57 @@ class WorkerConfig:
 
 
 @dataclass(frozen=True)
+class BotConfig:
+    """HTTP 요청 생성기. DB 대상 변경은 ingress 가 담당한다."""
+
+    control_url: str = ""
+    token_env: str = "BOT_CONTROL_TOKEN"
+    request_endpoint: str = ""
+    timeout_seconds: float = 15.0
+
+    def __post_init__(self) -> None:
+        from urllib.parse import urlsplit
+        import math
+        for name in ("control_url", "request_endpoint"):
+            value = getattr(self, name)
+            if not value:
+                continue
+            url = urlsplit(value)
+            if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.query or url.fragment:
+                raise ConfigError(f"bot.{name}: 인증정보·쿼리 없는 HTTP(S) URL 필요")
+        if not self.token_env or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ConfigError("bot: token_env 와 양수 timeout_seconds 필요")
+
+
+# 시연 데이터 예산은 고정이다. 옵션이 아니다: seed 800 + 복제 중 봇 요청 100 + 전환 후 봇 요청 100 = 1000.
+# 끝나면 원본 900건·대상 1000건이어야 성공이다. 다른 건수는 설정 단계에서 거절한다.
+SEED_ROWS = 800
+LIVE_ROWS = 100
+POST_SWITCH_ROWS = 100
+TOTAL_ROWS = SEED_ROWS + LIVE_ROWS + POST_SWITCH_ROWS
+
+
+@dataclass(frozen=True)
 class CutoverConfig:
     state_dir: str = "/var/lib/worker"
     drop_source_slot_on_complete: bool = True   # COMPLETED 직전에 원본 slot·publication 제거 (WAL 축적 방지)
-    min_live_rows_after_snapshot: int = 100
-    min_rows_after_switch: int = 100
+    min_live_rows_after_snapshot: int = LIVE_ROWS   # 고정값. 다른 값은 ConfigError
+    min_rows_after_switch: int = POST_SWITCH_ROWS   # 고정값. 다른 값은 ConfigError
     offset_stable_seconds: float = 10.0
     poll_interval_seconds: float = 5.0
     stage_timeout_seconds: float = 1800.0
+    # 기준점(COPYING 시작 때 원본 max(created_at)) 이전 집합을 CATCHING_UP 에서 한 번 어떻게 확정할지.
+    # digest: 서버측 버킷 해시(행 전송 없음), rows: 행 전체 읽기. 전환 구간(DRAINING 이후)은 행을 읽지 않고 건수만 센다.
+    snapshot_compare: str = "digest"
+
+    def __post_init__(self) -> None:
+        if (type(self.min_live_rows_after_snapshot) is not int or self.min_live_rows_after_snapshot != LIVE_ROWS
+                or type(self.min_rows_after_switch) is not int or self.min_rows_after_switch != POST_SWITCH_ROWS):
+            raise ConfigError(f"cutover 는 항상 {TOTAL_ROWS}건 예산(seed {SEED_ROWS} + 복제 중 {LIVE_ROWS} + 전환 후 "
+                              f"{POST_SWITCH_ROWS})만 허용한다: min_live_rows_after_snapshot={LIVE_ROWS}, "
+                              f"min_rows_after_switch={POST_SWITCH_ROWS} 이어야 한다")
+        if self.snapshot_compare not in ("digest", "rows"):
+            raise ConfigError(f"cutover.snapshot_compare 는 digest|rows 중 하나다: {self.snapshot_compare}")
 
 
 @dataclass(frozen=True)
@@ -209,16 +254,55 @@ class TrafficConfig:
 
 
 @dataclass(frozen=True)
+class FullMigrationConfig:
+    """Move the receipt ledger/queue and public application, not only the DB."""
+
+    destination_control_url: str = ""
+    destination_token_env: str = ""
+    destination_target: str = ""
+    destination_app_version: str = ""
+    forward_target: str = ""
+    destination_receipt_url: str = ""
+    destination_api_token_env: str = ""
+    timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        for name in ("destination_control_url", "destination_receipt_url"):
+            value = getattr(self, name)
+            try:
+                url = urlsplit(value)
+                port = url.port
+            except ValueError:
+                raise ConfigError(f"full_migration.{name}: invalid HTTPS URL") from None
+            if (url.scheme != "https" or not url.hostname or url.username or url.password
+                    or url.query or url.fragment or (port is not None and port < 1)
+                    or (name != "destination_control_url" and url.path not in ("", "/"))):
+                raise ConfigError(f"full_migration.{name}: credential-free HTTPS URL required")
+        for name in ("destination_token_env", "destination_api_token_env"):
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*", getattr(self, name)):
+                raise ConfigError(f"full_migration.{name}: secret environment reference required")
+        if not re.fullmatch(r"[a-zA-Z0-9._-]{1,100}", self.destination_app_version):
+            raise ConfigError("full_migration.destination_app_version: pinned application version required")
+        for name in ("destination_target", "forward_target"):
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", getattr(self, name)):
+                raise ConfigError(f"full_migration.{name}: target name required")
+        if not math.isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 300:
+            raise ConfigError("full_migration.timeout_seconds: expected 0 < timeout <= 300")
+
+
+@dataclass(frozen=True)
 class Config:
     """설정 파일 전체."""
 
     targets: Mapping[str, TargetConfig]
     job: JobConfig = field(default_factory=JobConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
-    worker: WorkerConfig = field(default_factory=WorkerConfig)
+    worker: WorkerConfig = field(default_factory=WorkerConfig)  # standalone legacy CLI only
+    bot: BotConfig = field(default_factory=BotConfig)
     cutover: CutoverConfig = field(default_factory=CutoverConfig)
     ingress: IngressConfig = field(default_factory=IngressConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
+    full_migration: FullMigrationConfig | None = None
 
     def target(self, name: str) -> TargetConfig:
         try:
@@ -314,6 +398,10 @@ def _dataclass_from(cls: type, raw: Mapping[str, Any] | None, section: str) -> A
         ftype = allowed[key].type
         if ftype in ("bool", bool):
             kwargs[key] = _as_bool(value, f"{section}.{key}")
+        elif ftype in ("int | None", int | None):
+            if value is not None and type(value) is not int:
+                raise ConfigError(f"{section}.{key}: 정수 또는 null 이어야 한다")
+            kwargs[key] = value
         elif ftype in ("int", int):
             kwargs[key] = _as_int(value, f"{section}.{key}")
         elif ftype in ("float", float):
@@ -402,15 +490,32 @@ def parse_config(raw: Mapping[str, Any]) -> Config:
         raise ConfigError(f"job.source/target 은 targets 에 있어야 한다: {job.source}, {job.target}")
     if job.source == job.target:
         raise ConfigError("job.source 와 job.target 이 같다")
-    return Config(
+    config = Config(
         targets=targets,
         job=job,
         kafka=_dataclass_from(KafkaConfig, raw.get("kafka"), "kafka"),
         worker=_dataclass_from(WorkerConfig, raw.get("worker"), "worker"),
+        bot=_dataclass_from(BotConfig, raw.get("bot"), "bot"),
         cutover=_dataclass_from(CutoverConfig, raw.get("cutover"), "cutover"),
         ingress=_parse_ingress(raw.get("ingress"), targets),
         traffic=_parse_traffic(raw.get("traffic"), targets),
+        full_migration=(_dataclass_from(FullMigrationConfig, raw["full_migration"], "full_migration")
+                        if "full_migration" in raw else None),
     )
+    if config.full_migration is not None:
+        if config.traffic.enabled:
+            raise ConfigError("full_migration moves components first; traffic/DNS cutover is a separate operation")
+        if not config.ingress.enabled or not config.ingress.token_env:
+            raise ConfigError("full_migration requires authenticated source ingress control")
+        if config.ingress.ingress_target(job.target) != config.full_migration.destination_target:
+            raise ConfigError("full_migration destination_target must match ingress target app")
+        check = config.ingress.app_checks.get(job.target)
+        if not check or not check.environment or check.database != config.target(job.target).dbname:
+            raise ConfigError("full_migration requires target app environment/database identity")
+        url = urlsplit(check.url)
+        if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+            raise ConfigError("full_migration target app requires a credential-free HTTPS endpoint")
+    return config
 
 
 def load_config(path: str | Path) -> Config:

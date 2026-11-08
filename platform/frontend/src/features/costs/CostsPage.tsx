@@ -178,63 +178,70 @@ function MovesWidget({
           변화가 계산돼요.
         </p>
       ) : (
-        <table className="pk-table w-table">
-          <thead>
-            <tr>
-              <th>원본 → 대상</th>
-              <th className="num">지금 월 비용</th>
-              <th className="num">이전 후 월 비용</th>
-              <th className="num">월 변화</th>
-              <th className="num">일회성 비용</th>
-              <th>대상 클러스터</th>
-            </tr>
-          </thead>
-          <tbody>
-            {overview.migrations.map((m) => {
-              const { total } = compareRows(m, estimateOf(overview));
-              const pct = percent(m.monthly_change, total.now);
-              return (
-                <tr
-                  key={m.job_id}
-                  className="clickable"
-                  tabIndex={0}
-                  onClick={() => onMigration(m.job_id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") onMigration(m.job_id);
-                  }}
-                >
-                  <td>
-                    <span className="cost-route">
-                      <ProviderLogo provider={env(m.source_env)?.provider} />
-                      {shortName(env(m.source_env)?.name ?? m.source_env)}
-                      <span className="cost-route-arrow" aria-hidden="true">
-                        →
-                      </span>
-                      <ProviderLogo provider={env(m.target_env)?.provider} />
-                      {shortName(env(m.target_env)?.name ?? m.target_env)}
-                    </span>
-                  </td>
-                  <td className="num">{usd(total.now)}</td>
-                  <td className="num strong">{usd(total.after)}</td>
-                  <td
-                    className={`num cost-delta ${deltaClass(m.monthly_change)}`}
+        <div
+          className="table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label="이전 비용 요약"
+        >
+          <table className="pk-table w-table">
+            <thead>
+              <tr>
+                <th>원본 → 대상</th>
+                <th className="num">지금 월 비용</th>
+                <th className="num">이전 후 월 비용</th>
+                <th className="num">월 변화</th>
+                <th className="num">일회성 비용</th>
+                <th>대상 클러스터</th>
+              </tr>
+            </thead>
+            <tbody>
+              {overview.migrations.map((m) => {
+                const { total } = compareRows(m, estimateOf(overview));
+                const pct = percent(m.monthly_change, total.now);
+                return (
+                  <tr
+                    key={m.job_id}
+                    className="clickable"
+                    tabIndex={0}
+                    onClick={() => onMigration(m.job_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onMigration(m.job_id);
+                    }}
                   >
-                    {m.monthly_change === null
-                      ? "계산 불가"
-                      : signedUsd(m.monthly_change)}
-                    {pct !== null && m.monthly_change !== 0 && (
-                      <span className="sub"> ({pct}%)</span>
-                    )}
-                  </td>
-                  <td className="num">{usd(m.one_time?.monthly ?? null)}</td>
-                  <td>
-                    <CapacityLabel migration={m} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td>
+                      <span className="cost-route">
+                        <ProviderLogo provider={env(m.source_env)?.provider} />
+                        {shortName(env(m.source_env)?.name ?? m.source_env)}
+                        <span className="cost-route-arrow" aria-hidden="true">
+                          →
+                        </span>
+                        <ProviderLogo provider={env(m.target_env)?.provider} />
+                        {shortName(env(m.target_env)?.name ?? m.target_env)}
+                      </span>
+                    </td>
+                    <td className="num">{usd(total.now)}</td>
+                    <td className="num strong">{usd(total.after)}</td>
+                    <td
+                      className={`num cost-delta ${deltaClass(m.monthly_change)}`}
+                    >
+                      {m.monthly_change === null
+                        ? "계산 불가"
+                        : signedUsd(m.monthly_change)}
+                      {pct !== null && m.monthly_change !== 0 && (
+                        <span className="sub"> ({pct}%)</span>
+                      )}
+                    </td>
+                    <td className="num">{usd(m.one_time?.monthly ?? null)}</td>
+                    <td>
+                      <CapacityLabel migration={m} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </Widget>
   );
@@ -395,60 +402,67 @@ function CompareTable({
   const { rows, total } = compareRows(migration, estimateOf(overview));
   const pct = percent(total.change, total.now);
   return (
-    <table className="pk-table compare-table">
-      <thead>
-        <tr>
-          <th>환경</th>
-          <th className="num">지금 월 비용</th>
-          <th className="num">변화</th>
-          <th className="num">이전 후 월 비용</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => {
-          const env = overview.environments.find((e) => e.env_id === r.env);
-          const estimated = env ? mainBreakdown(env).estimated : false;
-          return (
-            <tr key={r.role}>
-              <td>
-                <span className="cost-env-cell">
-                  <ProviderLogo provider={env?.provider} />
-                  <span className="rule-text">
-                    <span className="rule-title">{env?.name ?? r.env}</span>
-                    <span className="rule-sub">
-                      {r.role}
-                      {estimated ? ", AWS 가격으로 환산" : ""}
+    <div
+      className="table-wrap"
+      tabIndex={0}
+      role="region"
+      aria-label="이전 전후 비용"
+    >
+      <table className="pk-table compare-table">
+        <thead>
+          <tr>
+            <th>환경</th>
+            <th className="num">지금 월 비용</th>
+            <th className="num">변화</th>
+            <th className="num">이전 후 월 비용</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const env = overview.environments.find((e) => e.env_id === r.env);
+            const estimated = env ? mainBreakdown(env).estimated : false;
+            return (
+              <tr key={r.role}>
+                <td>
+                  <span className="cost-env-cell">
+                    <ProviderLogo provider={env?.provider} />
+                    <span className="rule-text">
+                      <span className="rule-title">{env?.name ?? r.env}</span>
+                      <span className="rule-sub">
+                        {r.role}
+                        {estimated ? ", AWS 가격으로 환산" : ""}
+                      </span>
                     </span>
                   </span>
-                </span>
-              </td>
-              <td className="num">{usd(r.now)}</td>
-              <td className={`num cost-delta ${deltaClass(r.change)}`}>
-                {r.change === null
-                  ? "-"
-                  : r.change === 0
-                    ? "변화 없음"
-                    : signedUsd(r.change)}
-              </td>
-              <td className="num strong">{usd(r.after)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>합계</td>
-          <td className="num">{usd(total.now)}</td>
-          <td className={`num cost-delta ${deltaClass(total.change)}`}>
-            {total.change === null ? "계산 불가" : signedUsd(total.change)}
-            {pct !== null && total.change !== 0 && (
-              <span className="sub"> ({pct}%)</span>
-            )}
-          </td>
-          <td className="num">{usd(total.after)}</td>
-        </tr>
-      </tfoot>
-    </table>
+                </td>
+                <td className="num">{usd(r.now)}</td>
+                <td className={`num cost-delta ${deltaClass(r.change)}`}>
+                  {r.change === null
+                    ? "-"
+                    : r.change === 0
+                      ? "변화 없음"
+                      : signedUsd(r.change)}
+                </td>
+                <td className="num strong">{usd(r.after)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>합계</td>
+            <td className="num">{usd(total.now)}</td>
+            <td className={`num cost-delta ${deltaClass(total.change)}`}>
+              {total.change === null ? "계산 불가" : signedUsd(total.change)}
+              {pct !== null && total.change !== 0 && (
+                <span className="sub"> ({pct}%)</span>
+              )}
+            </td>
+            <td className="num">{usd(total.after)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }
 

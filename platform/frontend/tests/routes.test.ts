@@ -134,3 +134,15 @@ test("replaceHash notifies route listeners without a hashchange", () => {
     globalThis.window = saved;
   }
 });
+
+test("prepare keeps task registration, new connections, and saved request links separate", () => {
+  assert.deepEqual(readRoute("#prepare"), { view: "prepare" });
+  assert.deepEqual(readRoute("#prepare/new"), {
+    view: "prepare",
+    newConnection: true,
+  });
+  assert.deepEqual(readRoute("#prepare/abc"), {
+    view: "prepare",
+    requestId: "abc",
+  });
+});

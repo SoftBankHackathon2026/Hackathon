@@ -58,7 +58,7 @@ sudo -u oneport-agent /opt/oneport-agent/venv/bin/python -m agent --config /etc/
 
 ## 한계
 
-- 포트 포워드가 끊기면 systemd 가 5초 뒤 다시 잇는다. 그동안의 판정은 `ERROR`/hold 로 끝나고 다음 주기에 다시 한다.
+- 포트 포워드 프로세스가 죽으면 systemd 가 5초 뒤 다시 잇는다. 프로세스는 살아 있는데 연결만 멈춘 경우(새 연결마다 `Timeout`)는 `oneport-forward-check.timer` 가 30초마다 로컬 포트에 말을 걸어 보고, 두 번 연속 답이 없으면 그 forward 만 재시작한다(`journalctl -u oneport-forward-check`).
 - 이 호스트가 클러스터에 하는 일은 ServiceAccount `ai-agent` 권한(Rollout 재시작, 파드 조회·포트 포워드) 안이다. OpenBao 쓰기는 에이전트 토큰 정책(한 경로)으로 막는다.
 
 ## 시연 (이전 전 설정이 남은 상황)
@@ -100,12 +100,14 @@ AI 에게 묻기 전에 지금 설정으로 DB 에 붙어 보고(진단), 실패
 호스트는 밖에서 들어오는 연결을 받지 않으므로 모두 에이전트가 먼저 부른다.
 
 - 상태: `POST /api/v1/ingest/agent/heartbeat`. 현재 설정(`config`)도 함께 보낸다. Slack 연결 방식(webhook/bot/none), 스레드, 고칠 수 있는 키와 계획값, 샌드박스 이미지·모델이 들어가고 토큰·webhook 주소 같은 비밀은 넣지 않는다.
-- 실행 기록: 바뀐 실행만 `PUT /api/v1/ingest/agent/runs/<run_id>`
+- 실행 기록: 바뀐 실행만 `PUT /api/v1/ingest/agent/runs/<run_id>`. 플랫폼 화면에서 지운 기록은 숨김으로 남겨서, 에이전트가 다시 시작하며 같은 `run_id` 를 또 보내도 목록에 돌아오지 않고 그 실행의 승인 결정도 내려주지 않는다.
 - 승인·거절: `GET /api/v1/ingest/agent/approvals` 로 가져와 처리하고 `POST .../approvals/<id>/ack` 로 결과를 알린다. 승인자는 실행 기록에 남는다.
 - 명령: `GET /api/v1/ingest/agent/commands` 로 가져와 처리하고 `POST .../commands/<id>/ack` 에 결과 문장을 남긴다. 기다리는 동안 10초마다 확인한다.
   - `settings`: `auto_apply`(bool), `interval_seconds`(30~3600), `slack_enabled`(bool), `slack_thread_ts`(빈 값 또는 `1700000000.000100` 꼴)만 바꿀 수 있다. 다른 키나 범위 밖 값은 거절한다. 바꾼 값은 `state_dir/settings.json` 에 남아 재시작해도 유지된다(`agent.yaml` 보다 우선).
   - `rerun`: 남은 대기 시간을 건너뛰고 바로 다시 판정한다.
 - Slack 승인 대기 메시지에 플랫폼 링크가 붙는다.
-- `APP-01-UNVERIFIED` 보류(스모크 일시 실패)는 같은 내용이 3번 연속일 때만 Slack 으로 알린다.
+- `slack.buttons: true` 면 승인 대기 메시지에 승인, 거절, 플랫폼에서 보기 버튼이 붙는다. 버튼은 플랫폼 `/api/v1/slack/interactions` 가 받아 화면 승인과 같은 대기열에 넣는다. 플랫폼에 Slack 서명 비밀을 넣기 전에는 켜지 않는다(`platform/deploy/ec2/README.md`).
+- 같은 사유로 연달아 사람에게 넘기면 실행 기록을 새로 만들지 않고 첫 실행에 횟수를 더한다(`REPEATED` 는 플랫폼에 보내지 않음). 다른 결과가 나오면 첫 실행을 닫고 "다시 정상이에요. 같은 사유로 n번 넘겼고 약 m분 이어졌어요." 를 남긴다. 알림을 보냈던 건이면 같은 Slack 스레드에 🟢 *다시 정상* 을 보낸다.
+- `APP-01-UNVERIFIED` 보류(스모크 일시 실패)는 같은 사유가 3번 이어질 때만 Slack 으로 알린다.
 
 플랫폼에 닿지 않아도 판정·수정은 그대로 하고 로그만 남긴다.

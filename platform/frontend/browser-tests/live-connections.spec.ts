@@ -1,26 +1,35 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import type { ConnectionSnapshot } from "../src/features/prepare/connectionTypes";
 import { appWorkloads } from "../tests/fixtures/appWorkloads";
 
 // Mocked API contract regression: route.fulfill supplies API responses and the
 // clipboard is replaced with a test double. This is not evidence of a real
 // backend, terminal, WireGuard tunnel, or Kubernetes end-to-end connection.
-test("mocked API contract copies a command, confirms, collects, registers and restores", async ({
-  page,
-}) => {
-  test.setTimeout(45000);
+for (const provider of ["kubernetes", "aws"] as const) {
+  test(`mocked ${provider} contract copies a command, confirms, collects, registers and restores`, ({
+    page,
+  }) => exerciseConnection(page, provider));
+}
+
+async function exerciseConnection(page: Page, provider: "kubernetes" | "aws") {
+  test.setTimeout(60000);
+  const cloud = provider === "aws";
   const id = "a".repeat(22);
+  const oldId = "b".repeat(22);
   const source = {
     id: "cluster-one",
-    kind: "kubernetes" as const,
+    kind: provider,
     name: "시험 클러스터",
     identity: "cluster-uid-one",
-    region: "",
+    region: cloud ? "ap-northeast-2" : "",
     context: "test-context",
   };
   let state: ConnectionSnapshot | undefined;
   let collectionReadyAt = 0;
+  let retries = 0;
   const mutations: { action: string; body: any }[] = [];
+  let jobRequests = 0;
+  let showRegisteredEnvironment = false;
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -75,16 +84,51 @@ test("mocked API contract copies a command, confirms, collects, registers and re
       json: {
         source: "live",
         generated_at: new Date().toISOString(),
-        environments: [],
+        environments: [
+          {
+            id: "destination",
+            name: "시험 도착 후보",
+            provider: "gcp",
+            apps: [],
+            data_services: [],
+            components: [],
+            issues: [],
+          },
+          ...(showRegisteredEnvironment
+            ? [
+                {
+                  id: `connected-${id}`,
+                  name: source.name,
+                  provider: cloud ? "aws" : "onprem",
+                  kind: cloud ? "eks" : "kubernetes",
+                  registered: true,
+                  project: "시험 프로젝트",
+                  apps: [],
+                  data_services: [],
+                  components: [],
+                  issues: [],
+                },
+              ]
+            : []),
+        ],
         migrations: [],
       },
     }),
   );
+  await page.route("**/api/v1/migrations", (route) => {
+    jobRequests++;
+    return route.fulfill({
+      status: 201,
+      json: { job_id: "test-job", label: "Test" },
+    });
+  });
   await page.route("**/api/v1/connections**", async (route) => {
     const request = route.request(),
       path = new URL(request.url()).pathname;
     if (path.endsWith("capabilities"))
-      return route.fulfill({ json: { available: true } });
+      return route.fulfill({
+        json: { available: true, providers: ["kubernetes", "aws"] },
+      });
     if (request.method() === "GET") {
       if (state?.collectionPending && Date.now() >= collectionReadyAt) {
         state = {
@@ -99,7 +143,23 @@ test("mocked API contract copies a command, confirms, collects, registers and re
       }
       return route.fulfill({
         json: state
-          ? [{ ...state, serverNow: Date.now(), observedAt: Date.now() }]
+          ? [
+              { ...state, serverNow: Date.now(), observedAt: Date.now() },
+              ...(state.device === "PENDING_APPROVAL"
+                ? [
+                    {
+                      ...state,
+                      id: oldId,
+                      device: "APPROVED",
+                      tunnel: "READY",
+                      candidate: {
+                        ...state.candidate,
+                        hostname: "이전 단말",
+                      },
+                    },
+                  ]
+                : []),
+            ]
           : [],
       });
     }
@@ -112,6 +172,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
         revision: 1,
         organization: "test-team",
         target: null,
+        provider,
         serverNow: Date.now(),
         observedAt: Date.now(),
         registrationExpiresAt: Date.now() + 60_000,
@@ -149,6 +210,7 @@ test("mocked API contract copies a command, confirms, collects, registers and re
           hostname: "test",
           os: "Ubuntu",
           arch: "arm64",
+          supportsReplacement: true,
         },
       };
       return route.fulfill({ json: issued });
@@ -157,11 +219,21 @@ test("mocked API contract copies a command, confirms, collects, registers and re
       return route.fulfill({ status: 404, json: { detail: "missing" } });
     state.revision++;
     if (action === "approve") {
+      expect(body.replaceId).toBe(oldId);
       state.device = "APPROVED";
       state.tunnel = "READY";
       state.epoch = 1;
       state.tunnelChecks = 4;
       state.discovered = [source];
+      if (cloud) {
+        state.discoveryComplete = true;
+        state.discoveryWarnings = [
+          { code: "PERMISSION_DENIED", scope: "ap-northeast-1" },
+        ];
+      }
+    } else if (action === "rediscover") {
+      retries++;
+      state.discovered = retries === 1 ? [] : [source];
     } else if (action === "collect") {
       state.collectionPending = true;
       collectionReadyAt = Date.now() + 2000;
@@ -174,6 +246,19 @@ test("mocked API contract copies a command, confirms, collects, registers and re
     return route.fulfill({ json: state });
   });
   await page.goto("/#prepare");
+  await expect(
+    page.getByRole("heading", { name: "마이그레이션 작업 등록" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "작업 등록 단계" })
+      .locator("[aria-current]"),
+  ).toContainText("출발·도착 환경 선택");
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
+  if (cloud)
+    await page.getByRole("radio", { name: "AWS", exact: true }).check();
   await page
     .getByLabel("이 환경에 접근할 수 있는 지원 단말을 준비했어요.")
     .check();
@@ -195,8 +280,30 @@ test("mocked API contract copies a command, confirms, collects, registers and re
     .getByLabel("제가 실행한 단말이며, 환경정보 수집을 승인해요.")
     .check();
   await page
-    .getByRole("button", { name: "단말 연결 승인", exact: true })
+    .getByRole("combobox", { name: "교체할 연결", exact: true })
+    .selectOption(oldId);
+  await expect(
+    page.getByText(/선택한 연결과 진행 중인 환경정보 수집이 종료/),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "기존 연결을 종료하고 교체", exact: true })
     .click();
+  if (cloud) {
+    await expect(page.getByRole("alert")).toContainText(
+      "클러스터를 조회할 권한이 없어요.",
+    );
+    await expect(
+      page.getByRole("radio", { name: /시험 클러스터/ }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "다시 확인" }).click();
+    await expect(page.getByText("선택할 수 있는 대상이 없어요.")).toBeVisible();
+    await page.getByRole("button", { name: "이 환경 건너뛰기" }).click();
+    await expect(
+      page.getByRole("heading", { name: "먼저 환경정보를 수집할게요" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /^환경 연결 요청 AWS / }).click();
+    await page.getByRole("button", { name: "다시 확인" }).click();
+  }
   await page.getByRole("radio", { name: /시험 클러스터/ }).check();
   await page.getByRole("button", { name: "선택한 환경정보 수집" }).click();
   await expect(
@@ -205,14 +312,23 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await expect(
     page.getByText("환경정보를 수집했어요.", { exact: true }),
   ).toHaveCount(0);
+  await expect(page.getByLabel("환경 역할", { exact: true })).toHaveCount(0);
   await page.getByLabel("프로젝트", { exact: true }).fill("시험 프로젝트");
   await page.getByRole("button", { name: "환경 등록", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "작업 등록으로 돌아가기", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "출발 환경" })
+    .selectOption("registered-environment");
+  const destination = page.getByRole("combobox", { name: "도착 환경" });
   await expect(
-    page.getByRole("button", { name: "다음: 앱 선택" }),
-  ).toBeEnabled();
+    destination.locator("option[value='registered-environment']"),
+  ).toHaveCount(0);
+  await destination.selectOption("destination");
   await page.getByRole("button", { name: "다음: 앱 선택" }).click();
   await expect(
     page.getByRole("heading", { name: "옮길 앱 고르기" }),
@@ -301,6 +417,71 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   await expect(search).toHaveValue("db-insert");
   await expect(migration).toHaveAttribute("aria-expanded", "true");
   await expect(tool).not.toBeChecked();
+  await tool.check();
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "새 환경 연결" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(
+    picker.getByText("선택한 앱 1개", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "이전: 환경 선택" }).click();
+  const departure = page.getByRole("combobox", { name: "출발 환경" });
+  await departure.selectOption("destination");
+  await expect(destination).toHaveValue("");
+  await destination.selectOption("registered-environment");
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
+  await expect(
+    page.getByText("이 출발 환경에서 확인한 앱이 없어요."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "다음: 작업 등록" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "이전: 환경 선택" }).click();
+  await departure.selectOption("registered-environment");
+  await destination.selectOption("destination");
+  await page.getByRole("button", { name: "다음: 앱 선택" }).click();
+  await expect(
+    picker.getByText("선택한 앱 0개", { exact: true }),
+  ).toBeVisible();
+  await picker.getByRole("button", { name: /^이전 도구 / }).click();
+  await tool.check();
+  await page.getByRole("button", { name: "다음: 작업 등록" }).click();
+  await expect(
+    page.getByRole("heading", { name: "작업 등록", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "작업 만들기 (앱 1개)" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "이전: 앱 선택" }).click();
+  await expect(
+    picker.getByText("선택한 앱 1개", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "다음: 작업 등록" }).click();
+  const created = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/v1/migrations",
+  );
+  await page
+    .getByRole("button", { name: "작업 만들기 (앱 1개)" })
+    .evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+    });
+  expect((await created).postDataJSON()).toEqual({
+    source_env: "registered-environment",
+    source_provider: cloud ? "aws" : "onprem",
+    target_env: "destination",
+    target_provider: "gcp",
+    apps: ["hackathon/Deployment/db-insert-worker"],
+  });
+  await expect(page).toHaveURL(/#migrations\/test-job$/);
+  expect(jobRequests).toBe(1);
+  await page.goto(`/#prepare/${id}`);
   expect(mutations.find((item) => item.action === "approve")?.body.code).toBe(
     "ABCD2345",
   );
@@ -311,14 +492,31 @@ test("mocked API contract copies a command, confirms, collects, registers and re
   expect(mutations.map((item) => item.action)).toEqual([
     "connections",
     "approve",
+    ...(cloud ? ["rediscover", "rediscover"] : []),
     "collect",
     "register",
   ]);
+  expect(
+    mutations.find((item) => item.action === "connections")?.body.provider,
+  ).toBe(cloud ? "aws" : undefined);
+  expect(
+    mutations.find((item) => item.action === "register")?.body.target,
+  ).not.toHaveProperty("role");
+  showRegisteredEnvironment = true;
   await page.goto("/#environments");
-  const records = page.getByRole("region", { name: "직접 등록한 환경" });
-  await expect(records.getByText("시험 프로젝트")).toBeVisible();
-  await expect(records.getByRole("link")).toHaveAttribute(
-    "href",
-    `#prepare/${id}`,
-  );
-});
+  await expect(
+    page.getByRole("button", { name: "아키텍처", exact: true }),
+  ).toBeVisible();
+  const filter = page
+    .getByRole("group", { name: "필터" })
+    .getByRole("combobox");
+  await filter.selectOption(`connected-${id}`);
+  await expect(
+    page
+      .getByRole("complementary", { name: "환경 요약" })
+      .getByRole("link", { name: "직접 등록, 시험 프로젝트" }),
+  ).toHaveAttribute("href", `#prepare/${id}`);
+  await expect(
+    page.getByRole("region", { name: "직접 등록한 환경" }),
+  ).toHaveCount(0);
+}

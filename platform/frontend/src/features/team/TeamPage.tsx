@@ -34,52 +34,59 @@ export function TeamPage({ account }: { account: Account }) {
         </p>
       )}
       <Section title="팀원" meta={data.members.length}>
-        <table className="pk-table">
-          <thead>
-            <tr>
-              <th>이메일</th>
-              <th>권한</th>
-              <th>할 수 있는 일</th>
-              <th>가입</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.members.map((m) => (
-              <tr key={m.email}>
-                <td>
-                  {m.email}
-                  {m.email === account.email && <em> (나)</em>}
-                </td>
-                <td>
-                  {owner ? (
-                    <select
-                      aria-label={`${m.email} 권한`}
-                      value={m.role}
-                      disabled={saving === m.email}
-                      onChange={(e) =>
-                        void change(m.email, e.target.value as Role)
-                      }
-                    >
-                      {(Object.keys(roleLabel) as Role[]).map((role) => (
-                        <option key={role} value={role}>
-                          {roleLabel[role]}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className={`role role-${m.role}`}>
-                      {roleLabel[m.role]}
-                    </span>
-                  )}
-                </td>
-                <td className="sub">{roleHelp[m.role]}</td>
-                <td className="sub">
-                  {new Date(m.created_at).toLocaleDateString("ko-KR")}
-                </td>
+        <div
+          className="table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label="팀원 목록"
+        >
+          <table className="pk-table">
+            <thead>
+              <tr>
+                <th>이메일</th>
+                <th>권한</th>
+                <th>할 수 있는 일</th>
+                <th>가입</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.members.map((m) => (
+                <tr key={m.email}>
+                  <td>
+                    {m.email}
+                    {m.email === account.email && <em> (나)</em>}
+                  </td>
+                  <td>
+                    {owner ? (
+                      <select
+                        aria-label={`${m.email} 권한`}
+                        value={m.role}
+                        disabled={saving === m.email}
+                        onChange={(e) =>
+                          void change(m.email, e.target.value as Role)
+                        }
+                      >
+                        {(Object.keys(roleLabel) as Role[]).map((role) => (
+                          <option key={role} value={role}>
+                            {roleLabel[role]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`role role-${m.role}`}>
+                        {roleLabel[m.role]}
+                      </span>
+                    )}
+                  </td>
+                  <td className="sub">{roleHelp[m.role]}</td>
+                  <td className="sub">
+                    {new Date(m.created_at).toLocaleDateString("ko-KR")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Section>
     </div>
   );

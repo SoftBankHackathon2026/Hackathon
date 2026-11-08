@@ -1,10 +1,10 @@
 export type Provider = "kubernetes" | "aws" | "gcp";
-export type CollectionContext = { organization: string };
+export type CollectionContext = { organization: string; provider?: Provider };
 export type ConnectionTarget = CollectionContext & {
   project: string;
   name: string;
   kind: Provider;
-  role: "source" | "target";
+  role?: "source" | "target"; // Legacy registration records only.
   region: string;
 };
 export type DiscoveredEnvironment = {
@@ -25,6 +25,7 @@ export type ConnectionSnapshot = {
   target: ConnectionTarget | null;
   serverNow: number;
   observedAt: number;
+  lastTunnelActivityAt?: number;
   registrationExpiresAt: number;
   approvalExpiresAt?: number;
   registration: "ISSUED" | "CONSUMED" | "EXPIRED" | "CANCELLED";
@@ -32,6 +33,9 @@ export type ConnectionSnapshot = {
   tunnel: "NONE" | "CONNECTING" | "READY" | "REKEYING" | "DEGRADED";
   collection: "WAITING" | "COLLECTED";
   collectionPending?: boolean;
+  provider?: Provider;
+  discoveryComplete?: boolean;
+  discoveryWarnings?: { code: string; scope: string }[];
   discovered: DiscoveredEnvironment[];
   collected: CollectedEnvironment[];
   workloads?: {
@@ -65,9 +69,15 @@ export type ConnectionSnapshot = {
     hostname: string;
     os: string;
     arch: string;
+    supportsReplacement?: boolean;
   };
   attemptsLeft: number;
   tunnelChecks: number;
+  replacement?: {
+    previousRequestId: string;
+    gateway: "pending" | "blocked" | "ready";
+    client: "pending" | "blocked" | "ready";
+  };
   epoch: number;
   keyExpiresAt?: number;
   cleanup?: {
@@ -88,6 +98,7 @@ export type ConnectionGateway = {
   mode: "unavailable" | "preview" | "live";
   available: boolean;
   reason?: string;
+  providers?: readonly Provider[];
   list: () => readonly ConnectionSnapshot[];
   subscribe: (listener: () => void) => () => void;
   create: (
@@ -100,8 +111,10 @@ export type ConnectionGateway = {
     id: string,
     candidateDigest: string,
     code: string,
+    replaceId?: string,
   ) => Promise<void>;
   reject: (id: string) => Promise<void>;
+  rediscover?: (id: string) => Promise<void>;
   collect: (id: string, discoveredId: string) => Promise<void>;
   register: (
     id: string,

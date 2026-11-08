@@ -17,7 +17,13 @@ const CONFIG = {
   interval_seconds: 60,
   job_id: "forward_001",
   stage: "pre_cutover",
-  slack: { mode: "bot", enabled: true, channel: "C000TEST", thread_ts: null },
+  slack: {
+    mode: "bot",
+    enabled: true,
+    channel: "C000TEST",
+    thread_ts: null,
+    buttons: true,
+  },
   fix: {
     keys: ["DB_HOST", "DB_PORT"],
     plan: { DB_HOST: "db.example.internal" },
@@ -49,6 +55,7 @@ test("config view reads the agent's reported settings", () => {
     enabled: true,
     channel: "C000TEST",
     threadTs: null,
+    buttons: true,
   });
   assert.deepEqual(view.fixKeys, ["DB_HOST", "DB_PORT"]);
   assert.deepEqual(view.plan, [

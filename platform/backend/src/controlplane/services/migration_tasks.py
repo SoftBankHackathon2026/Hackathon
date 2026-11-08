@@ -25,7 +25,11 @@ class MigrationTaskService:
         self._fixed_ids = {task.job_id for task in self._fixed}
 
     def sync(self) -> None:
-        stored = [task for task in self._repository.list() if task.job_id not in self._fixed_ids]
+        stored = [
+            self._with_defaults(task)
+            for task in self._repository.list()
+            if task.job_id not in self._fixed_ids
+        ]
         self._config.migrations[:] = [*self._fixed, *stored]
 
     def removable(self, job_id: str, started: Callable[[str], bool]) -> bool:
@@ -43,6 +47,18 @@ class MigrationTaskService:
                 raise RequestConflict(TASK_STARTED)
             self._repository.remove(job_id)
             self.sync()
+
+    def _with_defaults(self, task: MigrationConfig) -> MigrationConfig:
+        defaults = self._config.task_defaults
+        update = {
+            name: value
+            for name, value in (
+                ("worker_url", defaults.worker_url),
+                ("connect_url", defaults.connect_url),
+            )
+            if value and not getattr(task, name)
+        }
+        return task.model_copy(update=update) if update else task
 
     def _provider(self, env_id: str, given: str | None) -> str:
         try:
@@ -74,5 +90,5 @@ class MigrationTaskService:
                 apps=body.apps,
             )
             self._repository.add(task, created_by)
-            self._config.migrations.append(task)
+            self._config.migrations.append(self._with_defaults(task))
         return MigrationCreated(job_id=job_id, label=route_label(source, target))

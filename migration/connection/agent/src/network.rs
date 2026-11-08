@@ -70,6 +70,28 @@ impl Policy {
         Ok(())
     }
 }
+#[derive(Deserialize)]
+pub struct Replacement {
+    pub request_id: String,
+    pub connection_id: Option<String>,
+    pub epoch: u64,
+    pub client: Option<String>,
+}
+
+impl Replacement {
+    pub fn removal(&self) -> Option<Request> {
+        Some(Request {
+            operation: "remove-exact".into(),
+            connection_id: self.connection_id.clone()?,
+            epoch: self.epoch,
+            private_key: None,
+            public_key: None,
+            psk: None,
+            key_expires_at_ms: 0,
+        })
+    }
+}
+
 pub fn helper(path: &Path, req: &Request) -> Result<serde_json::Value> {
     let mut cmd = if unsafe { libc::geteuid() } == 0 {
         Command::new(path)

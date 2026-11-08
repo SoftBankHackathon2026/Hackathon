@@ -56,6 +56,13 @@ export type AgentRun = {
   created_at: string;
   updated_at: string;
   summary: AgentRunSummary;
+  can_delete: boolean;
+};
+export type AgentRunList = { runs: AgentRun[]; can_delete: boolean };
+export type AgentSkippedRun = { run_id: string; reason: string };
+export type AgentRunDeletion = {
+  deleted: string[];
+  skipped: AgentSkippedRun[];
 };
 export type AgentRunEvent = { at: string; state: string; message: string };
 export type AgentPendingApproval = {
@@ -77,9 +84,7 @@ export function getAgentStatus(signal?: AbortSignal) {
 }
 
 export function listAgentRuns(limit: number, signal?: AbortSignal) {
-  return request<{ runs: AgentRun[] }>(`agent/runs?limit=${limit}`, {
-    signal,
-  });
+  return request<AgentRunList>(`agent/runs?limit=${limit}`, { signal });
 }
 
 export function getAgentRun(runId: string, signal?: AbortSignal) {
@@ -93,6 +98,13 @@ export function decideAgentRun(runId: string, decision: AgentDecision) {
     `agent/runs/${encodeURIComponent(runId)}/${decision}`,
     { method: "POST" },
   );
+}
+
+export function deleteAgentRuns(runIds: string[]) {
+  return request<AgentRunDeletion>("agent/runs/delete", {
+    method: "POST",
+    body: { run_ids: runIds },
+  });
 }
 
 function agentPath(agentId: string, action: string) {

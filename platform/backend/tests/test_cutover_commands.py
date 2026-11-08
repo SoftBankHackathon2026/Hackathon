@@ -194,6 +194,22 @@ def test_claim_any_ignores_commands_of_unregistered_tasks():
     assert CutoverCommandService(narrowed, repository).claim_any() is None
 
 
+@pytest.mark.parametrize("make_store", ["memory", "journal"])
+def test_claim_any_carries_selected_apps_from_registered_task(make_store, request):
+    repository = (
+        MemoryCutoverCommands()
+        if make_store == "memory"
+        else CutoverCommandJournal(request.getfixturevalue("store"))
+    )
+    task = DEFAULT_FLEET.migration("forward_001").model_copy(update={"apps": ["sample-app"]})
+    config = DEFAULT_FLEET.model_copy(update={"migrations": [task]})
+    service = CutoverCommandService(config, repository, now=ticking_clock())
+    service.request(task.job_id, CommandCreate(action="run"), None)
+    claimed = service.claim_any()
+    assert claimed.apps == ["sample-app"]
+    assert claimed.model_dump()["apps"] == ["sample-app"]
+
+
 def test_claim_any_endpoint_needs_the_ingest_token(client):
     path = "/api/v1/ingest/commands/claim"
     assert client.post(path).status_code == 401

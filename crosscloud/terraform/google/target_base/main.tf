@@ -27,6 +27,9 @@ resource "google_sql_database_instance" "db" {
     ip_configuration {
       ipv4_enabled = true
       ssl_mode     = "ENCRYPTED_ONLY"
+      # 앱 verify-full 이 호스트 이름을 대조할 수 있게 SAN 을 싣는 CAS 기반
+      # 서버 인증서를 쓴다(설계 0.1 S7). SAN 내용은 실행 전 확인 항목이다.
+      server_ca_mode = "GOOGLE_MANAGED_CAS_CA"
 
       authorized_networks {
         name  = "anywhere"

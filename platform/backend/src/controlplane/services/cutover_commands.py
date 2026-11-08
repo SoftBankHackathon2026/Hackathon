@@ -143,6 +143,7 @@ class CutoverCommandService:
             target_env=task.target_env,
             data_source=task.data_source,
             data_target=task.data_target,
+            apps=list(task.apps),
         )
 
     def finish(self, job_id: str, command_id: str, result: CommandResult) -> CutoverCommand:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import psycopg
@@ -12,7 +13,7 @@ import pytest
 from migration import db as dbmod
 from migration import init_db, seed, verify
 from migration.cdc import drop_slot, prepare_source
-from migration.config import parse_config
+from migration.config import parse_config, ConfigError
 from migration.cutover import PgAdminPort
 from migration.loadgen import Outcome, PgBackend
 from migration.state import RequestRecord, RequestStore
@@ -84,14 +85,17 @@ def test_init_db_is_idempotent_and_roles_are_minimal(patched_env):
         assert dbmod.server_identity(conn).user == "migration_app"
 
 
-def test_seed_exact_1000_and_rerun(patched_env, state_dir):
+def test_seed_is_always_800_and_rerun_is_idempotent(patched_env, state_dir):
     config = patched_env
-    assert seed.run(config, "onprem", state_dir=state_dir, count=1000) == 0
-    assert seed.run(config, "onprem", state_dir=state_dir, count=1000) == 0
+    count = 800
+    with pytest.raises(ConfigError):
+        seed.run(config, "onprem", state_dir=state_dir, count=1000)
+    assert seed.run(config, "onprem", state_dir=state_dir) == 0
+    assert seed.run(config, "onprem", state_dir=state_dir) == 0
     with dbmod.connect(config.connection("onprem", "verify")) as conn:
-        assert dbmod.count_rows(conn, "public.migration_demo", "seed") == 1000
+        assert dbmod.count_rows(conn, "public.migration_demo", "seed") == count
     store = RequestStore(state_dir)
-    assert len(store.committed_ids("onprem")) == 1000
+    assert len(store.committed_ids("onprem")) == count
     store.close()
 
 
@@ -141,18 +145,104 @@ def test_prepare_publication_and_slot_idempotent(patched_env):
 
 def test_verify_detects_missing_rows_between_two_dbs(patched_env, state_dir, tmp_path):
     config = patched_env
-    seed.run(config, "onprem", state_dir=state_dir, count=1000)
+    seed.run(config, "onprem", state_dir=state_dir, count=800)
     init_db.run(config, "aws", sql_path=Path(__file__).resolve().parent.parent / "sql" / "001_demo.sql", app_write="allow")
-    seed.run(config, "aws", state_dir=None, count=999)
+    # seed 도구는 800건만 넣으므로 대상에서 한 행을 지워 "빠진 행" 을 만든다
+    seed.run(config, "aws", state_dir=None, count=800)
+    with dbmod.connect(config.connection("aws", "admin")) as conn:
+        conn.execute("DELETE FROM public.migration_demo WHERE request_no = 800 AND phase = 'seed'")
+        conn.commit()
     cmp = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
                      report_path=tmp_path / "r.json")
     assert not cmp.passed
     assert cmp.counts["B_minus_T"] >= 1 and cmp.counts["S_minus_T"] >= 1
     assert (tmp_path / "r.json").exists()
-    seed.run(config, "aws", state_dir=None, count=1000)
+    seed.run(config, "aws", state_dir=None, count=800)
     # 원본에는 live 행이 더 있어 B-T 가 남지만, 전부 복사된 seed 는 필드까지 일치
     cmp2 = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre", report_path=None)
     assert cmp2.counts["field_mismatch"] == 0 and cmp2.counts["T_minus_B"] == 0
     # 비밀번호가 보고서에 없어야 한다
     text = (tmp_path / "r.json").read_text()
     assert all(pw not in text for pw in PASSWORDS.values())
+
+
+def test_watermark_scoped_verify_and_digest_on_real_postgres(patched_env, state_dir, tmp_path):
+    """기준점 이전 집합은 digest(행 전송 없음)로, 기준점 이후 delta 는 행 단위로 비교한다."""
+    from datetime import timedelta
+    config = patched_env
+    sql_path = Path(__file__).resolve().parent.parent / "sql" / "001_demo.sql"
+    init_db.run(config, "onprem", sql_path=sql_path, app_write="allow")
+    init_db.run(config, "aws", sql_path=sql_path, app_write="allow")
+    seed.run(config, "onprem", state_dir=state_dir, count=800)
+    seed.run(config, "aws", state_dir=None, count=800)
+    # 앞 테스트가 같은 DB 에 남긴 행이 있을 수 있으므로 먼저 대상을 원본과 같게 맞춘다 (T = B)
+    with dbmod.connect(config.connection("onprem", "admin")) as sconn, \
+            dbmod.connect(config.connection("aws", "admin")) as tconn:
+        src_rows = verify.load_rows(sconn, "public.migration_demo")
+        tgt_rows = verify.load_rows(tconn, "public.migration_demo")
+        cur = tconn.cursor()
+        for rid in set(tgt_rows) - set(src_rows):
+            cur.execute("DELETE FROM public.migration_demo WHERE request_id = %s", (rid,))
+        for rid in set(src_rows) - set(tgt_rows):
+            run_id, phase, no, payload, created = src_rows[rid]
+            cur.execute("INSERT INTO public.migration_demo (request_id, run_id, phase, request_no, payload, created_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)", (rid, run_id, phase, no, payload, created))
+        tconn.commit()
+    port = PgAdminPort(config)
+    try:
+        wm = port.max_created_at("onprem")
+        assert wm is not None and wm.endswith("+00:00")
+        assert port.count_rows_in_scope("onprem", upto=wm) >= 800
+        assert port.count_rows_in_scope("onprem", since=wm) == 0
+
+        # 1) 스냅샷 집합: digest 가 모두 같으면 행을 읽지 않고 통과. S(ledger 의 seed 800건) 도 묶음 조회로 확인.
+        snap = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
+                          report_path=tmp_path / "snap.json", upto=wm, method="digest")
+        assert snap.passed and snap.method == "digest" and snap.mismatched_buckets == []
+        assert snap.committed_count >= 800 and snap.source_count == snap.target_count >= 800
+        report = (tmp_path / "snap.json").read_text()
+        assert '"method": "digest"' in report and all(pw not in report for pw in PASSWORDS.values())
+
+        # 2) delta: 기준점 뒤 행 3건을 원본에, 2건만 대상에 넣는다 → B-T=1, 스냅샷 집합 판정은 영향 없음
+        base = verify.parse_ts(wm)
+        delta_rows = [(str(uuid.uuid4()), "live", "onprem_live", n, f"live-{n}", base + timedelta(seconds=n))
+                      for n in range(1, 4)]
+        for name, rows in (("onprem", delta_rows), ("aws", delta_rows[:2])):
+            with dbmod.connect(config.connection(name, "admin")) as conn:
+                conn.cursor().executemany(
+                    "INSERT INTO public.migration_demo (request_id, run_id, phase, request_no, payload, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)", rows)
+                conn.commit()
+        assert port.count_rows_in_scope("onprem", since=wm) == 3 and port.count_rows_in_scope("aws", since=wm) == 2
+        assert set(port.latest_ids("onprem", 10, since=wm)) == {r[0] for r in delta_rows}
+        delta = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
+                           report_path=None, since=wm, method="rows")
+        assert delta.source_count == 3 and delta.target_count == 2
+        assert delta.counts == {"B_minus_T": 1, "T_minus_B": 0, "field_mismatch": 0, "S_minus_T": 0}
+        assert delta.missing_in_target == [delta_rows[2][0]]
+        again = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
+                           report_path=None, upto=wm, method="digest")
+        assert again.passed and again.source_count == snap.source_count
+
+        # 3) 대상의 seed 행 하나를 바꾸고 하나를 지우면 digest 가 그 버킷만 집어 행을 읽어 ID 를 보고한다
+        with dbmod.connect(config.connection("aws", "admin")) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT request_id::text FROM public.migration_demo WHERE phase = 'seed' "
+                        "ORDER BY request_no LIMIT 2")
+            changed, deleted = [r[0] for r in cur.fetchall()]
+            cur.execute("UPDATE public.migration_demo SET payload = 'tampered' WHERE request_id = %s", (changed,))
+            cur.execute("DELETE FROM public.migration_demo WHERE request_id = %s", (deleted,))
+            conn.commit()
+        bad = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
+                         report_path=None, upto=wm, method="digest")
+        assert not bad.passed
+        assert set(bad.mismatched_buckets) == {changed[:2], deleted[:2]}
+        assert [d["request_id"] for d in bad.field_mismatch] == [changed]
+        assert bad.field_mismatch[0]["fields"]["payload"]["target"] == "tampered"
+        assert bad.missing_in_target == [deleted] and bad.committed_missing_in_target == [deleted]
+        # 지운 행이 delta 집합 판정에는 섞이지 않는다
+        delta2 = verify.run(config, source="onprem", target="aws", state_dir=state_dir, mode="pre",
+                            report_path=None, since=wm, method="rows")
+        assert delta2.counts == delta.counts
+    finally:
+        port.close()

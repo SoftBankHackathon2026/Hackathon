@@ -21,9 +21,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 CUTOVER_DB = "cutover.sqlite3"
 POLICY_DB = "policy.sqlite3"
@@ -40,6 +40,14 @@ ACTION_ARGS = {
     "abort": ["abort"],
 }
 EXIT_CONFIG = 2
+POLICY_DIR = "policy"
+POLICY_EVIDENCE = "CUTOVER_POLICY_EVIDENCE"
+POLICY_SETTINGS = "CUTOVER_POLICY_COLLECTOR_SETTINGS"
+WRITER_DONE = frozenset({"COMPLETED", "ROLLED_BACK", "ABORTED", "NEEDS_RECOVERY"})
+BOT_METRIC = re.compile(
+    r'^traffic_bot_(?:requests_total\{state="(?P<state>\w+)"\}'
+    r'|commit_latency_ms\{quantile="(?P<quantile>0\.95)"\})\s+(?P<value>\S+)$'
+)
 
 
 def log(message: str) -> None:
@@ -103,13 +111,62 @@ def post(url: str, token: str, body: dict) -> int:
     return post_json(url, token, body)[0]
 
 
+def get_text(url: str, token: str | None = None) -> str:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return response.read().decode()
+
+
+def bot_metrics(text: str) -> dict[str, float]:
+    found: dict[str, float] = {}
+    for line in text.splitlines():
+        match = BOT_METRIC.match(line.strip())
+        if match:
+            found[match["state"] or "latency_p95"] = float(match["value"])
+    return found
+
+
+def writer_report(config_path: Path) -> dict | None:
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text()) or {}
+    bot, ingress = config.get("bot") or {}, config.get("ingress") or {}
+    if not bot.get("control_url") or not ingress.get("control_url"):
+        return None
+    metrics = bot_metrics(get_text(bot["control_url"].rstrip("/") + "/metrics"))
+    token = os.environ.get(ingress.get("token_env") or "INGRESS_CONTROL_TOKEN")
+    status = json.loads(get_text(ingress["control_url"].rstrip("/") + "/status", token))
+    names = {ingress_name: name for name, ingress_name in (ingress.get("targets") or {}).items()}
+    return {
+        "target": names.get(status.get("target"), ""),
+        "mode": str(status.get("mode") or ""),
+        "committed": int(metrics.get("committed", 0)),
+        "failed": int(metrics.get("failed", 0)),
+        "pending": int(metrics.get("pending", 0)),
+        "latency_p95_ms": metrics.get("latency_p95"),
+    }
+
+
+def job_writer(state_dir: Path, job_id: str, cutover: dict | None) -> dict | None:
+    config_path = state_dir / "jobs" / f"{job_id}.yaml"
+    if cutover is None or cutover["stage"] in WRITER_DONE or not config_path.exists():
+        return None
+    try:
+        return writer_report(config_path)
+    except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
+        log(f"writer status for {job_id} failed: {exc}")
+        return None
+
+
 def report_job(args: argparse.Namespace, token: str, job_id: str) -> None:
     state_dir = Path(args.state_dir)
     url = f"{args.platform_url.rstrip('/')}/api/v1/ingest/migrations/{job_id}"
-    body = {
-        "cutover": read_cutover(state_dir, job_id),
-        "policy_decisions": read_decisions(state_dir, job_id),
-    }
+    cutover = read_cutover(state_dir, job_id)
+    body = {"cutover": cutover, "policy_decisions": read_decisions(state_dir, job_id)}
+    writer = job_writer(state_dir, job_id, cutover)
+    if writer:
+        body["writer"] = writer
     post(url, token, body)
     for verify in read_verify(Path(args.report_dir or state_dir / "reports"), job_id):
         post(url, token, {"verify": verify})
@@ -159,12 +216,15 @@ def command_argv(
 
 
 def run_command(
-    argv: list[str], on_tick: Callable[[], None] | None = None, tick_seconds: float = 5.0
+    argv: list[str],
+    on_tick: Callable[[], None] | None = None,
+    tick_seconds: float = 5.0,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     """cutover 서브프로세스를 끝까지 돌린다. 실행 중에도 tick_seconds 마다 on_tick(보통 report_once)을
     불러 플랫폼 화면의 단계가 멈추지 않게 한다. 출력은 가린 뒤 끝 LOG_TAIL_LIMIT 자만 남긴다."""
     proc = subprocess.Popen(
-        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env
     )
     chunks: list[str] = []
 
@@ -262,6 +322,28 @@ def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
     base = yaml.safe_load(Path(base_path).read_text()) or {}
     targets = base.get("targets") or {}
     source, target = claimed["data_source"], claimed["data_target"]
+    if base.get("full_migration") is not None:
+        mapping = base.get("platform_data_targets")
+        if not isinstance(mapping, dict) or not mapping:
+            raise ValueError("full migration requires explicit platform_data_targets")
+        resolved = []
+        for side in ("source", "target"):
+            environment = claimed.get(f"{side}_env")
+            configured = mapping.get(environment)
+            requested = claimed[f"data_{side}"]
+            if not isinstance(configured, str) or requested not in (environment, configured):
+                raise ValueError(f"full migration {side} environment/data target mismatch")
+            resolved.append(configured)
+        source, target = resolved
+        base_job = base.get("job") or {}
+        if (source, target) != (base_job.get("source"), base_job.get("target")):
+            raise ValueError("full migration only supports the configured source/target direction")
+        allowed_apps, selected_apps = base.get("platform_apps"), claimed.get("apps")
+        if (not isinstance(allowed_apps, list) or not allowed_apps
+                or not all(isinstance(app, str) and app for app in allowed_apps)
+                or not isinstance(selected_apps, list) or len(selected_apps) != 1
+                or selected_apps[0] not in allowed_apps):
+            raise ValueError("full migration requires exactly one configured sample-app selection")
     missing = [name for name in (source, target) if name not in targets]
     if missing:
         raise ValueError(f"러너 설정 targets 에 없는 대상입니다: {', '.join(missing)}")
@@ -281,6 +363,28 @@ def job_config(base_path: str, claimed: dict, out_dir: Path) -> Path:
     return path
 
 
+def policy_env(claimed: dict, state_dir: Path) -> dict[str, str]:
+    job_id = claimed["job_id"]
+    out_dir = state_dir / POLICY_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in (POLICY_EVIDENCE, POLICY_SETTINGS)}
+    env[POLICY_EVIDENCE] = str(out_dir / f"{job_id}.json")
+    collectors_path = os.environ.get("CUTOVER_POLICY_COLLECTORS")
+    if not collectors_path:
+        return env
+    collectors = json.loads(Path(collectors_path).read_text())
+    if not isinstance(collectors, dict):
+        raise TypeError("정책 증거 수집 설정은 대상 이름별 객체여야 합니다.")
+    settings = collectors.get(claimed["data_target"])
+    if settings is None:
+        return env
+    path = out_dir / f"{job_id}.settings.json"
+    path.write_text(json.dumps(settings))
+    path.chmod(0o600)
+    env[POLICY_SETTINGS] = str(path)
+    return env
+
+
 def execute_any(args: argparse.Namespace, token: str) -> bool:
     claimed = claim_any_command(args, token)
     if claimed is None:
@@ -297,13 +401,15 @@ def execute_any(args: argparse.Namespace, token: str) -> bool:
             str(config),
             args.state_dir,
         )
+        env = policy_env(claimed, state_dir)
         log(f"command {command_id} argv: {' '.join(argv)}")
         exit_code, tail = run_command(
             argv,
             on_tick=lambda: report_job(args, token, job_id),
             tick_seconds=float(getattr(args, "interval", 0) or 5),
+            env=env,
         )
-    except (ValueError, OSError) as exc:
+    except (ValueError, TypeError, OSError) as exc:
         exit_code, tail = EXIT_CONFIG, redact(str(exc))
     cutover = read_cutover(state_dir, job_id)
     stage = cutover["stage"] if cutover else None

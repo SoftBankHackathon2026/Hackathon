@@ -43,24 +43,32 @@ class PostgresStore:
 
     @contextmanager
     def locked(self, request_id):
+        with self.locked_rows(request_id) as rows:
+            yield rows[request_id]
+
+    @contextmanager
+    def locked_rows(self, *request_ids):
         error = None
         with self.connect() as conn:
-            value = conn.execute(
-                "SELECT document FROM connection_requests WHERE id=%s FOR UPDATE",
-                (request_id,),
-            ).fetchone()
-            if value is None:
-                raise ConnectionError("CONNECTION_NOT_FOUND", 404)
-            row = value["document"]
+            rows = {}
+            for request_id in sorted(set(request_ids)):
+                value = conn.execute(
+                    "SELECT document FROM connection_requests WHERE id=%s FOR UPDATE",
+                    (request_id,),
+                ).fetchone()
+                if value is None:
+                    raise ConnectionError("CONNECTION_NOT_FOUND", 404)
+                rows[request_id] = value["document"]
             try:
-                yield row
+                yield rows
             except ConnectionError as caught:
                 # Expected rejections may consume a nonce or count an approval failure.
                 error = caught
-            conn.execute(
-                "UPDATE connection_requests SET document=%s WHERE id=%s",
-                (Jsonb(row), request_id),
-            )
+            for request_id, row in rows.items():
+                conn.execute(
+                    "UPDATE connection_requests SET document=%s WHERE id=%s",
+                    (Jsonb(row), request_id),
+                )
         if error:
             raise error
 
@@ -97,14 +105,22 @@ class MemoryStore:
 
     @contextmanager
     def locked(self, request_id):
+        with self.locked_rows(request_id) as rows:
+            yield rows[request_id]
+
+    @contextmanager
+    def locked_rows(self, *request_ids):
         with self.mutex:
-            if request_id not in self.rows:
+            if any(request_id not in self.rows for request_id in request_ids):
                 raise ConnectionError("CONNECTION_NOT_FOUND", 404)
-            row = deepcopy(self.rows[request_id])
+            rows = {
+                request_id: deepcopy(self.rows[request_id])
+                for request_id in request_ids
+            }
             try:
-                yield row
+                yield rows
             except ConnectionError:
-                self.rows[request_id] = row
+                self.rows.update(rows)
                 raise
             else:
-                self.rows[request_id] = row
+                self.rows.update(rows)

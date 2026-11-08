@@ -343,66 +343,15 @@
   }
   .appsel-side {
     position: static;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   }
 }
 
-/* 앱 선택 중에는 환경 연결 레이아웃을 숨긴다(상태는 유지) */
-.connection-layout[hidden] {
-  display: none;
-}
-/* 아래 고정 막대: 이전/다음. main 의 아래 여백(48px)만큼 당겨 화면 바닥에 붙인다 */
-.connection-page.is-apps {
-  min-height: calc(100vh - 64px);
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-}
-.appsel-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin: 0 -20px -48px;
-  padding: 12px 20px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-.appsel-bar-status {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-.connection-page .appsel-bar button {
-  width: auto;
-  margin: 0;
-}
-
-.create-task {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-.create-task label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-.create-task select {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-sm);
-}
-.create-task [role="alert"] {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--danger);
-  font-size: var(--fs-sm);
+@media (max-width: 640px) {
+  .appsel-body {
+    overflow-x: auto;
+  }
+  .appsel-table {
+    min-width: 400px;
+  }
 }

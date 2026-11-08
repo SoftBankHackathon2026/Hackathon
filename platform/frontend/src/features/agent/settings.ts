@@ -21,6 +21,7 @@ export type ConfigView = {
     enabled: boolean | null;
     channel: string | null;
     threadTs: string | null;
+    buttons: boolean | null;
   };
   fixKeys: string[];
   plan: { key: string; value: string }[];
@@ -65,6 +66,7 @@ export function readConfig(
       enabled: flag(slack.enabled),
       channel: text(slack.channel),
       threadTs: text(slack.thread_ts),
+      buttons: flag(slack.buttons),
     },
     fixKeys: Array.isArray(fix.keys) ? fix.keys.map(String) : [],
     plan: Object.entries(record(fix.plan)).map(([key, value]) => ({

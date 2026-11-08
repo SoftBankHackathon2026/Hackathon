@@ -25,12 +25,84 @@ async function setup(page: Page) {
     });
   });
   await page.goto("/?connection-preview=1#prepare");
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
 }
 async function scenario(page: Page, name: string) {
   await page.getByText("다른 상태 살펴보기", { exact: true }).click();
   await page.getByLabel("상태 예시").selectOption(name);
   await page.getByRole("button", { name: "선택한 상태 불러오기" }).click();
 }
+test("task registration is the default and the connection panel animates without moving the sidebar", async ({
+  page,
+  browserName,
+}, info) => {
+  await page.setViewportSize({ width: 390, height: 850 });
+  await page.goto("/?connection-preview=1#prepare");
+  const sidebar = page.getByRole("complementary", { name: "연결 환경" });
+  const newConnection = sidebar.getByRole("button", { name: "환경 연결 추가" });
+  const task = page.getByRole("heading", { name: "마이그레이션 작업 등록" });
+  await expect(task).toBeVisible();
+  await expect(page.getByRole("heading", { name: "새 환경 연결" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "다음: 앱 선택" }),
+  ).toBeDisabled();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  if (browserName === "chromium") {
+    await page.screenshot({
+      path: info.outputPath("task-registration.png"),
+      animations: "disabled",
+    });
+  }
+
+  for (const reducedMotion of ["no-preference", "reduce"] as const) {
+    await page.emulateMedia({ reducedMotion });
+    const before = await newConnection.boundingBox();
+    if (browserName === "chromium") {
+      await page.evaluate(() => {
+        const start = document.startViewTransition.bind(document);
+        document.startViewTransition = (update) => {
+          const transition = start(update);
+          void transition.ready.then(() => {
+            const animation = getComputedStyle(
+              document.documentElement,
+              "::view-transition-new(prepare-panel)",
+            );
+            document.documentElement.dataset.prepareAnimation = [
+              animation.animationName,
+              animation.animationDuration,
+            ].join(" ");
+          });
+          return transition;
+        };
+      });
+    }
+    await newConnection.click();
+    await expect(
+      page.getByRole("heading", { name: "새 환경 연결" }),
+    ).toBeVisible();
+    await expect(task).toBeHidden();
+    await expect(newConnection).toHaveAttribute("aria-current", "true");
+    expect(await newConnection.boundingBox()).toEqual(before);
+    if (browserName === "chromium") {
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-prepare-animation",
+        reducedMotion === "reduce"
+          ? "prepare-fade-in 0.25s"
+          : "prepare-panel-in 0.25s",
+      );
+    }
+    await page.goBack();
+    await expect(task).toBeVisible();
+    await expect(task.locator("..")).toBeFocused();
+  }
+});
+
 test("only two stages; collection precedes environment metadata and registration", async ({
   page,
 }) => {
@@ -41,7 +113,7 @@ test("only two stages; collection precedes environment metadata and registration
   });
   await expect(progress.getByRole("listitem")).toHaveCount(2);
   await expect(progress).toContainText("환경정보 수집");
-  await expect(progress).toContainText("환경등록");
+  await expect(progress).toContainText("목록에 저장");
   await expect(page.getByLabel("환경 이름", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("프로젝트", { exact: true })).toHaveCount(0);
   await page
@@ -71,7 +143,7 @@ test("only two stages; collection precedes environment metadata and registration
   await page.getByRole("radio", { name: /busan-production/ }).check();
   await page.getByRole("button", { name: "선택한 환경정보 수집" }).click();
   await expect(progress.locator('[aria-current="step"]')).toContainText(
-    "환경등록",
+    "목록에 저장",
   );
   await expect(page.getByLabel("프로젝트", { exact: true })).toBeVisible();
   await expect(page.getByLabel("환경 이름", { exact: true })).toHaveValue(
@@ -83,6 +155,16 @@ test("only two stages; collection precedes environment metadata and registration
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "작업 등록으로 돌아가기", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "출발 환경" })
+    .selectOption({ label: "부산 운영 환경" });
+  await page
+    .getByRole("combobox", { name: "도착 환경" })
+    .selectOption("preview-destination");
+  await page.setViewportSize({ width: 390, height: 850 });
   await page.getByRole("button", { name: "다음: 앱 선택" }).click();
   await expect(
     page.getByRole("heading", { name: "옮길 앱 고르기" }),
@@ -90,7 +172,13 @@ test("only two stages; collection precedes environment metadata and registration
   await expect(
     page.getByRole("checkbox", { name: "sample-app 선택" }),
   ).toBeChecked();
-  await page.getByRole("button", { name: "이전: 환경 연결" }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  const sidebar = page.getByRole("complementary", { name: "연결 환경" });
+  await sidebar
+    .getByRole("button", { name: /^부산 운영 환경 온프레미스/ })
+    .click();
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
@@ -163,7 +251,7 @@ test("revocation retains separate cleanup statuses", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(disconnect).toBeFocused();
-  await expect(sidebar).toContainText("1개 등록");
+  await expect(sidebar).toContainText("직접 연결 1개");
   await disconnect.click();
   await dialog.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(
@@ -171,7 +259,7 @@ test("revocation retains separate cleanup statuses", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
   await expect(sidebar.getByRole("listitem")).toHaveCount(0);
-  await expect(sidebar).toContainText("0개 등록");
+  await expect(sidebar).toContainText("직접 연결 0개");
   await page.reload();
   await expect(sidebar.getByRole("listitem")).toHaveCount(0);
   await expect(page.getByText("미확인", { exact: true })).toHaveCount(2);
@@ -190,7 +278,7 @@ test("sidebar disconnects a pending request without switching away from the sele
     .click();
   await page.getByRole("button", { name: "연결 해제 확인" }).click();
   await expect(sidebar.getByRole("listitem")).toHaveCount(1);
-  await expect(sidebar).toContainText("1개 등록");
+  await expect(sidebar).toContainText("직접 연결 1개");
   await expect(
     page.getByRole("heading", { name: "환경을 등록했어요" }),
   ).toBeVisible();
@@ -216,6 +304,16 @@ for (const width of [390, 768, 1024, 1600])
     "two-stage layout fits " + width,
     async ({ page, browserName }, info) => {
       await page.setViewportSize({ width, height: 1000 });
+      if (browserName === "chromium" && width === 1600) {
+        await page.goto("/?connection-preview=1#prepare");
+        await expect(
+          page.getByRole("heading", { name: "마이그레이션 작업 등록" }),
+        ).toBeVisible();
+        await page.screenshot({
+          path: info.outputPath("task-registration.png"),
+          animations: "disabled",
+        });
+      }
       await setup(page);
       expect(
         await page.evaluate(
@@ -226,6 +324,7 @@ for (const width of [390, 768, 1024, 1600])
         await page.screenshot({
           path: info.outputPath("collection.png"),
           fullPage: true,
+          animations: "disabled",
         });
       await scenario(page, "collected");
       expect(
@@ -234,12 +333,13 @@ for (const width of [390, 768, 1024, 1600])
         ),
       ).toBe(false);
       await expect(
-        page.getByRole("heading", { name: "수집한 환경을 등록하세요" }),
+        page.getByRole("heading", { name: "연결을 완료했어요" }),
       ).toBeVisible();
       if (browserName === "chromium" && (width === 390 || width === 1600))
         await page.screenshot({
           path: info.outputPath("registration.png"),
           fullPage: true,
+          animations: "disabled",
         });
     },
   );
@@ -256,6 +356,15 @@ test("production entry blocks collection and never exposes registration inputs e
     if (r.method() === "POST") writes.push(r.url());
   });
   await page.goto("/#prepare");
+  await expect(
+    page.getByRole("heading", { name: "마이그레이션 작업 등록" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "새 환경 연결" })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
   await page
     .getByLabel("이 환경에 접근할 수 있는 지원 단말을 준비했어요.")
     .check();
@@ -276,6 +385,9 @@ test("real Chromium clipboard works from the initial collection screen", async (
   );
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/?connection-preview=1#prepare");
+  await page
+    .getByRole("button", { name: "환경 연결 추가", exact: true })
+    .click();
   await page
     .getByLabel("이 환경에 접근할 수 있는 지원 단말을 준비했어요.")
     .check();

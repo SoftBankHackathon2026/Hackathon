@@ -53,6 +53,7 @@ export function Workspace({
             key={access.user?.team ?? "shared"}
             onNavigate={go}
             requestId={route.requestId}
+            newConnection={route.newConnection}
             team={access.user?.team}
           />
         )}

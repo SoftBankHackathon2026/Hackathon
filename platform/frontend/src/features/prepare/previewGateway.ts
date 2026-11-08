@@ -164,6 +164,7 @@ export function createPreviewGateway(
   const gateway: ConnectionGateway = {
     mode: "preview",
     available: true,
+    providers: ["kubernetes", "aws", "gcp"],
     list: () => snapshots,
     subscribe(listener) {
       listeners.add(listener);
@@ -184,6 +185,7 @@ export function createPreviewGateway(
         id: crypto.randomUUID().replace(/-/g, "").slice(0, 22),
         revision: 1,
         organization: context.organization,
+        provider: context.provider,
         target: null,
         serverNow: now,
         observedAt: now,
@@ -262,6 +264,16 @@ export function createPreviewGateway(
         "단말 확인을 거절했어요.",
       );
     },
+    async rediscover(id) {
+      const s = find(id);
+      patch(id, {
+        discoveryComplete: true,
+        discovered: sources.filter(
+          (candidate) => candidate.kind === s.provider,
+        ),
+        discoveryWarnings: [],
+      });
+    },
     async collect(id, discoveredId) {
       const s = find(id),
         source = s.discovered.find((e) => e.id === discoveredId);
@@ -298,7 +310,7 @@ export function createPreviewGateway(
               b.toString(16).padStart(2, "0"),
             ).join(""),
         },
-        "선택한 대상의 정보 수집을 마쳤어요. 환경 이름과 역할을 등록하세요.",
+        "선택한 대상의 정보 수집을 마쳤어요. 환경 이름을 등록하세요.",
       );
     },
     async register(id, collectedId, inventoryDigest, target) {
@@ -412,7 +424,12 @@ export function createPreviewGateway(
           tunnelChecks: 4,
           epoch: s.epoch + 1,
           keyExpiresAt: Date.now() + 30 * 60_000,
-          discovered: structuredClone(sources),
+          discovered: structuredClone(
+            s.provider
+              ? sources.filter((candidate) => candidate.kind === s.provider)
+              : sources,
+          ),
+          discoveryComplete: true,
         },
         "보안 연결을 확인했어요. 읽을 계정이나 문맥을 선택하세요.",
       );
@@ -438,7 +455,7 @@ export function createPreviewGateway(
     }
     await simulate(id, "connecting");
     await simulate(id, "tunnel");
-    await gateway.collect(id, sources[0].id);
+    await gateway.collect(id, find(id).discovered[0].id);
     if (scenario === "collected") return;
     const current = find(id);
     await gateway.register(
@@ -448,10 +465,9 @@ export function createPreviewGateway(
       {
         organization: current.organization,
         project: "미리보기 프로젝트",
-        name: "busan-production",
-        kind: "kubernetes",
-        role: "source",
-        region: "",
+        name: current.collected[0].name,
+        kind: current.collected[0].kind,
+        region: current.collected[0].region,
       },
     );
     if (scenario === "registered") return;

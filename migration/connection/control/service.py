@@ -22,6 +22,24 @@ from migration_connection.contracts.protocol import (
 from migration_connection.control.errors import ConnectionError
 from migration_connection.control.limits import LimitScope
 
+RECONNECT_WAIT_MS = 90_000
+CLOUD_PROVIDERS = ("aws", "gcp")
+DISCOVERY_CODES = {
+    "CLI_MISSING",
+    "LOGIN_REQUIRED",
+    "PERMISSION_DENIED",
+    "REGION_REQUIRED",
+    "SCOPE_LIMIT",
+    "LOOKUP_FAILED",
+}
+CLOUD_COLLECTION_MESSAGES = {
+    "LOGIN_REQUIRED": "클라우드 로그인이 만료됐어요. 단말에서 다시 로그인해 주세요.",
+    "PERMISSION_DENIED": "선택한 클러스터를 조회할 권한이 없어요.",
+    "GKE_AUTH_PLUGIN_MISSING": "단말에 GKE 인증 도구를 설치한 뒤 다시 수집해 주세요.",
+    "SELECTED_TARGET_CHANGED_OR_MISSING": "클러스터가 바뀌었어요. 대상을 다시 확인해 주세요.",
+}
+
+
 PROOF_FIELDS = {
     "version",
     "request_id",
@@ -160,7 +178,7 @@ class ConnectionService:
             else "연결 실행 환경과 서명·요청 제한 설정을 확인해야 합니다.",
             "bootstrapUrl": self.bootstrap_url if ready else None,
             "releaseVersion": self.release_version if ready else None,
-            "providers": ["kubernetes"] if ready else [],
+            "providers": ["kubernetes", *CLOUD_PROVIDERS] if ready else [],
         }
 
     def _touch(self, row, message):
@@ -172,6 +190,26 @@ class ConnectionService:
         require(row["team"] == actor.team, "CONNECTION_NOT_FOUND", 404)
         require(not write or actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
 
+    def _revoke(self, row):
+        row["device"], row["tunnel"] = "REVOKED", "NONE"
+        row["lease_expires_at"] = 0
+        row["task"] = None
+        row["cleanup"] = {
+            "server": True,
+            "gateway": False,
+            "resources": True,
+            "local": False,
+        }
+
+    def _replacement_gateway(self, replacement):
+        if not replacement["epoch"] or replacement.get("gateway_confirmed"):
+            return "ready"
+        previous = self.store.get(replacement["request_id"])
+        cleanup = previous.get("cleanup", {}) if previous else {}
+        if cleanup.get("gateway"):
+            return "ready"
+        return "blocked" if cleanup.get("gateway_blocked") else "pending"
+
     def _expire(self, row):
         now = self.clock()
         if row["registration"] == "ISSUED" and now >= row["expires_at"]:
@@ -179,21 +217,27 @@ class ConnectionService:
         if row["device"] == "PENDING_APPROVAL" and now >= row["approval_expires_at"]:
             row["device"] = "REJECTED"
         if row["device"] == "APPROVED" and now >= row.get("device_expires_at", 0):
-            row["device"], row["tunnel"] = "REVOKED", "NONE"
-            row["lease_expires_at"] = 0
-            row["task"] = None
-            row["cleanup"] = {
-                "server": True,
-                "gateway": False,
-                "resources": True,
-                "local": False,
-            }
+            self._revoke(row)
             row["issue"] = "단말 인증키 유효기간이 끝났습니다. 새로 등록하세요."
         if row["tunnel"] == "READY" and (
             now >= row.get("lease_expires_at", 0) or now >= row.get("key_expires_at", 0)
         ):
             row["tunnel"] = "DEGRADED"
-            row["issue"] = "연결 확인 기한이 끝났습니다. 새 연결을 확인하세요."
+            row["tunnel_checks"] = 0
+            row["issue"] = (
+                "연결 확인 기한이 끝났습니다. 단말에서 서비스를 확인해 주세요."
+            )
+        if row["tunnel"] in ("CONNECTING", "REKEYING"):
+            deadline = row.get("tunnel_deadline_at")
+            # Requests created before the deadline field may already be waiting.
+            if deadline is None and row["epoch"] and row["events"]:
+                deadline = row["events"][-1]["at"] + RECONNECT_WAIT_MS
+            if deadline is not None and now >= deadline:
+                row["tunnel"] = "DEGRADED"
+                row["tunnel_checks"] = 0
+                row["issue"] = (
+                    "단말 응답을 확인하지 못했습니다. 온프레미스에서 연결 서비스를 확인해 주세요."
+                )
 
     def snapshot(self, row, actor):
         self._access(row, actor)
@@ -212,6 +256,7 @@ class ConnectionService:
             "revision": row["revision"],
             "organization": row["team"],
             "target": row.get("target"),
+            "provider": row.get("provider", "kubernetes"),
             "serverNow": self.clock(),
             "observedAt": self.clock(),
             "registrationExpiresAt": row["expires_at"],
@@ -240,6 +285,15 @@ class ConnectionService:
                 "releaseVersion": self.release_version,
             },
         }
+        if result["provider"] in CLOUD_PROVIDERS:
+            result.update(
+                discoveryGeneration=row.get("discovery_generation", 0),
+                discoveryComplete=(
+                    row.get("discovery_epoch") == row["epoch"]
+                    and row["tunnel"] == "READY"
+                ),
+                discoveryWarnings=row.get("discovery_warnings", []),
+            )
         for internal, external in [
             ("approval_expires_at", "approvalExpiresAt"),
             ("collected_at", "collectedAt"),
@@ -248,16 +302,26 @@ class ConnectionService:
             ("environment_id", "environmentId"),
             ("registered_at", "registeredAt"),
             ("key_expires_at", "keyExpiresAt"),
+            ("last_tunnel_activity_at", "lastTunnelActivityAt"),
             ("cleanup", "cleanup"),
             ("issue", "issue"),
         ]:
             if internal in row:
                 result[external] = row[internal]
+        if replacement := row.get("replacement"):
+            result["replacement"] = {
+                "previousRequestId": replacement["request_id"],
+                "gateway": self._replacement_gateway(replacement),
+                "client": replacement.get("client", "pending"),
+            }
         if row.get("candidate"):
             result["candidate"] = {
                 k: row["candidate"][k]
                 for k in ("id", "digest", "fingerprint", "hostname", "os", "arch")
             }
+            result["candidate"]["supportsReplacement"] = row["candidate"].get(
+                "supports_replacement", False
+            )
         return result
 
     def list(self, actor):
@@ -268,12 +332,29 @@ class ConnectionService:
         require(row is not None, "CONNECTION_NOT_FOUND", 404)
         return self.snapshot(row, actor)
 
-    def create(self, actor, public_key, operation_id):
+    def registered_provider(self, environment_id: str, team: str) -> str | None:
+        request_id = environment_id.removeprefix("connected-")
+        if request_id == environment_id or not IDENTIFIER.fullmatch(request_id):
+            return None
+        row = self.store.get(request_id)
+        if (
+            row is None
+            or row["team"] != team
+            or row.get("environment_id") != environment_id
+        ):
+            return None
+        self._expire(row)
+        if row["device"] != "APPROVED":
+            return None
+        kind = row["target"]["kind"]
+        return "onprem" if kind == "kubernetes" else kind
+
+    def create(self, actor, public_key, operation_id, provider="kubernetes"):
         require(actor.can_write, "CONNECTION_PERMISSION_DENIED", 403)
         self.limiter.check(actor_scope(actor), self.clock())
-        require(
-            self.capabilities(actor.team)["available"], "CONNECTION_UNAVAILABLE", 503
-        )
+        capability = self.capabilities(actor.team)
+        require(capability["available"], "CONNECTION_UNAVAILABLE", 503)
+        require(provider in capability["providers"], "PROVIDER_UNAVAILABLE", 422)
         try:
             unb64(public_key, 1952)
         except ValueError:
@@ -292,6 +373,7 @@ class ConnectionService:
                 "owner": actor.email,
                 "operation_id": operation_id,
                 "public_key": public_key,
+                "provider": provider,
                 "expires_at": now + 60000,
                 "registration": "ISSUED",
                 "device": "NONE",
@@ -308,7 +390,11 @@ class ConnectionService:
                 "device_challenges": {},
             }
         )
-        require(row["public_key"] == public_key, "IDEMPOTENCY_CONFLICT")
+        require(
+            row["public_key"] == public_key
+            and row.get("provider", "kubernetes") == provider,
+            "IDEMPOTENCY_CONFLICT",
+        )
         return self.snapshot(row, actor)
 
     def challenge(self, request_id, candidate_id, *, device=False):
@@ -376,7 +462,14 @@ class ConnectionService:
                 p = body["payload"]
                 require(
                     isinstance(p, dict)
-                    and set(p) == PROOF_FIELDS
+                    and set(p) - {"replacement_version"} == PROOF_FIELDS
+                    and (
+                        "replacement_version" not in p
+                        or (
+                            type(p["replacement_version"]) is int
+                            and p["replacement_version"] == 1
+                        )
+                    )
                     and type(p["version"]) is int
                     and p["version"] == 1
                     and p["request_id"] == request_id
@@ -417,6 +510,7 @@ class ConnectionService:
                     "hostname": short_text(meta.get("hostname", "unknown")),
                     "os": short_text(meta.get("os", "unknown")),
                     "arch": short_text(meta.get("arch", "unknown")),
+                    "supports_replacement": p.get("replacement_version") == 1,
                     "public_key": p["device_auth_public_key"],
                     "wireguard_public_key": p["wireguard_public_key"],
                 }
@@ -440,8 +534,19 @@ class ConnectionService:
 
     def browser(self, request_id, actor, action, data):
         self.limiter.check(actor_scope(actor), self.clock())
-        with self.store.locked(identifier(request_id)) as row:
+        request_id = identifier(request_id)
+        replace_id = data.get("replaceId") if action == "approve" else None
+        if replace_id is not None:
+            replace_id = identifier(replace_id)
+            require(replace_id != request_id, "REPLACEMENT_UNAVAILABLE")
+        with self.store.locked_rows(
+            *([request_id, replace_id] if replace_id else [request_id])
+        ) as rows:
+            row = rows[request_id]
             self._access(row, actor, True)
+            previous = rows.get(replace_id)
+            if previous is not None:
+                self._access(previous, actor, True)
             self._expire(row)
             if action == "cancel":
                 require(
@@ -451,6 +556,13 @@ class ConnectionService:
                 row["registration"] = "CANCELLED"
                 row["challenges"] = {}
             elif action in ("approve", "reject"):
+                if (
+                    action == "approve"
+                    and previous is not None
+                    and row["device"] == "APPROVED"
+                    and row.get("replacement", {}).get("request_id") == replace_id
+                ):
+                    return self.snapshot(row, actor)
                 require(row["device"] == "PENDING_APPROVAL", "APPROVAL_UNAVAILABLE")
                 if action == "reject":
                     row["device"] = "REJECTED"
@@ -473,25 +585,62 @@ class ConnectionService:
                             row["device"] = "REJECTED"
                         self._touch(row, "단말 확인 코드가 일치하지 않습니다.")
                         raise ConnectionError("INVALID_CONFIRMATION_CODE", 422)
+                    if previous is not None:
+                        require(
+                            row["candidate"].get("supports_replacement"),
+                            "REPLACEMENT_CLIENT_UNSUPPORTED",
+                        )
+                        self._expire(previous)
+                        require(
+                            previous["device"] == "APPROVED"
+                            and (
+                                not previous.get("replacement")
+                                or previous["replacement"].get("client") == "ready"
+                            ),
+                            "REPLACEMENT_UNAVAILABLE",
+                        )
+                        row["replacement"] = {
+                            "request_id": previous["id"],
+                            "epoch": previous["epoch"],
+                            "connection_id": previous.get("connection_id"),
+                        }
+                        self._revoke(previous)
+                        if previous["epoch"] == 0:
+                            previous["cleanup"]["gateway"] = True
+                        self._touch(
+                            previous, "새 단말 연결 승인으로 기존 연결을 철회했습니다."
+                        )
                     row["device"], row["tunnel"] = "APPROVED", "CONNECTING"
                     row["device_expires_at"] = self.clock() + 90 * 86400000
+                    row["tunnel_deadline_at"] = self.clock() + 300_000
             elif action == "revoke":
-                row["device"], row["tunnel"] = "REVOKED", "NONE"
-                row["lease_expires_at"] = 0
-                row["task"] = None
-                row["cleanup"] = {
-                    "server": True,
-                    "gateway": False,
-                    "resources": True,
-                    "local": False,
-                }
+                if row["device"] != "REVOKED":
+                    self._revoke(row)
             elif action == "reconnect":
-                require(
-                    row["device"] == "APPROVED" and row["tunnel"] == "DEGRADED",
-                    "RECONNECT_UNAVAILABLE",
-                )
+                require(row["device"] == "APPROVED", "RECONNECT_UNAVAILABLE")
+                if row["tunnel"] in ("READY", "CONNECTING", "REKEYING"):
+                    return self.snapshot(row, actor)
+                require(row["tunnel"] == "DEGRADED", "RECONNECT_UNAVAILABLE")
                 row["tunnel"] = "CONNECTING"
+                row["tunnel_checks"] = 0
+                row["tunnel_deadline_at"] = self.clock() + RECONNECT_WAIT_MS
+                row["reconnect_after_epoch"] = row["epoch"]
                 row["task"] = None
+                row.pop("issue", None)
+            elif action == "rediscover":
+                self._ready(row)
+                require(
+                    row.get("provider") in CLOUD_PROVIDERS
+                    and not row.get("environment_id")
+                    and row.get("discovery_epoch") == row["epoch"]
+                    and not row.get("task"),
+                    "DISCOVERY_UNAVAILABLE",
+                )
+                row["discovery_generation"] = row.get("discovery_generation", 0) + 1
+                row["discovered"] = []
+                row.pop("discovery_epoch", None)
+                row.pop("discovery_warnings", None)
+                row.pop("issue", None)
             elif action == "collect":
                 self._ready(row)
                 require(
@@ -522,6 +671,13 @@ class ConnectionService:
                     "target_id": selected["id"],
                     "expires_at_ms": self.clock() + 120000,
                 }
+                if row.get("provider") in CLOUD_PROVIDERS:
+                    require(
+                        row.get("discovery_epoch") == row["epoch"],
+                        "TARGET_NOT_DISCOVERED",
+                    )
+                    task["cloud_context"] = selected["context"]
+                row.pop("issue", None)
                 row["task"] = {
                     "payload": task,
                     "signature": self.crypto.sign(signed_bytes("job", task)),
@@ -544,12 +700,15 @@ class ConnectionService:
                 target = data.get("target", {})
                 selected = row["collected"][0]
                 require(
-                    set(target)
-                    == {"organization", "project", "name", "kind", "role", "region"}
+                    isinstance(target, dict)
+                    and set(target) - {"role"}
+                    == {"organization", "project", "name", "kind", "region"}
                     and target["organization"] == row["team"]
-                    and target["kind"] == "kubernetes"
+                    and target["kind"] == selected["kind"]
                     and target["region"] == selected["region"]
-                    and target["role"] in ("source", "target"),
+                    and (
+                        "role" not in target or target["role"] in ("source", "target")
+                    ),
                     "INVALID_REGISTRATION",
                     422,
                 )
@@ -569,6 +728,7 @@ class ConnectionService:
                     "revoke": "서버 권한을 철회했습니다. 정리 확인을 기다립니다.",
                     "reconnect": "새 연결을 요청했습니다.",
                     "collect": "선택한 환경정보 수집을 요청했습니다.",
+                    "rediscover": "정보수집 대상을 다시 확인합니다.",
                     "register": "환경정보를 등록했습니다.",
                 }[action],
             )
@@ -633,7 +793,33 @@ class ConnectionService:
                         "confirmation_code": row["code"]
                         if row["device"] == "PENDING_APPROVAL"
                         else None,
+                        "replacement": row.get("replacement")
+                        if row["device"] == "APPROVED"
+                        else None,
                     }
+                if action == "replacement-cleanup":
+                    replacement = row.get("replacement")
+                    require(
+                        row["device"] == "APPROVED"
+                        and replacement
+                        and set(data) == {"client"}
+                        and data["client"] in ("ready", "blocked"),
+                        "INVALID_CLEANUP",
+                        422,
+                    )
+                    require(
+                        self._replacement_gateway(replacement) == "ready",
+                        "REPLACEMENT_GATEWAY_PENDING",
+                    )
+                    if (
+                        replacement.get("client") != "ready"
+                        and replacement.get("client") != data["client"]
+                    ):
+                        replacement["client"] = data["client"]
+                        self._touch(
+                            row, "새 연결을 위한 단말 터널 정리 상태를 확인했습니다."
+                        )
+                    return {"accepted": True}
                 if action == "cleanup":
                     require(
                         row["device"] in ("REVOKED", "REJECTED")
@@ -657,6 +843,9 @@ class ConnectionService:
                 require(through_tunnel, "TUNNEL_TRANSPORT_REQUIRED", 403)
                 self._ready(row)
                 if action == "poll":
+                    row["last_tunnel_activity_at"] = max(
+                        now, row.get("last_tunnel_activity_at", 0)
+                    )
                     task = row.get("task")
                     if task and now >= task["payload"]["expires_at_ms"]:
                         row["task"] = None
@@ -666,8 +855,15 @@ class ConnectionService:
                         task = None
                     return {"snapshot": self.snapshot(row, actor), "task": task}
                 if action == "discovered":
+                    provider = row.get("provider", "kubernetes")
+                    cloud = provider in CLOUD_PROVIDERS
                     require(
-                        set(data) == {"environments"}
+                        set(data)
+                        == (
+                            {"environments", "warnings", "generation", "epoch"}
+                            if cloud
+                            else {"environments"}
+                        )
                         and isinstance(data["environments"], list)
                         and len(data["environments"]) <= 100,
                         "INVALID_DISCOVERY",
@@ -679,7 +875,7 @@ class ConnectionService:
                             isinstance(env, dict)
                             and set(env)
                             == {"id", "kind", "name", "identity", "region", "context"}
-                            and env["kind"] == "kubernetes",
+                            and env["kind"] == provider,
                             "INVALID_DISCOVERY",
                             422,
                         )
@@ -694,16 +890,51 @@ class ConnectionService:
                             422,
                         )
                         found.append(deepcopy(env))
+                    if cloud:
+                        require(
+                            type(data["generation"]) is int
+                            and data["generation"] == row.get("discovery_generation", 0)
+                            and type(data["epoch"]) is int
+                            and data["epoch"] == row["epoch"],
+                            "STALE_DISCOVERY",
+                        )
+                        warnings = data["warnings"]
+                        require(
+                            isinstance(warnings, list) and len(warnings) <= 20,
+                            "INVALID_DISCOVERY",
+                            422,
+                        )
+                        for warning in warnings:
+                            require(
+                                isinstance(warning, dict)
+                                and set(warning) == {"code", "scope"}
+                                and warning["code"] in DISCOVERY_CODES
+                                and isinstance(warning["scope"], str)
+                                and bool(
+                                    re.fullmatch(
+                                        r"[A-Za-z0-9_/-]{0,230}", warning["scope"]
+                                    )
+                                ),
+                                "INVALID_DISCOVERY",
+                                422,
+                            )
+                        row["discovery_warnings"] = deepcopy(warnings)
+                        row["discovery_epoch"] = row["epoch"]
                     row["discovered"] = found
-                    self._touch(row, "단말의 Kubernetes 문맥 후보를 확인했습니다.")
+                    self._touch(row, "단말의 정보수집 대상을 확인했습니다.")
                     return {"accepted": True}
-                if action == "inventory":
+                if action in ("inventory", "inventory-failed"):
                     from migration_connection.inventory import (
                         inventory_digest,
                         validate_report,
                     )
 
-                    require(set(data) == {"job_id", "report"}, "INVALID_INVENTORY", 422)
+                    failed = action == "inventory-failed"
+                    require(
+                        set(data) == {"job_id", "reason" if failed else "report"},
+                        "INVALID_INVENTORY",
+                        422,
+                    )
                     task = row.get("task")
                     require(
                         task is not None
@@ -712,6 +943,20 @@ class ConnectionService:
                         and now < task["payload"]["expires_at_ms"],
                         "STALE_COLLECTION",
                     )
+                    if failed:
+                        require(
+                            row.get("provider") in CLOUD_PROVIDERS
+                            and isinstance(data["reason"], str),
+                            "INVALID_INVENTORY",
+                            422,
+                        )
+                        row["task"] = None
+                        row["issue"] = CLOUD_COLLECTION_MESSAGES.get(
+                            data["reason"],
+                            "클러스터에 접속하지 못했어요. 네트워크와 Kubernetes 조회 권한을 확인해 주세요.",
+                        )
+                        self._touch(row, "선택한 클러스터를 수집하지 못했습니다.")
+                        return {"accepted": True}
                     try:
                         validate_report(
                             data["report"],
@@ -721,6 +966,19 @@ class ConnectionService:
                             expected_target_id=task["payload"]["target_id"],
                         )
                         report = data["report"]
+                        require(
+                            report["environment"]["kind"]
+                            == row.get("provider", "kubernetes"),
+                            "INVALID_INVENTORY",
+                            422,
+                        )
+                        if row.get("provider") in CLOUD_PROVIDERS:
+                            require(
+                                report["environment"]["context"]
+                                == task["payload"]["cloud_context"],
+                                "INVALID_INVENTORY",
+                                422,
+                            )
                         require(
                             abs(now - report["collected_at_ms"]) <= 60000,
                             "STALE_COLLECTION",
@@ -788,6 +1046,10 @@ class ConnectionService:
                 "epoch": row["epoch"],
                 "state": row["tunnel"],
                 "authorization_expires_at_ms": self.clock() + 60000,
+                "replacement": row.get("replacement")
+                if row.get("replacement")
+                and self._replacement_gateway(row["replacement"]) != "ready"
+                else None,
             }
 
     def tunnel(self, request_id, data):
@@ -796,10 +1058,25 @@ class ConnectionService:
             require(
                 row["team"] == self.runtime_tenant_id, "RUNTIME_TENANT_MISMATCH", 403
             )
-            if data.get("state") == "REVOKED":
+            if data.get("state") in ("REVOKED", "REVOKE_BLOCKED"):
                 require(row["device"] == "REVOKED", "DEVICE_NOT_REVOKED")
-                row["cleanup"]["gateway"] = True
-                self._touch(row, "게이트웨이 터널 차단을 확인했습니다.")
+                if row["epoch"]:
+                    require(
+                        data.get("epoch") == row["epoch"]
+                        and data.get("connection_id") == row.get("connection_id"),
+                        "CONNECTION_BINDING_CHANGED",
+                    )
+                cleanup = row["cleanup"]
+                if not cleanup["gateway"]:
+                    if data["state"] == "REVOKED":
+                        cleanup["gateway"] = True
+                        cleanup.pop("gateway_blocked", None)
+                        self._touch(row, "게이트웨이 터널 차단을 확인했습니다.")
+                    elif not cleanup.get("gateway_blocked"):
+                        cleanup["gateway_blocked"] = True
+                        self._touch(
+                            row, "게이트웨이에서 기존 터널을 정리하지 못했습니다."
+                        )
                 return {"accepted": True}
             require(row["device"] == "APPROVED", "DEVICE_NOT_APPROVED", 403)
             now = self.clock()
@@ -815,6 +1092,17 @@ class ConnectionService:
             require(
                 state in ("READY", "DEGRADED", "REKEYING"), "INVALID_TUNNEL_STATE", 422
             )
+            if replacement := row.get("replacement"):
+                require(
+                    self._replacement_gateway(replacement) == "ready",
+                    "REPLACEMENT_GATEWAY_PENDING",
+                )
+                replacement["gateway_confirmed"] = True
+                if state == "READY":
+                    require(
+                        replacement.get("client") == "ready",
+                        "REPLACEMENT_CLIENT_PENDING",
+                    )
             if epoch == row["epoch"]:
                 require(
                     data["connection_id"] == row.get("connection_id"),
@@ -827,6 +1115,10 @@ class ConnectionService:
                     row["collected"] = []
                     row.pop("inventory_digest", None)
             if state == "READY":
+                require(
+                    epoch > row.get("reconnect_after_epoch", 0),
+                    "NEW_KEY_EPOCH_REQUIRED",
+                )
                 require(data.get("checks") == 2, "TUNNEL_PROBES_REQUIRED")
                 expires, lease = (
                     data.get("key_expires_at_ms"),
@@ -842,8 +1134,12 @@ class ConnectionService:
                 # A heartbeat may renew only the authorization lease, never the key lifetime.
                 if epoch == row["epoch"] and row.get("key_expires_at"):
                     require(expires == row["key_expires_at"], "KEY_LIFETIME_CHANGED")
+                if epoch != row["epoch"] or not row.get("key_expires_at"):
+                    row["last_tunnel_activity_at"] = now
                 row["key_expires_at"], row["lease_expires_at"] = expires, lease
                 row["tunnel_checks"] = 4
+                row.pop("tunnel_deadline_at", None)
+                row.pop("reconnect_after_epoch", None)
                 row.pop("issue", None)
             else:
                 row["lease_expires_at"] = 0
@@ -852,6 +1148,13 @@ class ConnectionService:
                     # lifetime. Same-generation REKEYING must retain the bound.
                     row["key_expires_at"] = 0
                     row["tunnel_checks"] = 0
+            if state == "REKEYING" and epoch != row["epoch"]:
+                row["tunnel_deadline_at"] = now + RECONNECT_WAIT_MS
+            if state == "DEGRADED":
+                row["tunnel_checks"] = 0
+                row["issue"] = (
+                    "터널 통신이 끊겼습니다. 온프레미스 단말에서 연결 서비스를 확인해 주세요."
+                )
             changed = row["tunnel"] != state or row["epoch"] != epoch
             row["epoch"], row["connection_id"], row["tunnel"] = (
                 epoch,

@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
+import pytest
+
+from migration.config import ConfigError
+from migration.seed import run
 
 from migration.seed import SEED_COUNT, seed_records, seed_request_id
 
@@ -20,3 +25,9 @@ def test_seed_records_fields():
     assert all(r.phase == "seed" and r.run_id == "seed" for r in recs)
     assert recs[0].created_at == "2026-01-01T00:00:01.000000+00:00"
     assert seed_records(3) == recs
+
+
+def test_wrong_seed_count_is_rejected_before_connecting(config):
+    """seed 는 항상 800건(1000건 예산). 1000건을 요구하면 접속 전에 거절한다."""
+    with pytest.raises(ConfigError, match='항상 800건'):
+        run(config, 'onprem', state_dir=None, count=1000)

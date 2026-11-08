@@ -23,7 +23,7 @@ export const PHASES: Phase[] = [
   {
     id: "prepare",
     title: "준비",
-    description: "출발/도착 환경을 연결하고 옮길 앱을 고릅니다.",
+    description: "출발·도착 환경과 옮길 앱을 고릅니다.",
     stages: [""],
   },
   {

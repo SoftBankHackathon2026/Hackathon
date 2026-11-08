@@ -66,7 +66,7 @@ python3 migration/connection/tests/e2e/start_native.py \
 docker exec -i -u connector mc-live-e2e-client bash
 ```
 
-bootstrap은 실제 HTTPS 다운로드·첫 바이너리 SHA384·manifest 이중서명을 검증한 후 실행합니다. foreground 단말은 systemd를 사용하지 않으므로 systemd 실행 여부를 가짜 디렉터리로 충족시키지 않습니다. 필요한 커널 네트워크 기능은 실제 helper가 검사합니다.
+bootstrap은 실제 HTTPS 다운로드·첫 바이너리 SHA384·manifest 이중서명을 검증한 후 실행합니다. Docker 시험 도구는 `--foreground`를 명시하여 전경 모드에서 등록과 터널을 검증합니다. 초기 명령 종료와 서비스 재시작은 systemd가 실행되는 Ubuntu에서 별도로 검증해야 합니다. 필요한 커널 네트워크 기능은 실제 helper가 검사합니다.
 
 브로커의 비밀 없는 오류 로그는 컨테이너 `/var/log/migration-broker.log`에 있습니다. 실제 승인·터널 상태·환경 선택·수집·최종 등록 결과를 화면과 서버 기록으로 확인해야 전체 흐름 시험이 끝납니다. 이 문서나 도구가 존재한다는 사실은 성공 증거가 아닙니다.
 

@@ -39,7 +39,7 @@ def execute(
     )
 
 
-def helper(container: str, operation: str, **kwargs):
+def helper_call(container: str, operation: str, *, check=True, **kwargs):
     payload = {
         "operation": operation,
         "connection_id": CONNECTION,
@@ -49,8 +49,25 @@ def helper(container: str, operation: str, **kwargs):
         "psk": None,
         **kwargs,
     }
-    result = execute(container, HELPER, data=json.dumps(payload).encode())
-    return json.loads(result.stdout)
+    return execute(container, HELPER, data=json.dumps(payload).encode(), check=check)
+
+
+def helper(container: str, operation: str, **kwargs):
+    return json.loads(helper_call(container, operation, **kwargs).stdout)
+
+
+def mark_binding_expired(container: str, *, mismatched_peer: bool = False):
+    # Modify only the disposable root-owned test state to avoid waiting 30 minutes.
+    execute(
+        container,
+        "python3",
+        "-c",
+        "import json,pathlib,sys; p=pathlib.Path('/run/migration-connector-network.json'); "
+        "d=json.loads(p.read_text()); d['key_expires_at_ms']=0; "
+        "d['public_key']='not-the-current-peer' if sys.argv[1]=='True' else d['public_key']; "
+        "p.write_text(json.dumps(d))",
+        str(mismatched_peer),
+    )
 
 
 PROBE = r"""
@@ -226,6 +243,12 @@ def main():
         if denied.returncode == 0:
             raise RuntimeError("unapproved tunnel service reachable")
         report["unapproved_service_blocked"] = True
+        if helper(names[0], "prepare-client", connection_id="new-request-00000001")[
+            "ready"
+        ]:
+            raise RuntimeError("a live prior binding was removed")
+        if helper_call(names[1], "prepare-client", check=False).returncode == 0:
+            raise RuntimeError("gateway allowed client recovery")
         # Kernel timeout must expire even with no helper/agent refresh process.
         print(
             json.dumps({"stage": "waiting_for_kernel_lease_expiry", "seconds": 62}),
@@ -238,8 +261,62 @@ def main():
         if expired.returncode == 0:
             raise RuntimeError("expired lease still permits job traffic")
         report["lease_expiry_blocks_job_traffic"] = True
-        for name in names:
-            helper(name, "remove")
+        client, gateway = names
+        replacement = {
+            "connection_id": "wireguard-test-00000002",
+            "private_key": private[0].decode(),
+            "public_key": public[1].decode(),
+            "psk": psk.decode(),
+            "key_expires_at_ms": int(time.time() * 1000) + 1800000,
+        }
+        # Expiring the firewall lease alone must not let a new request take over.
+        if helper_call(client, "configure", check=False, **replacement).returncode == 0:
+            raise RuntimeError("another request replaced an unexpired key")
+        if (
+            helper_call(
+                client,
+                "remove",
+                check=False,
+                connection_id=replacement["connection_id"],
+            ).returncode
+            == 0
+        ):
+            raise RuntimeError("another request removed an unexpired key")
+        # Startup can reclaim an orphan whose kernel lease has expired.
+        if not helper(
+            client, "prepare-client", connection_id=replacement["connection_id"]
+        )["ready"]:
+            raise RuntimeError("expired prior binding still blocks enrollment")
+        if (
+            execute(client, "ip", "link", "show", "mctest0", check=False).returncode
+            == 0
+        ):
+            raise RuntimeError("the orphaned interface was not removed")
+        helper(client, "configure", **{**replacement, "connection_id": CONNECTION})
+        report["orphaned_client_lease_recovery"] = True
+        if helper_call(client, "remove-exact", check=False, epoch=2).returncode == 0:
+            raise RuntimeError("replacement removed a different key epoch")
+        helper(client, "remove-exact")
+        helper(client, "remove-exact")  # Retry after losing the cleanup response.
+        helper(client, "configure", **{**replacement, "connection_id": CONNECTION})
+        mark_binding_expired(client)
+        helper(client, "configure", **replacement)
+        mark_binding_expired(client)
+        helper(client, "remove")  # Resume with a different saved binding.
+        # A root-owned record that no longer matches the kernel peer is insufficient.
+        helper(client, "configure", **replacement)
+        mark_binding_expired(client, mismatched_peer=True)
+        if helper_call(client, "prepare-client", check=False).returncode == 0:
+            raise RuntimeError("startup removed an interface with an unverified peer")
+        if helper_call(client, "remove", check=False).returncode == 0:
+            raise RuntimeError("mismatched kernel peer was removed")
+        execute(client, "ip", "link", "show", "mctest0")
+        report["expired_client_binding_recovery"] = True
+        for name, connection_id in (
+            (client, replacement["connection_id"]),
+            (gateway, CONNECTION),
+        ):
+            helper(name, "remove", connection_id=connection_id)
             if (
                 execute(name, "ip", "link", "show", "mctest0", check=False).returncode
                 == 0

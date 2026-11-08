@@ -65,7 +65,8 @@ try {
     await new Promise((resolve, reject) => {
       child.once('error', reject);
       child.stdin.once('error', reject);
-      child.stdin.end(command, resolve);
+      child.stdin.write(command.subarray(0, -1));
+      child.stdin.end(' -s -- --foreground\n', resolve);
     });
     command.fill(0);
     child.unref();

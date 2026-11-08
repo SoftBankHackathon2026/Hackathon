@@ -70,9 +70,11 @@ kafka:
   connect_url: http://migration-connect:8083
   secrets_file: /opt/kafka/secrets/migration.properties
 
-worker:
-  url: http://db-insert-worker:8080
-  state_dir: /var/lib/worker
+bot:
+  control_url: http://traffic-bot-control:9091
+  token_env: BOT_CONTROL_TOKEN
+  request_endpoint: http://durable-ingress.hackathon.svc.cluster.local/api/requests
+  timeout_seconds: 15
 
 cutover:
   state_dir: /var/lib/worker
@@ -81,3 +83,20 @@ cutover:
   offset_stable_seconds: 10
   poll_interval_seconds: 5
   stage_timeout_seconds: 1800
+
+# 실제 배포 DB 이름과 앱 환경을 확인한다. bot은 동일 접수 URL을 계속 사용한다.
+ingress:
+  control_url: http://durable-ingress-control:9092
+  token_env: INGRESS_CONTROL_TOKEN
+  targets:
+    aws: aws_db
+    onprem_return: onprem
+  app_checks:
+    aws:
+      url: http://sample-app-rds
+      database: migration_demo
+      environment: local
+    onprem_return:
+      url: http://sample-app
+      database: migration_demo_return
+      environment: onprem

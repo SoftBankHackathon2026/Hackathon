@@ -176,13 +176,16 @@ function ConfigFacts({ config }: { config: ConfigView }) {
       </ConfigGroup>
       <ConfigGroup title="Slack 알림">
         <ConfigRow label="연결">
-          {config.slack.mode} · {onOffLabel(config.slack.enabled)}
+          {config.slack.mode}, {onOffLabel(config.slack.enabled)}
         </ConfigRow>
         {config.slack.channel && (
           <ConfigRow label="채널" mono>
             {config.slack.channel}
           </ConfigRow>
         )}
+        <ConfigRow label="승인 버튼">
+          {onOffLabel(config.slack.buttons)}
+        </ConfigRow>
         <ConfigRow label="스레드" mono={config.slack.threadTs !== null}>
           {config.slack.threadTs ?? "채널에 바로 보내요"}
         </ConfigRow>

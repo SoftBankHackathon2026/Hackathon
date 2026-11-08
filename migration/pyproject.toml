@@ -9,6 +9,7 @@ description = "온프렘 PostgreSQL → AWS PostgreSQL 이전 데모 도구 (INS
 requires-python = ">=3.12"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
     "PyYAML>=6.0,<7",
 ]
 
@@ -21,6 +22,7 @@ identity = [
     "boto3>=1.35,<1.36",
     "requests>=2.32,<3",
 ]
+secrets-export = ["boto3>=1.43,<2"]
 image-migration = ["boto3>=1.43,<2"]
 policy-runtime = ["boto3>=1.35,<2"]
 security-logs = ["boto3>=1.36,<2"]

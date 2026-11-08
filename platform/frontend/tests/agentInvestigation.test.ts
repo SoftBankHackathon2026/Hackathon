@@ -41,6 +41,7 @@ function detail(
     pending_approval: null,
     can_decide: false,
     can_rerun: false,
+    can_delete: false,
   };
 }
 
@@ -87,26 +88,22 @@ test("resolved run walks every step with evidence", () => {
       ["detect", "bad", true],
       ["diagnose", "ok", true],
       ["propose", "ok", true],
-      ["approve", "ok", true],
       ["probe", "ok", true],
+      ["approve", "ok", true],
       ["apply", "ok", true],
       ["verify", "ok", true],
     ],
   );
   assert.deepEqual(steps.detect.codes, ["APP-01-ORDER-CHECK-FAILED"]);
   assert.match(steps.diagnose.text, /로그인 단계에서 실패해요: DB 가 없음/);
-  assert.equal(steps.propose.text, "DB_NAME 이 계획과 달라요");
-  assert.deepEqual(steps.propose.changes, [
-    { key: "DB_NAME", before: "app_prod", after: "app_return" },
-  ]);
-  assert.deepEqual(
-    steps.propose.notes.map((n) => n.label),
-    ["영향", "샌드박스 확인"],
-  );
+  assert.equal(steps.propose.text, "DB_NAME 값을 바꾸자고 제안했어요.");
   assert.deepEqual(steps.approve.notes, [
     { label: "기다린 시간", text: "35초" },
   ]);
-  assert.match(steps.apply.text, /v13 → v14/);
+  assert.equal(
+    steps.apply.text,
+    "설정 저장소 버전을 v13에서 v14로 올리고 앱을 다시 시작했어요.",
+  );
   assert.equal(steps.verify.at, resolved.updated_at);
   assert.equal(runSeconds(resolved), 136);
   const v = verdict(resolved);
@@ -265,6 +262,7 @@ function row(state: AgentRunState, seconds: number, changes = 0): AgentRun {
       })),
       diagnosis: null,
     },
+    can_delete: true,
   };
 }
 

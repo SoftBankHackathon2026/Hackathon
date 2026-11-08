@@ -11,7 +11,7 @@ from migration.state import CutoverStore
 from migration.traffic_client import HttpTrafficClient, TrafficClientError
 
 from tests.conftest import RAW_CONFIG
-from tests.test_cutover import FakeConnect, FakeDb, FakeVerify, FakeWorker, _grow_target_commits, _simulate_replication
+from tests.test_cutover import FakeConnect, FakeDb, FakeVerify, FakeBot, _grow_target_commits, _simulate_replication
 from tests.test_cutover_ingress import INGRESS_RAW, FakeIngress
 
 TRAFFIC_RAW = {"app": "sample-app", "targets": {"onprem": "onprem", "aws": "aws"}}
@@ -43,7 +43,7 @@ def _config(with_ingress: bool = True):
 
 
 def _build(config, state_dir, fakes, approve=None):
-    ports = Ports(worker=fakes["worker"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"],
+    ports = Ports(bot=fakes["bot"], connect=fakes["connect"], db=fakes["db"], verify=fakes["verify"],
                   ingress=fakes.get("ingress"), traffic=fakes["traffic"])
     docs = {"source": {"name": config.job.source_connector, "config": {"a": "1"}},
             "sink": {"name": config.job.sink_connector, "config": {"b": "2"}}}
@@ -62,7 +62,7 @@ def _build(config, state_dir, fakes, approve=None):
 def fakes():
     config = _config()
     ingress = FakeIngress()
-    return {"config": config, "worker": FakeWorker(config.job.source), "connect": FakeConnect(), "db": FakeDb(),
+    return {"config": config, "bot": FakeBot(config.job.source), "connect": FakeConnect(), "db": FakeDb(),
             "verify": FakeVerify(), "ingress": ingress, "traffic": FakeTraffic(calls=ingress.calls)}
 
 
@@ -169,14 +169,15 @@ def test_resumed_switch_does_not_call_again_when_already_moved(state_dir, fakes)
     assert "traffic:aws" not in fakes["ingress"].calls
 
 
-def test_without_ingress_traffic_still_switches(state_dir, tmp_path):
+def test_public_route_cannot_replace_required_ingress(state_dir, tmp_path):
     config = _config(with_ingress=False)
-    fakes = {"worker": FakeWorker(config.job.source), "connect": FakeConnect(), "db": FakeDb(),
+    fakes = {"bot": FakeBot(config.job.source), "connect": FakeConnect(), "db": FakeDb(),
              "verify": FakeVerify(), "traffic": FakeTraffic()}
-    _simulate_replication(fakes)
-    _grow_target_commits(fakes)
-    assert _build(config, state_dir, fakes, approve="ops-1").run() == COMPLETED
-    assert fakes["traffic"].target == "aws"
+    cut = _build(config, state_dir, fakes, approve="ops-1")
+    with pytest.raises(CutoverError, match="접수 큐 제어 설정"):
+        cut.run()
+    assert fakes["traffic"].calls == []
+
 
 
 @pytest.mark.parametrize(
