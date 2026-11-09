@@ -153,6 +153,6 @@ pip install -e '.[dev]' && pytest
 
 ## 팀
 
-**Team Ghost** — 원가연 · 김태윤 · 화균 · 유빈 · 혜연
+**Team Ghost** — 원가연 · 김태윤 · 김화균 · 김유빈 · 김혜연
 
 기획·회의록·작업 보드는 Notion `final_team_ghost`에 있다.
