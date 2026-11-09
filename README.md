@@ -153,6 +153,14 @@ pip install -e '.[dev]' && pytest
 
 ## 팀
 
-**Team Ghost** — 원가연 · 김태윤 · 김화균 · 김유빈 · 김혜연
+**Team Ghost** — 다섯 명이 환경·이전·정책·AI·보안을 나눠 맡았다. 세부 분담은 Notion `final_team_ghost` 역할 분담 표가 원본이다.
 
-기획·회의록·작업 보드는 Notion `final_team_ghost`에 있다.
+| | 이름 | 담당 | 주로 손댄 곳 |
+|---|---|---|---|
+| <img src="https://github.com/silano08.png" width="48"> | **원가연** [@silano08](https://github.com/silano08) | DB 이전(온프렘 → AWS)과 무중단 접수·전체 서비스 이전, 정책 검사(OPA), 플랫폼 앱 선택·전환 제어 | `migration/` · `policies/` · `agent/` 1차 · `demo/` · gitops 이전 앱 |
+| <img src="https://github.com/devyubin.png" width="48"> | **김유빈** [@devyubin](https://github.com/devyubin) | 인프라 구축, 플랫폼 개발 및 인프라 연결, 온프렘 AI 에이전트 연결 및 샌드박스 구축 | `platform/` · `infra/` · 온프렘 홈랩 k3s · Tailscale · OpenSandbox |
+| <img src="https://github.com/xodbs1021.png" width="48"> | **김태윤** [@xodbs1021](https://github.com/xodbs1021) | 클라우드 ↔ 클라우드(AWS ↔ GCP) 이전: 구성 파악·판정, 대상 인프라 생성(Terraform), Secret·감사 기록 이관, 트래픽 이동 | `crosscloud/` · sample-app DB API·트래픽 봇 |
+| <img src="https://github.com/Hyeyeon-Kim.png" width="48"> | **김혜연** [@Hyeyeon-Kim](https://github.com/Hyeyeon-Kim) | DB 이전(AWS → 온프렘), 온프렘 AI 에이전트 | `migration/` 귀환 경로 · `agent/` · review-service · gitops |
+| <img src="https://github.com/callme-waffle.png" width="48"> | **김화균** [@callme-waffle](https://github.com/callme-waffle) | 온프레미스 인프라 보안 연결 및 마이그레이션 환경 초기 준비 프로세스 구현, GCP 시연 환경 준비, 거버넌스 정보 수집 | oneaction-infra · 보안 대시보드 기준(CIS · ISMS · ISMAP) · GCP GKE |
+
+기획·회의록·보고서·작업 보드는 Notion `final_team_ghost` 에 있다.
