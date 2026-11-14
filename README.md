@@ -11,7 +11,6 @@ SoftBank Hackathon 2026 powered by Progate & KOREC · Main Round Grand Prize · 
 
 <img src="docs/images/grand-prize-certificate.png" alt="Certificate of Grand Prize — Main Round, SoftBank Hackathon 2026" width="720">
 
-![demo](https://img.shields.io/badge/demo-2026--11--10_%EC%B2%A0%EA%B1%B0_%EC%99%84%EB%A3%8C-888?style=flat-square)
 [![Platform CI](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/platform-ci.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/platform-ci.yml)
 [![policies](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/policies.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/policies.yml)
 [![migration-images](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/migration-images.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/migration-images.yml)
