@@ -6,7 +6,8 @@
 
 SoftBank Hackathon 2026 · Team Ghost
 
-🏆 **SoftBank Hackathon 2026 powered by Progate & KOREC · Main Round Grand Prize (1위)** · 2026.11.7 – 8
+🏆 **최우수상 수상! 함께 노력해주신 우리팀 고생많았습니다!**
+SoftBank Hackathon 2026 powered by Progate & KOREC · Main Round Grand Prize · 2026.11.7 – 8
 
 <img src="docs/images/grand-prize-certificate.png" alt="Certificate of Grand Prize — Main Round, SoftBank Hackathon 2026" width="720">
 
