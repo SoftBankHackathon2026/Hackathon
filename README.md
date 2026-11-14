@@ -6,13 +6,17 @@
 
 SoftBank Hackathon 2026 · Team Ghost
 
-[![platform](https://img.shields.io/badge/live-platform.yubin.dev-5b5bd6?style=flat-square)](https://platform.yubin.dev/#environments)
+🏆 **SoftBank Hackathon 2026 powered by Progate & KOREC · Main Round Grand Prize (1위)** · 2026.11.7 – 8
+
+<img src="docs/images/grand-prize-certificate.png" alt="Certificate of Grand Prize — Main Round, SoftBank Hackathon 2026" width="720">
+
+![demo](https://img.shields.io/badge/demo-2026--11--10_%EC%B2%A0%EA%B1%B0_%EC%99%84%EB%A3%8C-888?style=flat-square)
 [![Platform CI](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/platform-ci.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/platform-ci.yml)
 [![policies](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/policies.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/policies.yml)
 [![migration-images](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/migration-images.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/migration-images.yml)
 [![crosscloud](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/crosscloud.yml/badge.svg)](https://github.com/SoftBankHackathon2026/Hackathon/actions/workflows/crosscloud.yml)
 
-[**플랫폼 열기**](https://platform.yubin.dev/#environments) · [이전 도구](migration/) · [정책](policies/) · [AI 에이전트](agent/) · [클라우드 간 이전](crosscloud/) · [관리 플랫폼](platform/)
+[이전 도구](migration/) · [정책](policies/) · [AI 에이전트](agent/) · [클라우드 간 이전](crosscloud/) · [관리 플랫폼](platform/)
 
 <img src="docs/images/platform-environments.jpg" alt="환경 페이지 — 온프렘 k3s · AWS EKS · GCP GKE 아키텍처 캔버스" width="900">
 
